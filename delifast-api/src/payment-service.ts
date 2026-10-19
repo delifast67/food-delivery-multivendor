@@ -3,27 +3,12 @@ import type { Db } from "mongodb";
 import { customerOrder } from "./orders.js";
 import { fail } from "./validation.js";
 
-/** Local lifecycle values are not PayDunya transaction statuses. */
+import { validProviderPayment, type PaymentProvider, type PaymentChannel, type ProviderStatus } from "./payment-provider.js";
+export type { PaymentChannel, ProviderStatus } from "./payment-provider.js";
+/** Compatibility alias for existing server injection points, not a second contract. */
+export type CheckoutGateway = PaymentProvider;
+/** Local lifecycle values are not provider transaction statuses. */
 export type AttemptPhase = "CREATING" | "READY" | "UNKNOWN";
-export type PaymentChannel = "ORANGE_MONEY_BF" | "MOOV_MONEY_BF";
-export type ProviderStatus =
-  "pending" | "completed" | "failed" | "canceled" | "cancelled";
-export interface CheckoutGateway {
-  readonly mode: "test" | "live";
-  createInvoice(input: {
-    orderId: string;
-    attemptId: string;
-    amount: number;
-    channel: PaymentChannel;
-  }): Promise<{ token: string; checkoutUrl: string }>;
-  confirmInvoice(input: {
-    token: string;
-    orderId: string;
-    attemptId: string;
-    amount: number;
-  }): Promise<{ status: ProviderStatus }>;
-  verifyIpnHash(hash: unknown): boolean;
-}
 export type PaymentInput = {
   orderId: string;
   accessToken: string;
@@ -56,7 +41,7 @@ function session(order: any) {
     checkoutUrl:
       p.phase === "READY" &&
       order.paymentStatus === "PENDING" &&
-      !["completed", "failed", "canceled", "cancelled"].includes(
+      !["completed", "failed", "canceled", "expired"].includes(
         p.providerStatus,
       )
         ? p.checkoutUrl
@@ -80,6 +65,13 @@ export class PaymentService {
       );
     return this.gateway;
   }
+  private bound(attempt: any): PaymentProvider {
+    const gateway = this.enabled();
+    // Legacy unbound attempts require manual reconciliation, never inference.
+    if (!attempt || attempt.provider !== gateway.id || attempt.mode !== gateway.mode)
+      fail("PAYMENT_REVIEW_REQUIRED", "Prestataire de la tentative non disponible : rapprochement requis");
+    return gateway;
+  }
   private async owned(id: string, token: string) {
     validateOwnerInput(id, token);
     const order = await customerOrder(this.db, id, token);
@@ -90,10 +82,12 @@ export class PaymentService {
     const order = await this.owned(orderId, accessToken);
     // A disabled gateway must not continue offering a stale checkout link.
     this.enabled();
+    if (order.paymentAttempt) this.bound(order.paymentAttempt);
     return order.paymentAttempt ? session(order) : null;
   }
   private replay(order: any, input: PaymentInput, gateway: CheckoutGateway) {
     const p = order.paymentAttempt;
+    this.bound(p);
     if (
       !p ||
       p.key !== input.idempotencyKey ||
@@ -126,6 +120,10 @@ export class PaymentService {
       fail("INVALID_INPUT", "Canal ou clé de paiement invalide");
     const gateway = this.enabled();
     if (order.paymentAttempt) return this.replay(order, input, gateway);
+    // Existing client contract is redirect-only. Other flows remain extension points.
+    if (!gateway.capabilities.redirect || !gateway.capabilities.statusQuery ||
+      !gateway.capabilities.channels.includes(input.channel))
+      fail("PAYMENT_NOT_ALLOWED", "Parcours ou moyen de paiement non disponible");
     if (order.status !== "PAYMENT_PENDING" || order.paymentStatus !== "PENDING")
       fail("PAYMENT_NOT_ALLOWED", "La commande ne peut pas être payée");
     const amount = order.checkout?.total;
@@ -151,6 +149,9 @@ export class PaymentService {
             id,
             key: input.idempotencyKey,
             channel: input.channel,
+            provider: gateway.id,
+            contractVersion: 1,
+            country: "BF",
             mode: gateway.mode,
             amount,
             currency: "XOF",
@@ -168,24 +169,31 @@ export class PaymentService {
       fail("CONCURRENT_MODIFICATION", "Commande modifiée, rechargez son état");
     }
     try {
-      // No retry of this POST: the official API does not document a merchant
-      // idempotency header. A timeout or process crash is an ambiguous outcome.
-      const created = await gateway.createInvoice({
+      // No automatic retry across providers: creation may have succeeded remotely.
+      // A timeout or process crash is an ambiguous outcome.
+      const created = await gateway.createPayment({
         orderId: order.id,
         attemptId: id,
         amount,
         channel: input.channel,
+        currency: "XOF",
+        country: "BF",
       });
+      if (!validProviderPayment(created)) throw new Error("INVALID_PROVIDER_RESPONSE");
       const ready = await orders.findOneAndUpdate(
         {
           id: order.id,
           "paymentAttempt.id": id,
           "paymentAttempt.phase": "CREATING",
+          "paymentAttempt.provider": gateway.id,
+          "paymentAttempt.mode": gateway.mode,
+          "paymentAttempt.amount": amount,
+          "paymentAttempt.currency": "XOF",
         },
         {
           $set: {
-            "paymentAttempt.token": created.token,
-            "paymentAttempt.checkoutUrl": created.checkoutUrl,
+            "paymentAttempt.token": created.reference,
+            "paymentAttempt.checkoutUrl": created.action.kind === "redirect" ? created.action.url : null,
             "paymentAttempt.phase": "READY",
             "paymentAttempt.updatedAt": at(),
           },
@@ -216,12 +224,17 @@ export class PaymentService {
   }
 
   private async reconcile(order: any) {
-    const gateway = this.enabled();
     const p = order.paymentAttempt;
+    const gateway = p ? this.bound(p) : this.enabled();
+    if (!gateway.capabilities.statusQuery)
+      fail("PAYMENT_NOT_ALLOWED", "Vérification non disponible");
     if (
       !p ||
       p.phase !== "READY" ||
       typeof p.token !== "string" ||
+      !/^[a-zA-Z0-9_-]{1,256}$/.test(p.token) ||
+      !Number.isSafeInteger(p.amount) || p.amount <= 0 || p.amount > 2_147_483_647 ||
+      p.currency !== "XOF" ||
       p.mode !== gateway.mode
     )
       fail(
@@ -232,11 +245,13 @@ export class PaymentService {
     try {
       // The adapter checks hash AND token, amount, mode, merchant metadata.
       // IPN fields and return URLs are never a settlement authority.
-      checked = await gateway.confirmInvoice({
-        token: p.token,
+      checked = await gateway.queryStatus({
+        reference: p.token,
         orderId: order.id,
         attemptId: p.id,
         amount: p.amount,
+        currency: "XOF",
+        country: "BF",
       });
     } catch {
       fail(
@@ -245,7 +260,8 @@ export class PaymentService {
       );
     }
     if (
-      !["pending", "completed", "failed", "canceled", "cancelled"].includes(
+      !checked || typeof checked !== "object" ||
+      !["pending", "completed", "failed", "canceled", "authorized", "expired"].includes(
         checked.status,
       )
     )
@@ -254,7 +270,11 @@ export class PaymentService {
     const filter = {
       id: order.id,
       "paymentAttempt.id": p.id,
+      "paymentAttempt.provider": gateway.id,
+      "paymentAttempt.mode": gateway.mode,
       "paymentAttempt.token": p.token,
+      "paymentAttempt.amount": p.amount,
+      "paymentAttempt.currency": "XOF",
       "checkout.total": p.amount,
       "checkout.currency": "XOF",
       status: "PAYMENT_PENDING",
@@ -274,7 +294,8 @@ export class PaymentService {
           history: {
             status: "CONFIRMED",
             at: timestamp,
-            actorRole: "PAYDUNYA",
+            actorRole: "PAYMENT_PROVIDER",
+            provider: gateway.id,
           },
         },
       } as any);
@@ -297,23 +318,24 @@ export class PaymentService {
   async refresh(orderId: string, accessToken: string) {
     return this.reconcile(await this.owned(orderId, accessToken));
   }
-  async ipn(data: unknown) {
+  async notification(providerId: string, data: unknown) {
     const gateway = this.enabled();
-    if (!data || typeof data !== "object" || Array.isArray(data))
+    if (providerId !== gateway.id || !gateway.capabilities.notification || !gateway.capabilities.statusQuery)
+      fail("INVALID_IPN", "Notification non disponible");
+    let reference: string;
+    try {
+      reference = gateway.parseNotification(data).reference;
+      if (typeof reference !== "string" || !/^[a-zA-Z0-9_-]{1,256}$/.test(reference)) throw new Error();
+    } catch {
       fail("INVALID_IPN", "Notification invalide");
-    const d = data as any;
-    if (
-      !gateway.verifyIpnHash(d.hash) ||
-      typeof d.invoice?.token !== "string" ||
-      !/^[a-zA-Z0-9_-]{1,256}$/.test(d.invoice.token)
-    )
-      fail("INVALID_IPN", "Notification invalide");
-    const order = await this.db
-      .collection<any>("orders")
-      .findOne({ "paymentAttempt.token": d.invoice.token });
+    }
+    const order = await this.db.collection<any>("orders").findOne({
+      "paymentAttempt.token": reference,
+      "paymentAttempt.provider": gateway.id,
+      "paymentAttempt.mode": gateway.mode,
+    });
     if (!order) fail("INVALID_IPN", "Notification non reconnue");
-    // Even a valid IPN hash is static SHA512(master key), NOT a payload signature.
-    // Always re-fetch the known invoice using server credentials before settling.
+    // Notifications are hints, including authenticated ones: always re-query.
     await this.reconcile(order);
     return true;
   }

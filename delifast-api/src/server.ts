@@ -320,7 +320,7 @@ export async function createApp(
     express.urlencoded(ipnParserOptions),
     async (req, res) => {
       try {
-        await payments.ipn(req.body?.data);
+        await payments.notification("paydunya", req.body?.data);
         res.status(200).json({ received: true });
       } catch (error: any) {
         const code = error?.extensions?.code;

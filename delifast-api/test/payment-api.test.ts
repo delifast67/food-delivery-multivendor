@@ -22,7 +22,26 @@ const ORDER = "payment-api-order";
 const hash = (value: string) =>
   crypto.createHash("sha256").update(value).digest("hex");
 
+// Non-paying in-process transport; this fixture never accesses a provider API.
 class GatewayMock implements CheckoutGateway {
+  readonly id: string = "paydunya";
+  readonly capabilities = {
+    channels: ["ORANGE_MONEY_BF", "MOOV_MONEY_BF"] as const,
+    redirect: true, mobileValidation: false, notification: true,
+    statusQuery: true, refund: false as const,
+  };
+  async createPayment(input: any) {
+    const result = await this.createInvoice(input);
+    return { reference: result.token, action: { kind: "redirect" as const, url: result.checkoutUrl } };
+  }
+  queryStatus(input: any) {
+    return this.confirmInvoice({ ...input, token: input.reference });
+  }
+  parseNotification(data: any) {
+    if (!data || !this.verifyIpnHash(data.hash) || typeof data.invoice?.token !== "string" ||
+      !/^[a-zA-Z0-9_-]{1,256}$/.test(data.invoice.token)) throw new Error("Invalid fixture notification");
+    return { reference: data.invoice.token };
+  }
   readonly mode: "test" | "live";
   creates: any[] = [];
   confirms: any[] = [];
@@ -416,4 +435,31 @@ describe("payment safety gates", () => {
     if (old.paydunya === undefined) delete process.env.PAYDUNYA_ENABLED;
     else process.env.PAYDUNYA_ENABLED = old.paydunya;
   });
+});
+
+
+it("a selected provider, including unknown/unconfigured, blocks the local demo", async () => {
+  const old = {
+    provider: process.env.PAYMENT_PROVIDER,
+    demo: process.env.DELIFAST_DEMO_PAYMENTS,
+    enabled: process.env.PAYDUNYA_ENABLED,
+  };
+  try {
+    process.env.DELIFAST_DEMO_PAYMENTS = "true";
+    delete process.env.PAYDUNYA_ENABLED;
+    const { getPaymentProvider } = await import("../src/payment.js");
+    for (const selected of ["paydunya", "unavailable-fixture"]) {
+      process.env.PAYMENT_PROVIDER = selected;
+      expect(getPaymentProvider()).toBeUndefined();
+    }
+  } finally {
+    for (const [key, value] of Object.entries({
+      PAYMENT_PROVIDER: old.provider,
+      DELIFAST_DEMO_PAYMENTS: old.demo,
+      PAYDUNYA_ENABLED: old.enabled,
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });

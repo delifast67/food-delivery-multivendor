@@ -29,7 +29,26 @@ const input = (extra: any = {}) => ({
   ...extra,
 });
 
+// Non-paying in-process transport; this fixture never accesses a provider API.
 class GatewayMock implements CheckoutGateway {
+  readonly id: string = "paydunya";
+  readonly capabilities = {
+    channels: ["ORANGE_MONEY_BF", "MOOV_MONEY_BF"] as const,
+    redirect: true, mobileValidation: false, notification: true,
+    statusQuery: true, refund: false as const,
+  };
+  async createPayment(input: any) {
+    const result = await this.createInvoice(input);
+    return { reference: result.token, action: { kind: "redirect" as const, url: result.checkoutUrl } };
+  }
+  queryStatus(input: any) {
+    return this.confirmInvoice({ ...input, token: input.reference });
+  }
+  parseNotification(data: any) {
+    if (!data || !this.verifyIpnHash(data.hash) || typeof data.invoice?.token !== "string" ||
+      !/^[a-zA-Z0-9_-]{1,256}$/.test(data.invoice.token)) throw new Error("Invalid fixture notification");
+    return { reference: data.invoice.token };
+  }
   readonly mode: "test" | "live";
   creates: any[] = [];
   confirms: any[] = [];
@@ -183,6 +202,7 @@ describe("PaymentService — ownership, creation and idempotency", () => {
           $set: {
             paymentAttempt: {
               id: "crash",
+              provider: "paydunya",
               key: "idem-key-123",
               channel: "ORANGE_MONEY_BF",
               mode: "test",
@@ -200,6 +220,7 @@ describe("PaymentService — ownership, creation and idempotency", () => {
 describe("PaymentService — refresh, CAS and IPN", () => {
   const ready = (mode = "test", token = "stored-token") => ({
     id: "attempt-1",
+    provider: "paydunya",
     key: "idem-key-123",
     channel: "ORANGE_MONEY_BF",
     mode,
@@ -276,13 +297,13 @@ describe("PaymentService — refresh, CAS and IPN", () => {
   });
   it("IPN hash/invoice/token inconnus sont rejetés", async () => {
     const s = new PaymentService(db, new GatewayMock());
-    expect(await code(s.ipn(null))).toBe("INVALID_IPN");
-    expect(await code(s.ipn({ hash: "bad", invoice: { token: "x" } }))).toBe(
+    expect(await code(s.notification("paydunya", null))).toBe("INVALID_IPN");
+    expect(await code(s.notification("paydunya", { hash: "bad", invoice: { token: "x" } }))).toBe(
       "INVALID_IPN",
     );
     expect(
       await code(
-        s.ipn({ hash: "valid-fixture-hash", invoice: { token: "unknown" } }),
+        s.notification("paydunya", { hash: "valid-fixture-hash", invoice: { token: "unknown" } }),
       ),
     ).toBe("INVALID_IPN");
   });
@@ -293,7 +314,7 @@ describe("PaymentService — refresh, CAS and IPN", () => {
       .collection("orders")
       .updateOne({ id: ORDER }, { $set: { paymentAttempt: ready() } });
     expect(
-      await new PaymentService(db, g).ipn({
+      await new PaymentService(db, g).notification("paydunya", {
         hash: "valid-fixture-hash",
         invoice: { token: "stored-token", status: "completed" },
       }),
@@ -311,7 +332,7 @@ describe("PaymentService — refresh, CAS and IPN", () => {
         { id: ORDER },
         { $set: { paymentAttempt: ready("live", "stored-token") } },
       );
-    await new PaymentService(db, g).ipn({
+    await new PaymentService(db, g).notification("paydunya", {
       hash: "valid-fixture-hash",
       invoice: { token: "stored-token", amount: 999999, status: "completed" },
     });
@@ -324,5 +345,101 @@ describe("PaymentService — refresh, CAS and IPN", () => {
     expect(
       (await db.collection("orders").findOne({ id: ORDER }))!.paymentStatus,
     ).toBe("PAID");
+  });
+});
+
+
+describe("PaymentProvider — provider binding and fail-closed capabilities", () => {
+  it("persiste provider/mode/devise avant transport et reprend après redémarrage", async () => {
+    const g = new GatewayMock();
+    g.createImpl = async () => {
+      const stored: any = await db.collection("orders").findOne({ id: ORDER });
+      expect(stored.paymentAttempt).toMatchObject({
+        provider: "paydunya", mode: "test", currency: "XOF", amount: 1250,
+        phase: "CREATING", key: "idem-key-123",
+      });
+      return { token: "persisted-reference", checkoutUrl: "https://checkout.fixture/resume" };
+    };
+    await new PaymentService(db, g).start(input());
+    const restarted = new GatewayMock();
+    expect(await new PaymentService(db, restarted).start(input())).toMatchObject({ phase: "READY" });
+    expect(restarted.creates).toHaveLength(0);
+    expect(g.creates[0]).toMatchObject({ currency: "XOF", country: "BF", amount: 1250 });
+  });
+  it("un autre provider ou mode ne peut ni reprendre, ni lire le lien, ni confirmer", async () => {
+    await new PaymentService(db, new GatewayMock()).start(input());
+    for (const g of [Object.assign(new GatewayMock(), { id: "other-fixture" }), new GatewayMock("live")]) {
+      const s = new PaymentService(db, g);
+      expect(await code(s.start(input()))).toBe("PAYMENT_REVIEW_REQUIRED");
+      expect(await code(s.getSession(ORDER, TOKEN))).toBe("PAYMENT_REVIEW_REQUIRED");
+      expect(await code(s.refresh(ORDER, TOKEN))).toBe("PAYMENT_REVIEW_REQUIRED");
+      expect(await code(s.notification(g.id, {
+        hash: "valid-fixture-hash", invoice: { token: "provider-token-1" },
+      }))).toBe("INVALID_IPN");
+      expect(g.creates).toHaveLength(0);
+      expect(g.confirms).toHaveLength(0);
+    }
+  });
+  it("ne devine jamais le provider des anciennes tentatives non liées", async () => {
+    const g = new GatewayMock();
+    const s = new PaymentService(db, g);
+    await s.start(input());
+    await db.collection("orders").updateOne({ id: ORDER }, { $unset: { "paymentAttempt.provider": "" } });
+    expect(await code(s.start(input()))).toBe("PAYMENT_REVIEW_REQUIRED");
+    expect(await code(s.refresh(ORDER, TOKEN))).toBe("PAYMENT_REVIEW_REQUIRED");
+    expect(await code(s.getSession(ORDER, TOKEN))).toBe("PAYMENT_REVIEW_REQUIRED");
+    expect(g.creates).toHaveLength(1);
+    expect(g.confirms).toHaveLength(0);
+  });
+  it("refuse capacité/canal absent avant réservation ou appel fournisseur", async () => {
+    for (const capability of [{ redirect: false }, { statusQuery: false }, { channels: [] }]) {
+      const g = new GatewayMock();
+      Object.assign(g.capabilities, capability);
+      expect(await code(new PaymentService(db, g).start(input()))).toBe("PAYMENT_NOT_ALLOWED");
+      expect(g.creates).toHaveLength(0);
+      expect((await db.collection("orders").findOne({ id: ORDER }))!.paymentAttempt).toBeUndefined();
+    }
+  });
+  it("une réponse adapter malformée verrouille UNKNOWN sans lien ni second POST", async () => {
+    const g = new GatewayMock();
+    g.createImpl = async () => ({ token: "bad ref", checkoutUrl: "http://unsafe.fixture" });
+    const s = new PaymentService(db, g);
+    expect(await code(s.start(input()))).toBe("PAYMENT_REVIEW_REQUIRED");
+    expect(await code(s.start(input()))).toBe("PAYMENT_REVIEW_REQUIRED");
+    expect(g.creates).toHaveLength(1);
+    const stored: any = await db.collection("orders").findOne({ id: ORDER });
+    expect(stored.paymentAttempt.phase).toBe("UNKNOWN");
+    expect(stored.paymentAttempt.token).toBeUndefined();
+    expect(stored.paymentStatus).toBe("PENDING");
+  });
+  it("notifications répétées restent non payantes en test et sont liées à la route", async () => {
+    const g = new GatewayMock();
+    const s = new PaymentService(db, g);
+    await s.start(input());
+    const hint = { hash: "valid-fixture-hash", invoice: { token: "provider-token-1" } };
+    expect(await code(s.notification("other-fixture", hint))).toBe("INVALID_IPN");
+    expect(g.confirms).toHaveLength(0);
+    g.confirmImpl = async () => ({ status: "completed" });
+    await Promise.all([s.notification("paydunya", hint), s.notification("paydunya", hint)]);
+    const stored: any = await db.collection("orders").findOne({ id: ORDER });
+    expect(stored.paymentStatus).toBe("PENDING");
+    expect(stored.history).toHaveLength(0);
+    Object.assign(g.capabilities, { notification: false });
+    expect(await code(s.notification("paydunya", hint))).toBe("INVALID_IPN");
+    expect(g.confirms).toHaveLength(2);
+  });
+  it("statuts inconnus, absents et erreurs de transport ne paient jamais", async () => {
+    const g = new GatewayMock();
+    const s = new PaymentService(db, g);
+    await s.start(input());
+    for (const status of ["invented", undefined]) {
+      g.confirmImpl = async () => ({ status });
+      expect(await code(s.refresh(ORDER, TOKEN))).toBe("PAYMENT_UNAVAILABLE");
+    }
+    g.confirmImpl = async () => null;
+    expect(await code(s.refresh(ORDER, TOKEN))).toBe("PAYMENT_UNAVAILABLE");
+    g.confirmImpl = async () => { throw new Error("private transport details"); };
+    expect(await code(s.refresh(ORDER, TOKEN))).toBe("PAYMENT_UNAVAILABLE");
+    expect((await db.collection("orders").findOne({ id: ORDER }))!.paymentStatus).toBe("PENDING");
   });
 });
