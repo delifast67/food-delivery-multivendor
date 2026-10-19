@@ -264,3 +264,89 @@ describe("Delifast recovery", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("Delifast suivi opérationnel", () => {
+  function rememberOrder() {
+    localStorage.setItem(
+      "delifast-order-attempt",
+      JSON.stringify({
+        idempotencyKey: "tracking-known-order",
+        payload: {
+          restaurantId: "r1",
+          items: [{ menuItemId: "m1", quantity: 1 }],
+          deliveryAddress: {
+            recipientName: "Démo",
+            phone: "+22670000000",
+            city: "Ouagadougou",
+            neighborhood: "Fictif",
+            landmark: "Ne pas livrer",
+            instructions: "",
+          },
+        },
+        order: { id: order.id, accessToken: order.accessToken },
+      }),
+    );
+  }
+  it("actualise le titre et l’historique lorsque le livreur termine sa mission", async () => {
+    rememberOrder();
+    vi.mocked(delifastApi.order)
+      .mockResolvedValueOnce(order)
+      .mockResolvedValue({
+        ...order,
+        status: "DELIVERED",
+        paymentStatus: "PAID",
+        history: [
+          {
+            status: "DELIVERED",
+            at: "2026-01-01T12:00:00Z",
+            actorRole: "RIDER",
+          },
+        ],
+      });
+    render(<DelifastPage />);
+    await screen.findByRole("heading", {
+      name: "Votre commande est en attente de paiement.",
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Actualiser le suivi" }),
+    );
+    await screen.findByRole("heading", {
+      name: "Votre commande a été livrée (démo).",
+    });
+    expect(
+      screen.getByLabelText("Historique de la commande"),
+    ).toHaveTextContent("Livrée");
+    expect(delifastApi.order).toHaveBeenLastCalledWith(
+      order.id,
+      order.accessToken,
+    );
+    expect(
+      screen.queryByRole("heading", {
+        name: "Votre commande est en attente de paiement.",
+      }),
+    ).not.toBeInTheDocument();
+  });
+  it("garde le dernier statut connu et affiche l’échec réseau sans perdre le jeton", async () => {
+    rememberOrder();
+    vi.mocked(delifastApi.order)
+      .mockResolvedValueOnce(order)
+      .mockRejectedValueOnce(new Error("Réseau interrompu"));
+    render(<DelifastPage />);
+    await screen.findByRole("heading", {
+      name: "Votre commande est en attente de paiement.",
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Actualiser le suivi" }),
+    );
+    await screen.findByText("Actualisation impossible : Réseau interrompu");
+    expect(
+      screen.getByRole("heading", {
+        name: "Votre commande est en attente de paiement.",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      JSON.parse(localStorage.getItem("delifast-order-attempt")!).order
+        .accessToken,
+    ).toBe(order.accessToken);
+  });
+});

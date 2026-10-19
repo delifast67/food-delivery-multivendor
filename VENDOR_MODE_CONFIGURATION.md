@@ -1,81 +1,19 @@
-# Vendor mode deployment guide
+# Retrait de l’administration mono-restaurant
 
-Use this guide when preparing a client deployment of the customer, rider,
-store, or web app.
+Le répertoire `enatega-singlevendor-admin` a été retiré conformément au cahier des charges. Son code reste récupérable dans l’historique Git. Les liens et la variable `NEXT_PUBLIC_SINGLE_VENDOR_ADMIN_URL` ont été supprimés de l’ancien back-office multivendeur. La notice de licence tierce est conservée dans `docs/historique/LICENSE_CREATIVE_TIM.txt`.
 
-## 1. Choose the client's mode
+## Ce qui est utilisable maintenant
 
-| Client requirement | Configuration value | Result                                                                  |
-| ------------------ | ------------------- | ----------------------------------------------------------------------- |
-| Single vendor only | `SINGLE`            | App always uses the single-vendor backend; the mode selector is hidden. |
-| Multivendor only   | `MULTI`             | App always uses the multivendor backend; the mode selector is hidden.   |
-| Both modes         | `TOGGLE`            | User can switch between single-vendor and multivendor modes.            |
+L’espace autonome de recette est `/delifast/operations` dans le site web. Il propose les connexions admin, restaurant et livreur sur l’API locale Delifast. Les permissions sont appliquées côté serveur. Le [guide local](README_DELIFAST_LOCAL.md) décrit les comptes fictifs et le démarrage.
 
-If the variable is missing or invalid, the apps default to `TOGGLE`.
+`enatega-multivendor-admin` reste un client historique : il n’est pas intégralement raccordé à la nouvelle API. Il ne faut pas le déployer comme un back-office Delifast terminé. Aucun environnement existant, domaine ou compte de production n’a été modifié par ce lot.
 
-## 2. Configure the Expo apps
+## Migration restant à terminer
 
-This applies to:
+Les écrans, routes, appels GraphQL, tests, bascules et configurations mono-restaurant présents dans les clients web/mobile historiques ne sont pas encore tous supprimés. Leur suppression exige de terminer et de tester leurs remplacements multivendeurs. Les routes historiques du site sont bloquées dans le mode local ; ce blocage n’est pas présenté comme une suppression globale.
 
-- `enatega-multivendor-app` (customer)
-- `enatega-multivendor-rider`
-- `enatega-multivendor-store`
+Avant une bascule réelle, il faudra raccorder l’admin définitif, migrer les autres clients, régénérer les lockfiles concernés, compiler chaque surface, retirer les anciens endpoints et paiements, et vérifier les bundles. Il faudra également confirmer les identifiants mobiles existants avant toute modification des bundle IDs.
 
-In the required profile inside each app's `eas.json`, add
-`EXPO_PUBLIC_VENDOR_MODE` to `env`:
+## Vérifications de ce lot
 
-```json
-{
-  "build": {
-    "production": {
-      "env": {
-        "EXPO_PUBLIC_VENDOR_MODE": "SINGLE"
-      }
-    }
-  }
-}
-```
-
-Replace `SINGLE` with `MULTI` or `TOGGLE` according to the client requirement.
-For local development, set the same variable in that app's `.env` file:
-
-```dotenv
-EXPO_PUBLIC_VENDOR_MODE=SINGLE
-```
-
-## 3. Configure the web app
-
-Set `NEXT_PUBLIC_VENDOR_MODE` in `enatega-multivendor-web/.env` or in the web
-hosting provider's deployment environment:
-
-```dotenv
-NEXT_PUBLIC_VENDOR_MODE=SINGLE
-```
-
-Replace `SINGLE` with `MULTI` or `TOGGLE` as required.
-
-For a toggleable web deployment, also set:
-
-```dotenv
-NEXT_PUBLIC_SINGLE_VENDOR_ENABLED=true
-```
-
-## 4. Configure single-vendor endpoints
-
-Deployments using `SINGLE` or `TOGGLE` must retain the existing single-vendor
-GraphQL, WebSocket, and REST endpoint variables for the relevant app. A
-`MULTI`-only deployment does not use these endpoints.
-
-## 5. Build and verify
-
-These are build-time variables. After changing a mode:
-
-1. Rebuild the customer, rider, and store apps with the intended EAS profile.
-2. Rebuild and redeploy the web app.
-3. Confirm that `SINGLE` and `MULTI` builds do not display a selector.
-4. Confirm that a `TOGGLE` build displays both options and can switch backend.
-5. Test login, loading data, and placing/receiving an order against the selected
-   backend before delivering the build.
-
-The forced setting overrides any mode previously saved on the device or in the
-browser, so existing installations follow the mode selected for the new build.
+Le module mono-restaurant est absent et les deux anciens écrans admin modifiés ne contiennent plus de lien vers lui. Leur syntaxe TSX a été contrôlée, mais le build complet de l’ancien back-office n’a pas été exécuté. La compilation et les tests complets portent sur l’API autonome et le site local, pas sur les trois applications mobiles ni l’ancien admin.

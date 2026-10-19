@@ -1,7 +1,35 @@
 import crypto from "node:crypto";
-import { Db } from "mongodb";
+import type { Db } from "mongodb";
 import { calculateCheckout } from "./pricing.js";
-import { Address, Cart, fail } from "./validation.js";
+import { type Address, type Cart, fail } from "./validation.js";
+import type { Staff } from "./auth.js";
+import { getPaymentProvider } from "./payment.js";
+
+const tokenHash = (value: string) =>
+  crypto.createHash("sha256").update(value).digest("hex");
+const now = () => new Date().toISOString();
+const initialHistory = (order: any) =>
+  order.history ?? [
+    {
+      status: order.status ?? "PAYMENT_PENDING",
+      at: order.createdAt ?? now(),
+      actorRole: "SYSTEM",
+    },
+  ];
+
+/** Keep legacy documents readable while never returning a stored client token to staff operations. */
+function customerView(order: any, token = "") {
+  return {
+    ...order,
+    accessToken: token,
+    history: initialHistory(order),
+    updatedAt: order.updatedAt ?? order.createdAt ?? now(),
+    deliveryAddress: { instructions: "", ...(order.deliveryAddress ?? {}) },
+  };
+}
+export function operationView(order: any) {
+  return customerView(order, "");
+}
 
 export async function placeOrder(
   db: Db,
@@ -15,40 +43,208 @@ export async function placeOrder(
     idempotencyKey.length > 128
   )
     fail("INVALID_IDEMPOTENCY_KEY", "Clé d’idempotence invalide");
-  const normalized = { ...cart, deliveryAddress: address };
   const fingerprint = crypto
     .createHash("sha256")
-    .update(JSON.stringify(normalized))
+    .update(JSON.stringify({ ...cart, deliveryAddress: address }))
     .digest("hex");
-  const orders = db.collection("orders");
+  const orders = db.collection<any>("orders");
   const old = await orders.findOne({ idempotencyKey });
   if (old) {
     if (old.fingerprint !== fingerprint)
       fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée avec un autre panier");
-    return old;
+    return customerView(old, old.accessToken ?? "");
   }
   const checkout = await calculateCheckout(db, cart);
+  const raw = crypto.randomBytes(24).toString("hex");
+  const timestamp = now();
   const order = {
     id: crypto.randomUUID(),
-    accessToken: crypto.randomBytes(24).toString("hex"),
+    accessToken: raw,
+    accessTokenHash: tokenHash(raw),
     status: "PAYMENT_PENDING",
     paymentStatus: "PENDING",
-    createdAt: new Date().toISOString(),
+    createdAt: timestamp,
+    updatedAt: timestamp,
     restaurantId: cart.restaurantId,
     checkout,
     idempotencyKey,
     fingerprint,
     deliveryAddress: address,
+    history: [
+      { status: "PAYMENT_PENDING", at: timestamp, actorRole: "SYSTEM" },
+    ],
   };
   try {
     await orders.insertOne(order);
-    return order;
+    return customerView(order, raw);
   } catch (error: any) {
-    if (error?.code === 11000) {
-      const concurrent = await orders.findOne({ idempotencyKey });
-      if (concurrent?.fingerprint === fingerprint) return concurrent;
-      fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée avec un autre panier");
-    }
-    throw error;
+    if (error?.code !== 11000) throw error;
+    const concurrent = await orders.findOne({ idempotencyKey });
+    if (concurrent?.fingerprint === fingerprint)
+      return customerView(concurrent, concurrent.accessToken ?? "");
+    fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée avec un autre panier");
   }
+}
+
+export async function customerOrder(db: Db, id: string, token: string) {
+  if (typeof token !== "string" || token.length < 16 || token.length > 256)
+    return null;
+  const o = await db.collection<any>("orders").findOne({
+    id,
+    $or: [{ accessTokenHash: tokenHash(token) }, { accessToken: token }],
+  });
+  return o ? customerView(o, token) : null;
+}
+
+function scope(user: Staff, extra: Record<string, unknown> = {}) {
+  if (user.role === "ADMIN") return extra;
+  if (user.role === "RIDER") return { ...extra, riderId: user.id };
+  return { ...extra, restaurantId: user.restaurantId };
+}
+
+export async function operationsOrders(db: Db, user: Staff) {
+  const query = scope(
+    user,
+    user.role === "RESTAURANT"
+      ? { paymentStatus: { $in: ["PAID", "REFUND_PENDING", "REFUNDED"] } }
+      : {},
+  );
+  return (
+    await db
+      .collection<any>("orders")
+      .find(query)
+      .sort({ createdAt: -1 })
+      .toArray()
+  ).map(operationView);
+}
+export async function availableRiders(db: Db, user: Staff) {
+  if (user.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants");
+  return db
+    .collection("staff_users")
+    .find({ role: "RIDER", active: true })
+    .project({ _id: 0, passwordHash: 0 })
+    .toArray();
+}
+
+function allowed(role: string, from: string, to: string) {
+  if (to === "CANCELLED")
+    return (
+      (role === "ADMIN" || role === "RESTAURANT") &&
+      ["CONFIRMED", "ACCEPTED"].includes(from)
+    );
+  if (role === "RESTAURANT" || role === "ADMIN") {
+    return (
+      (from === "CONFIRMED" && to === "ACCEPTED") ||
+      (from === "ACCEPTED" && to === "PREPARING") ||
+      (from === "PREPARING" && to === "READY") ||
+      (role === "ADMIN" && from === "READY" && to === "PICKED_UP") ||
+      (role === "ADMIN" && from === "PICKED_UP" && to === "DELIVERED")
+    );
+  }
+  return (
+    role === "RIDER" &&
+    ((from === "READY" && to === "PICKED_UP") ||
+      (from === "PICKED_UP" && to === "DELIVERED"))
+  );
+}
+
+export async function transition(
+  db: Db,
+  user: Staff,
+  id: string,
+  status: string,
+  expected: string,
+) {
+  const orders = db.collection<any>("orders");
+  const current = await orders.findOne({ id, ...scope(user) });
+  if (!current) fail("ORDER_NOT_FOUND", "Commande introuvable");
+  if (user.role === "RIDER" && current.riderId !== user.id)
+    fail("FORBIDDEN", "Livreur non affecté");
+  if (!allowed(user.role, expected, status))
+    fail("INVALID_TRANSITION", "Transition interdite");
+  if (current.paymentStatus !== "PAID")
+    fail("PAYMENT_REQUIRED", "Paiement confirmé requis");
+  const at = now();
+  const filter: Record<string, unknown> = {
+    id,
+    status: expected,
+    paymentStatus: "PAID",
+  };
+  if (user.role === "RIDER") filter.riderId = user.id;
+  else if (user.role === "RESTAURANT") filter.restaurantId = user.restaurantId;
+  const paymentChange =
+    status === "CANCELLED" ? { paymentStatus: "REFUND_PENDING" } : {};
+  const result = await orders.findOneAndUpdate(
+    filter,
+    {
+      $set: { status, updatedAt: at, ...paymentChange },
+      $push: { history: { status, at, actorRole: user.role } },
+    } as any,
+    { returnDocument: "after" },
+  );
+  if (!result)
+    fail("CONCURRENT_MODIFICATION", "État modifié, rechargez la commande");
+  return operationView(result);
+}
+
+export async function simulatePayment(db: Db, user: Staff, id: string) {
+  if (user.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants");
+  const provider = getPaymentProvider();
+  if (!provider)
+    fail("PAYMENT_DISABLED", "Paiement de démonstration désactivé");
+  const orders = db.collection<any>("orders");
+  // This is deliberately only the local demo adapter; no intent, webhook, or
+  // external provider request is made. The CAS below remains the source of truth.
+  await provider.confirmPayment(id);
+  const at = now();
+  const result = await orders.findOneAndUpdate(
+    { id, status: "PAYMENT_PENDING", paymentStatus: "PENDING" },
+    {
+      $set: { status: "CONFIRMED", paymentStatus: "PAID", updatedAt: at },
+      $push: { history: { status: "CONFIRMED", at, actorRole: "ADMIN" } },
+    } as any,
+    { returnDocument: "after" },
+  );
+  if (result) return operationView(result);
+  const current = await orders.findOne({ id });
+  if (current?.status === "CONFIRMED" && current.paymentStatus === "PAID")
+    return operationView(current);
+  fail("CONCURRENT_MODIFICATION", "Paiement déjà traité ou commande invalide");
+}
+
+export async function assign(
+  db: Db,
+  user: Staff,
+  id: string,
+  riderId: string,
+  expected: string,
+) {
+  if (user.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants");
+  if (!["ACCEPTED", "PREPARING", "READY"].includes(expected))
+    fail("INVALID_TRANSITION", "Affectation interdite à cet état");
+  const rider = await db
+    .collection("staff_users")
+    .findOne({ id: riderId, role: "RIDER", active: true });
+  if (!rider) fail("RIDER_NOT_FOUND", "Livreur introuvable");
+  const orders = db.collection<any>("orders");
+  const at = now();
+  const result = await orders.findOneAndUpdate(
+    {
+      id,
+      status: expected,
+      paymentStatus: "PAID",
+      $or: [{ riderId: { $exists: false } }, { riderId }],
+    },
+    { $set: { riderId, updatedAt: at } },
+    { returnDocument: "after" },
+  );
+  if (result) return operationView(result);
+  const current = await orders.findOne({ id });
+  if (
+    current?.status === expected &&
+    current.paymentStatus === "PAID" &&
+    current.riderId === riderId
+  )
+    return operationView(current);
+  fail("CONCURRENT_MODIFICATION", "État modifié, rechargez la commande");
 }

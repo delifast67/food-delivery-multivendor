@@ -3,68 +3,28 @@ type Query {
   restaurant(id: ID!): Restaurant
   calculateCheckout(input: CartInput!): Checkout!
   order(id: ID!, accessToken: String!): Order
+  operationsOrders: [Order!]!
+  availableRiders: [StaffUser!]!
+  me: StaffUser
 }
 type Mutation {
   placeOrder(input: PlaceOrderInput!): Order!
+  staffLogin(email: String!, password: String!): StaffSession!
+  staffLogout: Boolean!
+  simulateDemoPayment(orderId: ID!): Order!
+  transitionOrder(orderId: ID!, status: String!, expectedStatus: String!): Order!
+  assignRider(orderId: ID!, riderId: ID!, expectedStatus: String!): Order!
 }
-type Restaurant {
-  id: ID!
-  name: String!
-  description: String!
-  menu: [MenuItem!]!
-}
-type MenuItem {
-  id: ID!
-  name: String!
-  description: String!
-  priceXof: Int!
-  available: Boolean!
-}
-input CartInput {
-  restaurantId: ID!
-  items: [CartItemInput!]!
-}
-input CartItemInput {
-  menuItemId: ID!
-  quantity: Int!
-}
-type Checkout {
-  currency: String!
-  subtotal: Int!
-  deliveryFee: Int!
-  serviceFee: Int!
-  tax: Int!
-  discount: Int!
-  total: Int!
-  items: [CheckoutItem!]!
-}
-type CheckoutItem {
-  menuItemId: ID!
-  name: String!
-  quantity: Int!
-  unitPrice: Int!
-  total: Int!
-}
-input PlaceOrderInput {
-  restaurantId: ID!
-  items: [CartItemInput!]!
-  idempotencyKey: String!
-  deliveryAddress: DeliveryAddressInput!
-}
-input DeliveryAddressInput {
-  recipientName: String!
-  phone: String!
-  city: String!
-  neighborhood: String!
-  landmark: String!
-  instructions: String
-}
-type Order {
-  id: String!
-  accessToken: String!
-  status: String!
-  paymentStatus: String!
-  createdAt: String!
-  restaurantId: String!
-  checkout: Checkout!
-}
+type Restaurant { id: ID!, name: String!, description: String!, menu: [MenuItem!]! }
+type MenuItem { id: ID!, name: String!, description: String!, priceXof: Int!, available: Boolean! }
+input CartInput { restaurantId: ID!, items: [CartItemInput!]! }
+input CartItemInput { menuItemId: ID!, quantity: Int! }
+type Checkout { currency: String!, subtotal: Int!, deliveryFee: Int!, serviceFee: Int!, tax: Int!, discount: Int!, total: Int!, items: [CheckoutItem!]! }
+type CheckoutItem { menuItemId: ID!, name: String!, quantity: Int!, unitPrice: Int!, total: Int! }
+input PlaceOrderInput { restaurantId: ID!, items: [CartItemInput!]!, idempotencyKey: String!, deliveryAddress: DeliveryAddressInput! }
+input DeliveryAddressInput { recipientName: String!, phone: String!, city: String!, neighborhood: String!, landmark: String!, instructions: String }
+type DeliveryAddress { recipientName: String!, phone: String!, city: String!, neighborhood: String!, landmark: String!, instructions: String! }
+type OrderEvent { status: String!, at: String!, actorRole: String! }
+type Order { id: String!, accessToken: String!, status: String!, paymentStatus: String!, createdAt: String!, updatedAt: String!, restaurantId: String!, riderId: String, deliveryAddress: DeliveryAddress!, history: [OrderEvent!]!, checkout: Checkout! }
+type StaffUser { id: ID!, name: String!, role: String!, restaurantId: String }
+type StaffSession { token: String!, user: StaffUser! }

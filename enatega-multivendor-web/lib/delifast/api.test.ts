@@ -36,15 +36,13 @@ describe("Delifast helpers", () => {
   ])("recognizes definitive server validation %s", async (code) => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue({
-          ok: false,
-          status: 400,
-          json: async () => ({
-            errors: [{ message: "Refus avant écriture", extensions: { code } }],
-          }),
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({
+          errors: [{ message: "Refus avant écriture", extensions: { code } }],
         }),
+      }),
     );
     await expect(delifastApi.restaurants()).rejects.toMatchObject({
       kind: "validation",
@@ -55,15 +53,13 @@ describe("Delifast helpers", () => {
     async (code) => {
       vi.stubGlobal(
         "fetch",
-        vi
-          .fn()
-          .mockResolvedValue({
-            ok: true,
-            status: 200,
-            json: async () => ({
-              errors: [{ message: "Résultat incertain", extensions: { code } }],
-            }),
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            errors: [{ message: "Résultat incertain", extensions: { code } }],
           }),
+        }),
       );
       await expect(delifastApi.restaurants()).rejects.toMatchObject({
         kind: "unknown",
@@ -78,5 +74,49 @@ describe("Delifast helpers", () => {
     await expect(delifastApi.restaurants()).rejects.toMatchObject({
       kind: "unavailable",
     });
+  });
+
+  it("forwards staff Bearer tokens and expected status workflow variables", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: { transitionOrder: { id: "o1", status: "READY" } },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await delifastApi.transitionOrder(
+      "staff-token",
+      "o1",
+      "READY",
+      "PREPARING",
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/delifast/graphql",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          authorization: "Bearer staff-token",
+        }),
+        body: expect.stringContaining('"expectedStatus":"PREPARING"'),
+      }),
+    );
+  });
+
+  it("retains GraphQL error codes for authentication and concurrent modification", async () => {
+    for (const code of ["UNAUTHENTICATED", "CONCURRENT_MODIFICATION"]) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: code === "UNAUTHENTICATED" ? 401 : 409,
+          json: async () => ({
+            errors: [{ message: "Erreur", extensions: { code } }],
+          }),
+        }),
+      );
+      await expect(
+        delifastApi.operationsOrders("staff-token"),
+      ).rejects.toMatchObject({ code });
+    }
   });
 });

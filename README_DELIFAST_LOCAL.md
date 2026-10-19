@@ -1,96 +1,138 @@
-# Delifast Multivendor — premier parcours autonome
+# Delifast Multivendor — démonstration autonome locale
 
-Ce lot permet de consulter deux restaurants de démonstration, composer un panier mono-restaurant, obtenir un total calculé par le serveur en XOF et enregistrer une commande dans MongoDB. Le site et l’API n’ont besoin ni du backend propriétaire historique ni de clés de paiement.
+Le site local permet de consulter deux restaurants fictifs, composer un panier mono-restaurant, calculer le total côté serveur en XOF, enregistrer une commande et suivre son historique. Un espace opérations distinct permet au personnel de tester l’acceptation restaurant, la préparation, l’affectation manuelle et la livraison simulée.
 
-**Aucun paiement ni livraison ne sont déclenchés.** La commande reste `PAYMENT_PENDING`, avec paiement `PENDING`. Le paiement à la livraison est absent du contrat local. Les anciens modules sont conservés pour la migration ; ils ne sont pas intégralement transformés par ce lot.
+**Aucun paiement ou remboursement réel, aucune livraison physique, aucun SMS ou push ne sont déclenchés.** Les comptes, restaurants, menus et frais sont des données d’essai. Le paiement à la livraison n’existe pas dans le contrat. Ne pas exposer cette démonstration sur Internet avec des données personnelles réelles.
 
 ## Démarrer avec Docker
 
-Prérequis : Docker Engine et Docker Compose v2. Depuis la racine du dépôt :
+Prérequis : Docker Engine et Compose v2.
 
 ```bash
 docker compose -f compose.delifast.yaml up --build -d
 ```
 
-Ouvrir **http://localhost:3000/delifast**. L’API est disponible sur http://localhost:4000/graphql et son contrôle de santé sur http://localhost:4000/health. MongoDB utilise un volume persistant. Les migrations/index puis le seed sont exécutés avant le démarrage de l’API. Redis est provisionné pour les prochains lots ; l’idempotence de ce lot repose sur l’index unique MongoDB, pas sur un verrou Redis.
+Ouvrir **http://localhost:3000/delifast** pour le client et **http://localhost:3000/delifast/operations** pour le personnel. L’API est sur http://localhost:4000/graphql et son contrôle de santé sur http://localhost:4000/health. Les ports sont liés à `127.0.0.1`. MongoDB conserve ses données dans un volume ; migrations et seed précèdent le démarrage de l’API. Redis est provisionné pour de futurs traitements, sans usage métier dans ce lot.
+
+Par défaut, les commandes restent en attente de paiement. Pour tester le parcours entier avec le simulateur **strictement fictif** :
+
+```bash
+DELIFAST_DEMO_PAYMENTS=true docker compose -f compose.delifast.yaml up --build -d
+```
+
+L’activation du simulateur n’est ni une intégration à un opérateur ni une autorisation d’encaissement. Le simulateur est inaccessible au client et au restaurant : seul le compte admin local peut l’appeler.
 
 ```bash
 # Arrêter sans effacer les commandes
 docker compose -f compose.delifast.yaml down
-# Consulter les journaux
+# Journaux
 docker compose -f compose.delifast.yaml logs api web
 ```
 
-Ne pas utiliser `down -v` si l’on souhaite conserver les données. L’environnement est volontairement local : les ports publiés sont liés à `127.0.0.1`, sans authentification de production.
+Ne pas lancer `down -v` si l’on souhaite conserver les données.
+
+## Comptes d’essai — localhost uniquement
+
+| Rôle | Email | Mot de passe fictif |
+| --- | --- | --- |
+| Administration | `admin@delifast.local` | `AdminDemo!2026` |
+| Restaurant La Table du Faso | `restaurant1@delifast.local` | `RestaurantDemo!2026` |
+| Restaurant Ouaga Délices | `restaurant2@delifast.local` | `RestaurantDemo!2026` |
+| Livreur | `rider@delifast.local` | `RiderDemo!2026` |
+
+Ces identifiants publics du seed ne doivent jamais servir à des comptes réels. Les mots de passe sont hachés ; les jetons de session du personnel sont opaques, hachés en base, expirants et révocables par déconnexion. Le navigateur conserve la session du personnel dans `sessionStorage`, pas dans le stockage persistant du panier. Cela ne remplace pas le durcissement d’une authentification de production.
+
+## Tester le cycle de commande
+
+1. Côté client : choisir un restaurant, des plats et une adresse fictive, puis créer la commande. Elle reste `PAYMENT_PENDING/PENDING`.
+2. Côté admin : si le simulateur est activé, simuler la confirmation. Elle devient `CONFIRMED/PAID`, sans transfert d’argent.
+3. Côté restaurant concerné : accepter puis passer en préparation et prête (`ACCEPTED`, `PREPARING`, `READY`). Un autre restaurant ne peut ni voir ni modifier cette commande.
+4. Côté admin : affecter le livreur après acceptation. Le livreur ne voit que ses missions.
+5. Côté livreur affecté : confirmer la récupération puis la livraison (`PICKED_UP`, `DELIVERED`).
+6. Côté client : actualiser la dernière commande pour retrouver son statut et l’historique serveur.
+
+Les actions incluent le statut attendu : une mise à jour effectuée depuis un écran périmé est refusée, puis l’interface recharge les données. Les mutations sensibles utilisent une comparaison atomique du statut en base. Une simulation rejouée ne doit pas créer plusieurs confirmations.
+
+Le restaurant peut refuser une commande confirmée ou acceptée. Une commande fictivement payée passe alors à `CANCELLED/REFUND_PENDING`. **Aucun remboursement n’est exécuté** ; c’est un état de traitement à implémenter avec le futur prestataire. Les livraisons et annulations terminées ne sont pas réouvertes arbitrairement.
+
+Le [contrat des opérations](delifast-api/OPERATIONS_CONTRACT.md) et le [schéma GraphQL](delifast-api/schema/v1.graphql) décrivent la surface locale versionnée. Elle n’est pas compatible avec toutes les opérations des anciens clients mobiles/admin.
 
 ## Démarrer sans Docker
 
-Version retenue pour l’API et le web : **Node 24.19.0**, renseignée dans `.nvmrc`. Le store avait un verrou Node 20.16.0 insuffisant : React Native et Metro du lockfile demandent au minimum 20.19.4. Son minimum est désormais déclaré et son `.nvmrc` aligné ; cela ne constitue pas une validation des builds Android/iOS.
+Utiliser **Node 24.19.0** (`.nvmrc`). Le minimum React Native/Metro historique du store a été corrigé à 20.19.4 ; aucun build Android/iOS n’est validé par cette correction.
 
 ```bash
-# Depuis la racine ; nvm use si nvm est installé
-node --version
 npm ci --prefix delifast-api --ignore-scripts --no-audit --no-fund
 npm ci --prefix enatega-multivendor-web --ignore-scripts --no-audit --no-fund
+# Terminal 1 : véritable moteur MongoDB de développement
+npm run dev:db --prefix delifast-api
 ```
 
-Lancer un MongoDB local sur `127.0.0.1:27017`, ou utiliser le serveur MongoDB de développement fourni :
+Le premier lancement télécharge un binaire MongoDB réservé au développement. Dans un autre terminal :
 
 ```bash
-cd delifast-api
-npm run dev:db
+npm run migrate --prefix delifast-api
+npm run seed --prefix delifast-api
+npm run build --prefix delifast-api
+# Omettre DELIFAST_DEMO_PAYMENTS pour laisser tout paiement désactivé
+DELIFAST_DEMO_PAYMENTS=true npm start --prefix delifast-api
 ```
 
-Ce dernier utilise un véritable binaire MongoDB téléchargé au premier démarrage. Il est réservé au développement, pas à la production. Garder ce terminal ouvert. Dans un autre terminal :
+Dans un troisième terminal :
 
 ```bash
-cd delifast-api
-npm run migrate
-npm run seed
-npm run build
-npm start
+DELIFAST_LOCAL_MODE=true DELIFAST_API_URL=http://127.0.0.1:4000/graphql npm run dev --prefix enatega-multivendor-web -- --port 3000
 ```
 
-Dans un troisième terminal, depuis la racine :
+`DELIFAST_API_URL` est une variable serveur. Le navigateur utilise le proxy same-origin `/api/delifast/graphql`, qui transmet l’authentification du personnel sans appeler un serveur métier historique. Le mode local isole `/delifast` des routes historiques.
 
-```bash
-cd enatega-multivendor-web
-DELIFAST_LOCAL_MODE=true DELIFAST_API_URL=http://127.0.0.1:4000/graphql npm run dev -- --port 3000
-```
-
-Le mode local isole `/delifast` des écrans historiques. `DELIFAST_API_URL` est une variable serveur, non un endpoint public intégré au navigateur : le site utilise son proxy same-origin `/api/delifast/graphql`. Ne jamais exposer ce mode sur Internet avec de vraies données clients.
-
-## Vérifier le lot
+## Vérifications reproductibles
 
 ```bash
 npm run build --prefix delifast-api
 npm test --prefix delifast-api
 node scripts/delifast-persistence.mjs
+node scripts/delifast-backup-test.mjs
 npm test --prefix enatega-multivendor-web
 node scripts/delifast-contract.mjs
 DELIFAST_LOCAL_MODE=true npm run build --prefix enatega-multivendor-web
-# Avec API, MongoDB et web déjà démarrés :
+# Avec MongoDB, API (simulateur activé) et web déjà démarrés :
 node scripts/delifast-smoke.mjs
+node scripts/delifast-operations-smoke.mjs
 ```
 
-Le smoke test crée une commande fictive. Il vérifie le catalogue, les montants entiers serveur, le refus de montants injectés, le panier mono-restaurant, les quantités, l’absence de paiement à la livraison, cinq soumissions concurrentes, le rejeu sans doublon, les conflits de clé, la lecture protégée par jeton et le branchement réel du proxy web. Les tests unitaires et d’intégration complètent ce contrôle. La CI ciblée se trouve dans `.github/workflows/delifast-local.yml`.
+Les scripts HTTP créent uniquement des commandes fictives dans la base choisie. Le premier vérifie catalogue, montants, refus des prix client, mono-restaurant, quantités, absence de paiement à la livraison, concurrence/idempotence, jeton client et isolation web. Le second traverse le proxy web avec les rôles, teste les interdictions, la simulation concurrente, le restaurant, le dispatch, le livreur, le suivi client, l’annulation et la révocation de session.
 
-Le test `delifast-persistence.mjs` utilise une base temporaire séparée, arrête complètement MongoDB et l’API, les relance puis vérifie le contenu, le jeton, le total et le rejeu de la commande. Il ne touche pas la base de travail et utilise le port API 4105 (modifiable via `DELIFAST_PERSISTENCE_PORT`).
+Le test de persistance utilise une base temporaire, arrête complètement MongoDB et l’API, les relance puis vérifie commande et rejeu. Il ne touche pas la base de travail et utilise par défaut le port API 4105 (`DELIFAST_PERSISTENCE_PORT` pour le changer). La CI ciblée est `.github/workflows/delifast-local.yml`.
 
-Le schéma est versionné dans `delifast-api/schema/v1.graphql`. C’est un **sous-ensemble local explicite**, pas un remplacement compatible avec les centaines d’opérations des applications historiques.
+## Sauvegarde et restauration locales
 
-## Ce qui protège déjà la commande
+`scripts/delifast-backup.mjs` réalise une copie logique BSON/EJSON avec index et somme de contrôle. **Arrêter d’abord l’API et tous les producteurs d’écritures** : cet outil n’est pas un snapshot transactionnel. Le drapeau `--offline` atteste cet arrêt, il ne l’effectue pas. La sauvegarde contient des adresses et jetons d’accès commande : la conserver comme une donnée privée, hors Git. Les sessions sont exclues ; le personnel doit se reconnecter après restauration.
 
-Le serveur relit les prix du catalogue, contrôle les quantités, l’appartenance au restaurant, l’ouverture et la disponibilité. Les prix de ligne et le détail des frais sont figés dans la commande. Le client ne peut pas imposer un montant.
+Exemple pour l’installation Node, MongoDB restant démarré :
 
-Une clé d’idempotence sauvegardée avant l’envoi permet de reprendre la même tentative après une erreur réseau. L’unicité MongoDB empêche plusieurs créations pour la même clé, même sous concurrence ; réutiliser une clé pour un autre contenu est un conflit. Consulter une commande nécessite son identifiant et son jeton d’accès non devinable. Cela ne remplace pas une future authentification client.
+```bash
+# Arrêter l’API avec Ctrl-C avant ces commandes.
+MONGODB_URI=mongodb://127.0.0.1:27017/delifast node scripts/delifast-backup.mjs backup .local-data/backups/delifast.json --offline
+# Cible entièrement vierge : l’outil refuse d’écraser une base existante.
+MONGODB_URI=mongodb://127.0.0.1:27017/delifast_restored node scripts/delifast-backup.mjs restore .local-data/backups/delifast.json --offline
+# Relancer les index/migrations, puis l’API sur la nouvelle base.
+MONGODB_URI=mongodb://127.0.0.1:27017/delifast_restored npm run migrate --prefix delifast-api
+MONGODB_URI=mongodb://127.0.0.1:27017/delifast_restored npm start --prefix delifast-api
+```
 
-## Données fictives et décisions restantes
+Pour Docker, arrêter `api` et `web` avec Compose, garder `mongo` démarré et exécuter l’outil depuis l’hôte avec les dépendances API installées et le port MongoDB local publié. Ne pas recréer les conteneurs sur une base vide avant la restauration. Le test automatisé restaure dans une seconde base et vérifie données, types BSON, historique, index unique, refus d’écrasement et corruption détectée avant écriture.
 
-Les plats, tarifs, frais de livraison et de service, taxes et zone de démonstration ne sont **pas des décisions commerciales validées**. La ville du jeu d’essai est Ouagadougou ; la validation locale ne prouve pas qu’une adresse est réellement livrable. Aucun contrôle de zone GPS ou d’horaire réel n’est revendiqué.
+Limites : outil local en mémoire (100 Mio maximum), index usuels seulement, pas de vues ni restauration transactionnelle. Si une restauration échoue en cours d’écriture, sa base cible peut être partielle : ne pas y démarrer l’API ; examiner le problème et choisir une nouvelle base vierge. Les sauvegardes chiffrées, externalisées, automatisées et supervisées de production restent à concevoir.
 
-Avant un pilote réel, il reste à valider avec Hilton les restaurants et menus, les zones et frais, les règles fiscales et commerciales, le fournisseur de paiement et ses accès marchands. Ensuite : authentification/rôles, paiement via adaptateur et webhooks vérifiés, gestion restaurant/livreur/admin, stocks concurrentiels, dispatch, suivi, notifications, annulation/remboursement et sauvegarde/restauration.
+## Protections et travail restant
 
-Le retrait complet du single-vendor, le rebranding global, la suppression des anciens moyens de paiement et des URLs distantes dans tous les modules, ainsi que les builds mobiles, appartiennent aux lots suivants. Le mode local ne doit pas être présenté comme une migration complète ou un produit prêt pour la production.
+Les montants sont relus dans le catalogue serveur puis figés dans la commande. L’index unique MongoDB protège la clé d’idempotence. La lecture client nécessite un jeton non devinable. Les opérations staff contrôlent rôle et périmètre côté serveur ; le jeton d’accès client n’est pas divulgué dans les réponses opérations. Ce lot ne fournit pas encore de comptes clients permanents, OTP ou récupération de compte.
 
-Les correctifs ciblés du lot ont mis à jour Next, axios et sharp. L’audit des dépendances web de production signale encore des alertes élevées dans Firebase et sa chaîne Firestore/gRPC héritée ; le downgrade majeur proposé automatiquement n’a pas été appliqué aveuglément. Des alertes existent aussi dans les outils de développement hérités. Le serveur API refuse explicitement `NODE_ENV=production` tant que les protections d’un lancement réel ne sont pas livrées.
+Les prix, taxes, zones et frais du seed ne sont **pas des décisions commerciales validées**. La ville de démonstration est Ouagadougou ; aucune livrabilité GPS, plage horaire réelle ou réserve de stock concurrentielle n’est revendiquée.
+
+Pour un pilote réel, Hilton doit valider le prestataire et ses accès marchands, les restaurants/menus, zones/frais/commissions et règles d’annulation. Il reste du développement indépendant de ces validations : migration complète des trois applications mobiles et de l’ancien admin, retrait des anciens paiements et chemins mono-restaurant restants, rebranding global, gestion de catalogue/horaires/zones, comptes clients, suivi GPS, notifications, support, finances/rapprochement, jobs et stockage objet.
+
+Le module `enatega-singlevendor-admin` a été supprimé et les liens qui y menaient retirés. Cela ne signifie pas que tout le code mono-restaurant historique a disparu. Le back-office local des opérations ne remplace pas encore toutes les fonctionnalités administratives demandées. Les builds mobiles, la publication stores et le déploiement de préproduction ne sont pas exécutés dans ce lot. La PR n’est ni fusionnée ni déployée en production.
+
+Les dépendances historiques web conservent notamment des alertes Firebase/Firestore/gRPC. Un correctif automatique impliquant un changement majeur n’a pas été appliqué aveuglément. Le blocage explicite `NODE_ENV=production` côté API reste en place.

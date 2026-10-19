@@ -1,0 +1,56 @@
+#!/usr/bin/env node
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { mkdtemp, rm, readFile, writeFile, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { backup, restore } from './delifast-backup.mjs';
+const require = createRequire(new URL('../delifast-api/package.json', import.meta.url));
+const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoClient, ObjectId, BSON } = require('mongodb');
+const folder = await mkdtemp(join(tmpdir(), 'delifast-backup-'));
+const file = join(folder, 'backup.json');
+let mongo;
+let client;
+try {
+  mongo = await MongoMemoryServer.create();
+  client = await new MongoClient(mongo.getUri()).connect();
+  const source = client.db('delifast_backup_source');
+  const order = { _id: new ObjectId(), id: 'backup-order', status: 'DELIVERED', createdAt: new Date(), amount: BSON.Long.fromNumber(5000), accessToken: 'test-only-token', history: [{ status: 'DELIVERED', at: new Date().toISOString() }] };
+  await source.collection('orders').createIndex({ id: 1 }, { unique: true });
+  await source.collection('orders').insertOne(order);
+  await source.collection('staff_users').insertOne({ id: 'test-admin', passwordHash: 'fictional-test-hash' });
+  await source.collection('staff_sessions').insertOne({ tokenHash: 'should-not-survive', expiresAt: new Date() });
+  await source.createCollection('empty_collection');
+  const sourceUri = mongo.getUri('delifast_backup_source');
+  await assert.rejects(backup({ uri: sourceUri, file }), /--offline/);
+  const saved = await backup({ uri: sourceUri, file, offline: true });
+  assert.deepEqual(saved, { collections: 3, documents: 2 });
+  assert.equal((await stat(file)).mode & 0o777, 0o600);
+  assert.doesNotMatch(await readFile(file, 'utf8'), /should-not-survive/);
+  await assert.rejects(backup({ uri: sourceUri, file, offline: true }), /EEXIST/);
+  console.log('OK — sauvegarde privée, sessions exclues, arrêt des écritures exigé et écrasement refusé');
+  await assert.rejects(restore({ uri: sourceUri, file, offline: true }), /vierge/);
+  assert.equal(await source.collection('orders').countDocuments(), 1);
+  const targetUri = mongo.getUri('delifast_backup_restored');
+  assert.deepEqual(await restore({ uri: targetUri, file, offline: true }), saved);
+  const target = client.db('delifast_backup_restored');
+  assert.deepEqual(await target.collection('orders').findOne({ id: 'backup-order' }), await source.collection('orders').findOne({ id: 'backup-order' }));
+  assert.equal(await target.collection('staff_users').countDocuments(), 1);
+  assert.equal(await target.collection('staff_sessions').countDocuments(), 0);
+  assert.equal((await target.listCollections({ name: 'empty_collection' }).toArray()).length, 1);
+  await assert.rejects(target.collection('orders').insertOne({ id: 'backup-order' }), /duplicate key/);
+  console.log('OK — restauration dans une base vierge : BSON, historique, documents et index unique préservés');
+  const corrupt = JSON.parse(await readFile(file, 'utf8'));
+  corrupt.payload += ' ';
+  const badFile = join(folder, 'corrupted.json');
+  await writeFile(badFile, JSON.stringify(corrupt));
+  await assert.rejects(restore({ uri: mongo.getUri('delifast_backup_bad'), file: badFile, offline: true }), /contrôle/);
+  assert.equal((await client.db('delifast_backup_bad').listCollections().toArray()).length, 0);
+  console.log('OK — corruption détectée avant toute écriture');
+  console.log('SUCCÈS — sauvegarde/restauration logique locale vérifiée sur un véritable moteur MongoDB.');
+} finally {
+  await client?.close();
+  await mongo?.stop();
+  await rm(folder, { recursive: true, force: true });
+}

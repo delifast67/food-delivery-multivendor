@@ -47,23 +47,48 @@ export type Order = {
   createdAt: string;
   restaurantId: string;
   checkout: Checkout;
+  updatedAt?: string;
+  riderId?: string | null;
+  deliveryAddress?: DeliveryAddress;
+  history?: OrderEvent[];
 };
+export type OrderEvent = { status: string; at: string; actorRole: string };
+export type StaffUser = {
+  id: string;
+  name: string;
+  role: string;
+  restaurantId?: string | null;
+};
+export type StaffSession = { token: string; user: StaffUser };
 
 const RESTAURANTS = `query Restaurants { restaurants { id name description menu { id name description priceXof available } } }`;
 const RESTAURANT = `query Restaurant($id: ID!) { restaurant(id: $id) { id name description menu { id name description priceXof available } } }`;
 const CHECKOUT = `query CalculateCheckout($input: CartInput!) { calculateCheckout(input: $input) { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total } } }`;
 const PLACE_ORDER = `mutation PlaceOrder($input: PlaceOrderInput!) { placeOrder(input: $input) { id accessToken status paymentStatus createdAt restaurantId checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total } } } }`;
-const ORDER = `query Order($id: ID!, $accessToken: String!) { order(id: $id, accessToken: $accessToken) { id accessToken status paymentStatus createdAt restaurantId checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total } } } }`;
+const ORDER = `query Order($id: ID!, $accessToken: String!) { order(id: $id, accessToken: $accessToken) { id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total } } } }`;
+const ORDER_OPERATIONS_FIELDS = `id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total } }`;
+const STAFF_LOGIN = `mutation StaffLogin($email: String!, $password: String!) { staffLogin(email: $email, password: $password) { token user { id name role restaurantId } } }`;
+const OPERATIONS_ORDERS = `query OperationsOrders { operationsOrders { ${ORDER_OPERATIONS_FIELDS} } }`;
+const AVAILABLE_RIDERS = `query AvailableRiders { availableRiders { id name role restaurantId } }`;
+const ME = `query Me { me { id name role restaurantId } }`;
+const STAFF_LOGOUT = `mutation StaffLogout { staffLogout }`;
+const SIMULATE_PAYMENT = `mutation SimulateDemoPayment($orderId: ID!) { simulateDemoPayment(orderId: $orderId) { ${ORDER_OPERATIONS_FIELDS} } }`;
+const TRANSITION = `mutation TransitionOrder($orderId: ID!, $status: String!, $expectedStatus: String!) { transitionOrder(orderId: $orderId, status: $status, expectedStatus: $expectedStatus) { ${ORDER_OPERATIONS_FIELDS} } }`;
+const ASSIGN = `mutation AssignRider($orderId: ID!, $riderId: ID!, $expectedStatus: String!) { assignRider(orderId: $orderId, riderId: $riderId, expectedStatus: $expectedStatus) { ${ORDER_OPERATIONS_FIELDS} } }`;
 
 async function request<T>(
   query: string,
   variables?: Record<string, unknown>,
+  bearer?: string,
 ): Promise<T> {
   let response: Response;
   try {
     response = await fetch("/api/delifast/graphql", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
+      },
       body: JSON.stringify({ query, variables }),
     });
   } catch {
@@ -122,6 +147,7 @@ async function request<T>(
           ? "unavailable"
           : "unknown",
       response.status,
+      code,
     );
   }
   if (!payload.data)
@@ -159,6 +185,59 @@ export const delifastApi = {
     request<{ order: Order | null }>(ORDER, { id, accessToken }).then(
       (data) => data.order,
     ),
+  staffLogin: (email: string, password: string) =>
+    request<{ staffLogin: StaffSession }>(STAFF_LOGIN, {
+      email,
+      password,
+    }).then((data) => data.staffLogin),
+  me: (token: string) =>
+    request<{ me: StaffUser | null }>(ME, undefined, token).then(
+      (data) => data.me,
+    ),
+  operationsOrders: (token: string) =>
+    request<{ operationsOrders: Order[] }>(
+      OPERATIONS_ORDERS,
+      undefined,
+      token,
+    ).then((data) => data.operationsOrders),
+  availableRiders: (token: string) =>
+    request<{ availableRiders: StaffUser[] }>(
+      AVAILABLE_RIDERS,
+      undefined,
+      token,
+    ).then((data) => data.availableRiders),
+  staffLogout: (token: string) =>
+    request<{ staffLogout: boolean }>(STAFF_LOGOUT, undefined, token).then(
+      (data) => data.staffLogout,
+    ),
+  simulateDemoPayment: (token: string, orderId: string) =>
+    request<{ simulateDemoPayment: Order }>(
+      SIMULATE_PAYMENT,
+      { orderId },
+      token,
+    ).then((data) => data.simulateDemoPayment),
+  transitionOrder: (
+    token: string,
+    orderId: string,
+    status: string,
+    expectedStatus: string,
+  ) =>
+    request<{ transitionOrder: Order }>(
+      TRANSITION,
+      { orderId, status, expectedStatus },
+      token,
+    ).then((data) => data.transitionOrder),
+  assignRider: (
+    token: string,
+    orderId: string,
+    riderId: string,
+    expectedStatus: string,
+  ) =>
+    request<{ assignRider: Order }>(
+      ASSIGN,
+      { orderId, riderId, expectedStatus },
+      token,
+    ).then((data) => data.assignRider),
 };
 
 export const formatXof = (amount: number) =>
@@ -176,14 +255,17 @@ export type OrderAttempt = {
 };
 export class DelifastApiError extends Error {
   readonly kind: "validation" | "unavailable" | "unknown";
+  readonly code?: string;
   constructor(
     message: string,
     kind: "validation" | "unavailable" | "unknown",
     readonly status?: number,
+    code?: string,
   ) {
     super(message);
     this.name = "DelifastApiError";
     this.kind = kind;
+    this.code = code;
   }
 }
 export function makeIdempotencyKey() {

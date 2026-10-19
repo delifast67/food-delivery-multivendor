@@ -45,6 +45,8 @@ services:
       HOST: 0.0.0.0
       PORT: "4000"
       MONGODB_URI: mongodb://mongo:27017/delifast
+      # Désactivé par défaut. Démonstration fictive, aucun encaissement réel.
+      DELIFAST_DEMO_PAYMENTS: ${DELIFAST_DEMO_PAYMENTS:-false}
     ports:
       - "127.0.0.1:4000:4000"
     depends_on:

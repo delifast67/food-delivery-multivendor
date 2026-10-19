@@ -30,6 +30,7 @@ export const config = {
   maxBody: 100_000,
   rateLimitWindowMs: boundedInteger("RATE_LIMIT_WINDOW_MS", 60_000),
   rateLimitMax: boundedInteger("RATE_LIMIT_MAX", 100),
+  demoPayments: process.env.DELIFAST_DEMO_PAYMENTS === "true",
 };
 
 export const INT_MAX_VALUE = INT_MAX;

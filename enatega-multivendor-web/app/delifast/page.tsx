@@ -29,6 +29,26 @@ const messageFor = (error: unknown) =>
   error instanceof Error
     ? error.message
     : "Une erreur inattendue est survenue.";
+const statusLabel: Record<string, string> = {
+  PAYMENT_PENDING: "Paiement en attente",
+  CONFIRMED: "Confirmée",
+  ACCEPTED: "Acceptée",
+  PREPARING: "En préparation",
+  READY: "Prête",
+  PICKED_UP: "Récupérée",
+  DELIVERED: "Livrée",
+  CANCELLED: "Annulée",
+};
+const statusTitle: Record<string, string> = {
+  PAYMENT_PENDING: "Votre commande est en attente de paiement.",
+  CONFIRMED: "Votre commande est confirmée (démo).",
+  ACCEPTED: "Le restaurant a accepté votre commande.",
+  PREPARING: "Votre commande est en préparation.",
+  READY: "Votre commande est prête.",
+  PICKED_UP: "Votre commande est en cours de livraison (démo).",
+  DELIVERED: "Votre commande a été livrée (démo).",
+  CANCELLED: "Votre commande a été annulée.",
+};
 
 export default function DelifastPage() {
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
@@ -43,6 +63,7 @@ export default function DelifastPage() {
   const [loading, setLoading] = useState("restaurants");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [trackingLoading, setTrackingLoading] = useState(false);
   const submittingRef = useRef(false);
   const locked = !!attempt && !order;
 
@@ -93,6 +114,29 @@ export default function DelifastPage() {
       setAddress(attempt.payload.deliveryAddress);
     }
   }, [attempt, restaurants, selected]);
+  const refreshOrder = async () => {
+    if (!order) return;
+    setTrackingLoading(true);
+    try {
+      const fresh = await delifastApi.order(order.id, order.accessToken);
+      if (fresh) {
+        setOrder(fresh);
+        setNotice("");
+      } else
+        setNotice(
+          "La commande n’a pas été retrouvée. Le dernier statut connu reste affiché.",
+        );
+    } catch (e) {
+      setNotice(`Actualisation impossible : ${messageFor(e)}`);
+    } finally {
+      setTrackingLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (!order) return;
+    const timer = window.setInterval(() => void refreshOrder(), 30000);
+    return () => window.clearInterval(timer);
+  }, [order]);
   useEffect(() => {
     // Never recalculate a persisted unresolved attempt: its original payload is the replay contract.
     if (locked) {
@@ -268,15 +312,42 @@ export default function DelifastPage() {
         <Header cartCount={cartCount} />
         <section className="df-success">
           <span className="df-kicker">COMMANDE ENREGISTRÉE</span>
-          <h1>Votre commande est en attente de paiement.</h1>
+          <h1>{statusTitle[order.status] || "Suivi de votre commande"}</h1>
           <p>
-            Référence <strong>{order.id}</strong> · statut {order.status} ·
-            paiement {order.paymentStatus}
+            Référence <strong>{order.id}</strong> · statut{" "}
+            {statusLabel[order.status] || order.status} · paiement{" "}
+            {order.paymentStatus}
           </p>
+          {notice && (
+            <div className="df-notice" role="status">
+              {notice}
+            </div>
+          )}
+          <button
+            className="df-secondary"
+            onClick={refreshOrder}
+            disabled={trackingLoading}
+          >
+            {trackingLoading ? "Actualisation…" : "Actualiser le suivi"}
+          </button>
+          {!!order.history?.length && (
+            <div className="df-history" aria-label="Historique de la commande">
+              <strong>Historique</strong>
+              {order.history.map((event, index) => (
+                <div key={`${event.at}-${index}`}>
+                  <span>{statusLabel[event.status] || event.status}</span>
+                  <small>
+                    {new Date(event.at).toLocaleString("fr-FR")} ·{" "}
+                    {event.actorRole}
+                  </small>
+                </div>
+              ))}
+            </div>
+          )}
           <p className="df-muted">
-            Ceci est une démo locale Delifast Multivendor. Aucun paiement réel,
-            aucune livraison réelle et aucune confirmation de commande ne sont
-            déclenchés.
+            Ceci est une démo locale Delifast Multivendor. Les confirmations et
+            statuts sont fictifs : aucun paiement, remboursement ou service de
+            livraison réel n’est déclenché.
           </p>
           <div className="df-total">
             <span>Total serveur</span>
@@ -574,6 +645,9 @@ function Header({ cartCount }: { cartCount: number }) {
       <div className="df-header-note">
         OUAGADOUGOU / <strong>XOF</strong>{" "}
         <span className="df-cart-pill">{cartCount}</span>
+        <a className="df-ops-link" href="/delifast/operations">
+          Opérations
+        </a>
       </div>
     </header>
   );

@@ -36,6 +36,8 @@ jobs:
       MONGODB_URI: mongodb://127.0.0.1:27017/delifast_ci
       DELIFAST_LOCAL_MODE: 'true'
       DELIFAST_API_URL: http://127.0.0.1:4000/graphql
+      # Simulation réservée à cette base de test, jamais un paiement réel.
+      DELIFAST_DEMO_PAYMENTS: 'true'
       NEXT_TELEMETRY_DISABLED: '1'
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +55,7 @@ jobs:
           npm run build --prefix delifast-api
           npm test --prefix delifast-api
           node scripts/delifast-persistence.mjs
+          node scripts/delifast-backup-test.mjs
       - name: Installer le web
         run: npm ci --prefix enatega-multivendor-web --ignore-scripts --no-audit --no-fund
       - name: Tester le contrat et compiler le web local
@@ -79,7 +82,9 @@ jobs:
           }
           JS
       - name: Tester le parcours HTTP de bout en bout
-        run: node scripts/delifast-smoke.mjs
+        run: |
+          node scripts/delifast-smoke.mjs
+          node scripts/delifast-operations-smoke.mjs
       - name: Afficher les journaux en cas d’échec
         if: failure()
         run: cat /tmp/delifast-api.log /tmp/delifast-web.log 2>/dev/null || true

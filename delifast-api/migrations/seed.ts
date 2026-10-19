@@ -1,4 +1,5 @@
 import { connect, closeDb } from "../src/db.js";
+import { passwordHash } from "../src/auth.js";
 const db = await connect();
 const rs = [
   {
@@ -73,6 +74,16 @@ for (const r of rs) {
         { $set: { ...m, restaurantId: r.id } },
         { upsert: true },
       );
+}
+const staff = [
+  { id: "staff-admin", name: "Admin Démo", email: "admin@delifast.local", role: "ADMIN", restaurantId: null, password: "AdminDemo!2026" },
+  { id: "staff-rest-1", name: "Restaurant Koudougou", email: "restaurant1@delifast.local", role: "RESTAURANT", restaurantId: "rest-koudougou", password: "RestaurantDemo!2026" },
+  { id: "staff-rest-2", name: "Restaurant Ouaga Centre", email: "restaurant2@delifast.local", role: "RESTAURANT", restaurantId: "rest-ouaga-centre", password: "RestaurantDemo!2026" },
+  { id: "staff-rider", name: "Livreur Démo", email: "rider@delifast.local", role: "RIDER", restaurantId: null, password: "RiderDemo!2026" },
+];
+for (const s of staff) {
+  const { password, ...user } = s;
+  await db.collection("staff_users").updateOne({ id: s.id }, { $set: { ...user, passwordHash: passwordHash(password), active: true } }, { upsert: true });
 }
 console.log("Seed démo idempotent appliqué");
 await closeDb();

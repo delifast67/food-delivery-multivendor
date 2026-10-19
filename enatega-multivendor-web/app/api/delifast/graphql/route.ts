@@ -18,6 +18,9 @@ export async function POST(request: NextRequest) {
       headers: {
         "content-type": "application/json",
         accept: "application/json",
+        ...(request.headers.get("authorization")
+          ? { authorization: request.headers.get("authorization") as string }
+          : {}),
       },
       body,
       cache: "no-store",
