@@ -1,0 +1,85 @@
+name: Delifast local — API et parcours web
+
+on:
+  push:
+    paths:
+      - 'delifast-api/**'
+      - 'enatega-multivendor-web/**'
+      - 'scripts/delifast-*.mjs'
+      - '.github/workflows/delifast-local.yml'
+      - 'compose.delifast.yaml'
+  pull_request:
+    paths:
+      - 'delifast-api/**'
+      - 'enatega-multivendor-web/**'
+      - 'scripts/delifast-*.mjs'
+      - '.github/workflows/delifast-local.yml'
+      - 'compose.delifast.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-ordering:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      mongo:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      MONGODB_URI: mongodb://127.0.0.1:27017/delifast_ci
+      DELIFAST_LOCAL_MODE: 'true'
+      DELIFAST_API_URL: http://127.0.0.1:4000/graphql
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            delifast-api/package-lock.json
+            enatega-multivendor-web/package-lock.json
+      - name: Installer l’API
+        run: npm ci --prefix delifast-api --ignore-scripts --no-audit --no-fund
+      - name: Compiler et tester l’API
+        run: |
+          npm run build --prefix delifast-api
+          npm test --prefix delifast-api
+          node scripts/delifast-persistence.mjs
+      - name: Installer le web
+        run: npm ci --prefix enatega-multivendor-web --ignore-scripts --no-audit --no-fund
+      - name: Tester le contrat et compiler le web local
+        run: |
+          node scripts/delifast-contract.mjs
+          npm test --prefix enatega-multivendor-web
+          npm run build --prefix enatega-multivendor-web
+      - name: Initialiser MongoDB
+        run: |
+          npm run migrate --prefix delifast-api
+          npm run seed --prefix delifast-api
+      - name: Démarrer l’API et le web
+        run: |
+          npm start --prefix delifast-api > /tmp/delifast-api.log 2>&1 &
+          npm start --prefix enatega-multivendor-web -- --port 3000 > /tmp/delifast-web.log 2>&1 &
+          node --input-type=module <<'JS'
+          for (const url of ['http://127.0.0.1:4000/health', 'http://127.0.0.1:3000/delifast']) {
+            let ready = false;
+            for (let i = 0; i < 60; i++) {
+              try { if ((await fetch(url)).ok) { ready = true; break; } } catch {}
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            if (!ready) throw new Error(`Service indisponible: ${url}`);
+          }
+          JS
+      - name: Tester le parcours HTTP de bout en bout
+        run: node scripts/delifast-smoke.mjs
+      - name: Afficher les journaux en cas d’échec
+        if: failure()
+        run: cat /tmp/delifast-api.log /tmp/delifast-web.log 2>/dev/null || true

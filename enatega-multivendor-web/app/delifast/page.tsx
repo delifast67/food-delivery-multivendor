@@ -1,0 +1,580 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  attemptStorageKey,
+  delifastApi,
+  DelifastApiError,
+  formatXof,
+  makeIdempotencyKey,
+  type CartLine,
+  type DeliveryAddress,
+  type Order,
+  type OrderAttempt,
+  type OrderPayload,
+  type Restaurant,
+} from "@/lib/delifast/api";
+import "./delifast.css";
+
+const emptyAddress: DeliveryAddress = {
+  recipientName: "",
+  phone: "",
+  city: "Ouagadougou",
+  neighborhood: "",
+  landmark: "",
+  instructions: "",
+};
+const validPhone = /^\+226\s?\d{8}$/;
+const messageFor = (error: unknown) =>
+  error instanceof Error
+    ? error.message
+    : "Une erreur inattendue est survenue.";
+
+export default function DelifastPage() {
+  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [selected, setSelected] = useState<Restaurant | null>(null);
+  const [cart, setCart] = useState<CartLine[]>([]);
+  const [checkout, setCheckout] = useState<Awaited<
+    ReturnType<typeof delifastApi.checkout>
+  > | null>(null);
+  const [address, setAddress] = useState<DeliveryAddress>(emptyAddress);
+  const [attempt, setAttempt] = useState<OrderAttempt | null>(null);
+  const [order, setOrder] = useState<Order | null>(null);
+  const [loading, setLoading] = useState("restaurants");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const submittingRef = useRef(false);
+  const locked = !!attempt && !order;
+
+  useEffect(() => {
+    delifastApi
+      .restaurants()
+      .then(setRestaurants)
+      .catch((e) => setError(messageFor(e)))
+      .finally(() => setLoading(""));
+  }, []);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(attemptStorageKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as OrderAttempt;
+      if (!saved?.idempotencyKey || !saved.payload)
+        throw new Error("invalid attempt");
+      setAttempt(saved);
+      if (saved.order)
+        delifastApi
+          .order(saved.order.id, saved.order.accessToken)
+          .then((value) => value && setOrder(value))
+          .catch(() =>
+            setNotice(
+              "La commande précédente n'a pas pu être récupérée. La tentative reste verrouillée.",
+            ),
+          );
+      else
+        setNotice(
+          "Tentative non résolue restaurée. Reprenez-la sans modifier le panier ni l'adresse.",
+        );
+    } catch {
+      try {
+        localStorage.removeItem(attemptStorageKey);
+      } catch {
+        /* storage unavailable */
+      }
+    }
+  }, []);
+  useEffect(() => {
+    if (!attempt || !restaurants.length || selected) return;
+    const restored = restaurants.find(
+      (restaurant) => restaurant.id === attempt.payload.restaurantId,
+    );
+    if (restored) {
+      setSelected(restored);
+      setCart(attempt.payload.items);
+      setAddress(attempt.payload.deliveryAddress);
+    }
+  }, [attempt, restaurants, selected]);
+  useEffect(() => {
+    // Never recalculate a persisted unresolved attempt: its original payload is the replay contract.
+    if (locked) {
+      setCheckout(null);
+      return;
+    }
+    if (!selected || cart.length === 0) {
+      setCheckout(null);
+      return;
+    }
+    let cancelled = false;
+    setCheckout(null); // clear stale total synchronously before a new request
+    setLoading("checkout");
+    setError("");
+    delifastApi
+      .checkout({ restaurantId: selected.id, items: cart })
+      .then((value) => {
+        if (!cancelled) setCheckout(value);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setCheckout(null);
+          setError(messageFor(e));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, cart, locked]);
+  const cartCount = useMemo(
+    () => cart.reduce((sum, line) => sum + line.quantity, 0),
+    [cart],
+  );
+  const add = (restaurant: Restaurant, itemId: string) => {
+    if (locked) return;
+    if (selected && selected.id !== restaurant.id) {
+      setNotice(
+        "Votre panier est mono-restaurant. Videz-le avant de choisir un autre restaurant.",
+      );
+      return;
+    }
+    const item = restaurant.menu.find((entry) => entry.id === itemId);
+    if (!item?.available) return;
+    setSelected(restaurant);
+    setCheckout(null);
+    setCart((current) => {
+      const found = current.find((line) => line.menuItemId === itemId);
+      return found
+        ? current.map((line) =>
+            line.menuItemId === itemId
+              ? { ...line, quantity: Math.min(line.quantity + 1, 99) }
+              : line,
+          )
+        : [...current, { menuItemId: itemId, quantity: 1 }];
+    });
+    setNotice("");
+  };
+  const changeQuantity = (id: string, quantity: number) => {
+    if (locked) return;
+    setCheckout(null);
+    const next =
+      quantity <= 0
+        ? cart.filter((line) => line.menuItemId !== id)
+        : cart.map((line) =>
+            line.menuItemId === id
+              ? { ...line, quantity: Math.min(quantity, 99) }
+              : line,
+          );
+    setCart(next);
+    if (!next.length) setSelected(null);
+  };
+  const updateAddress = (key: keyof DeliveryAddress, value: string) => {
+    if (!locked) setAddress((current) => ({ ...current, [key]: value }));
+  };
+  const saveAttempt = (value: OrderAttempt) => {
+    localStorage.setItem(attemptStorageKey, JSON.stringify(value));
+    setAttempt(value);
+  };
+  const place = async () => {
+    if (submittingRef.current) return;
+    if (!locked && (!selected || !cart.length || !checkout)) return;
+    const payload: OrderPayload = locked
+      ? attempt!.payload
+      : { restaurantId: selected!.id, items: cart, deliveryAddress: address };
+    if (
+      !locked &&
+      (!address.recipientName ||
+        !validPhone.test(address.phone) ||
+        !address.neighborhood ||
+        !address.landmark)
+    ) {
+      setError(
+        "Renseignez le nom, un téléphone +226 à 8 chiffres, le quartier et un repère.",
+      );
+      return;
+    }
+    const current = locked
+      ? attempt!
+      : { idempotencyKey: makeIdempotencyKey(), payload };
+    submittingRef.current = true;
+    setLoading("order");
+    setError("");
+    try {
+      // A durable key is mandatory before making the non-transactional API call.
+      try {
+        saveAttempt(current);
+      } catch {
+        setError(
+          "Le stockage local est indisponible : aucun envoi n'a été effectué. Autorisez-le avant de réessayer.",
+        );
+        return;
+      }
+      const created = await delifastApi.placeOrder({
+        ...payload,
+        idempotencyKey: current.idempotencyKey,
+      });
+      const saved = {
+        ...current,
+        order: { id: created.id, accessToken: created.accessToken },
+      };
+      setAttempt(saved);
+      setOrder(created); // success remains visible even if persistence after API success fails
+      try {
+        localStorage.setItem(attemptStorageKey, JSON.stringify(saved));
+      } catch {
+        setNotice(
+          "Commande enregistrée. Son historique local n'a pas pu être sauvegardé.",
+        );
+      }
+    } catch (e) {
+      const validation =
+        e instanceof DelifastApiError && e.kind === "validation";
+      if (validation) {
+        setAttempt(null);
+        try {
+          localStorage.removeItem(attemptStorageKey);
+        } catch {
+          /* best effort */
+        }
+        setError(messageFor(e));
+      } else {
+        setNotice(
+          "Réponse incertaine : la tentative est verrouillée. Reprenez-la avec exactement le même panier, la même adresse et la même clé.",
+        );
+        setError(messageFor(e));
+      }
+    } finally {
+      submittingRef.current = false;
+      setLoading("");
+    }
+  };
+  const resetForNewOrder = () => {
+    setOrder(null);
+    setAttempt(null);
+    setCart([]);
+    setSelected(null);
+    setAddress(emptyAddress);
+    setCheckout(null);
+    setError("");
+    setNotice("");
+    try {
+      localStorage.removeItem(attemptStorageKey);
+    } catch {
+      /* best effort */
+    }
+  };
+  if (order)
+    return (
+      <main className="df-shell">
+        <Header cartCount={cartCount} />
+        <section className="df-success">
+          <span className="df-kicker">COMMANDE ENREGISTRÉE</span>
+          <h1>Votre commande est en attente de paiement.</h1>
+          <p>
+            Référence <strong>{order.id}</strong> · statut {order.status} ·
+            paiement {order.paymentStatus}
+          </p>
+          <p className="df-muted">
+            Ceci est une démo locale Delifast Multivendor. Aucun paiement réel,
+            aucune livraison réelle et aucune confirmation de commande ne sont
+            déclenchés.
+          </p>
+          <div className="df-total">
+            <span>Total serveur</span>
+            <strong>{formatXof(order.checkout.total)}</strong>
+          </div>
+          <button className="df-secondary" onClick={resetForNewOrder}>
+            Retour aux restaurants
+          </button>
+        </section>
+      </main>
+    );
+  return (
+    <main className="df-shell">
+      <Header cartCount={cartCount} />
+      <div className="df-banner">
+        DÉMO LOCALE · Ouagadougou · XOF · aucun paiement ou service de livraison
+        réel
+      </div>
+      <section className="df-hero">
+        <div>
+          <span className="df-kicker">DELIFAST MULTIVENDOR</span>
+          <h1>
+            Les bons plats,
+            <br />
+            <em>simplement.</em>
+          </h1>
+          <p>
+            Découvrez des restaurants de Ouagadougou, composez un panier
+            mono-restaurant et envoyez une commande persistée au backend local.
+          </p>
+        </div>
+        <div className="df-hero-card">
+          <span>PARCOURS DÉMO</span>
+          <strong>Restaurant → menu → panier → commande</strong>
+          <small>Le total est calculé exclusivement par le serveur.</small>
+        </div>
+      </section>
+      {error && (
+        <div className="df-error" role="alert">
+          {error}
+        </div>
+      )}
+      {notice && (
+        <div className="df-notice" role="status">
+          {notice}
+        </div>
+      )}
+      <section className="df-content">
+        <div className="df-restaurants">
+          <div className="df-section-head">
+            <div>
+              <span className="df-kicker">01 · CHOISIR</span>
+              <h2>Restaurants partenaires</h2>
+            </div>
+            <span>{restaurants.length} adresses démo</span>
+          </div>
+          {loading === "restaurants" ? (
+            <p className="df-muted">Chargement des restaurants…</p>
+          ) : (
+            <div className="df-grid">
+              {restaurants.map((restaurant) => (
+                <article
+                  className={`df-card ${selected?.id === restaurant.id ? "selected" : ""}`}
+                  key={restaurant.id}
+                >
+                  <div className="df-card-mark">
+                    {restaurant.name.slice(0, 1)}
+                  </div>
+                  <div>
+                    <h3>{restaurant.name}</h3>
+                    <p>{restaurant.description}</p>
+                  </div>
+                  <div className="df-menu">
+                    {restaurant.menu.map((item) => (
+                      <div
+                        className={`df-item ${!item.available ? "unavailable" : ""}`}
+                        key={item.id}
+                      >
+                        <div>
+                          <strong>{item.name}</strong>
+                          <small>{item.description}</small>
+                          <span>{formatXof(item.priceXof)}</span>
+                        </div>
+                        <button
+                          aria-label={`Ajouter ${item.name}`}
+                          disabled={!item.available || locked}
+                          onClick={() => add(restaurant, item.id)}
+                        >
+                          {item.available ? "+" : "Indisponible"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+        <aside className="df-cart">
+          <div className="df-section-head">
+            <div>
+              <span className="df-kicker">02 · VALIDER</span>
+              <h2>Votre panier</h2>
+            </div>
+            <span>
+              {cartCount} article{cartCount > 1 ? "s" : ""}
+            </span>
+          </div>
+          {locked && (
+            <div className="df-notice">
+              Tentative verrouillée : aucune modification n'est permise.
+            </div>
+          )}
+          {!cart.length ? (
+            <>
+              <p className="df-muted">
+                Ajoutez un plat pour commencer. Le panier reste attaché à un
+                seul restaurant.
+              </p>
+              {locked && (
+                <button
+                  className="df-primary"
+                  disabled={loading === "order"}
+                  onClick={place}
+                >
+                  {loading === "order"
+                    ? "Enregistrement…"
+                    : "Reprendre la même tentative"}
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="df-cart-lines">
+                {cart.map((line) => {
+                  const item = selected?.menu.find(
+                    (entry) => entry.id === line.menuItemId,
+                  );
+                  return item ? (
+                    <div className="df-cart-line" key={line.menuItemId}>
+                      <div>
+                        <strong>{item.name}</strong>
+                        <small>{formatXof(item.priceXof)} / unité</small>
+                      </div>
+                      <div className="df-qty">
+                        <button
+                          aria-label={`Diminuer ${item.name}`}
+                          disabled={locked}
+                          onClick={() =>
+                            changeQuantity(item.id, line.quantity - 1)
+                          }
+                        >
+                          −
+                        </button>
+                        <span>{line.quantity}</span>
+                        <button
+                          aria-label={`Augmenter ${item.name}`}
+                          disabled={locked}
+                          onClick={() =>
+                            changeQuantity(item.id, line.quantity + 1)
+                          }
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  ) : null;
+                })}
+              </div>
+              <button
+                className="df-clear"
+                disabled={locked}
+                onClick={() => {
+                  setCart([]);
+                  setSelected(null);
+                  setCheckout(null);
+                  setNotice("");
+                }}
+              >
+                Vider le panier
+              </button>
+              <div className="df-form">
+                <h3>Adresse de démonstration</h3>
+                <p className="df-muted">
+                  Ouagadougou uniquement · téléphone +226 avec 8 chiffres
+                </p>
+                <label htmlFor="recipientName">Nom du destinataire</label>
+                <input
+                  id="recipientName"
+                  maxLength={120}
+                  placeholder="Nom du destinataire"
+                  value={address.recipientName}
+                  disabled={locked}
+                  onChange={(e) =>
+                    updateAddress("recipientName", e.target.value)
+                  }
+                />
+                <label htmlFor="phone">Téléphone</label>
+                <input
+                  id="phone"
+                  maxLength={16}
+                  inputMode="tel"
+                  placeholder="+226 70123456"
+                  value={address.phone}
+                  disabled={locked}
+                  onChange={(e) => updateAddress("phone", e.target.value)}
+                />
+                <label htmlFor="neighborhood">Quartier</label>
+                <input
+                  id="neighborhood"
+                  maxLength={120}
+                  placeholder="Quartier"
+                  value={address.neighborhood}
+                  disabled={locked}
+                  onChange={(e) =>
+                    updateAddress("neighborhood", e.target.value)
+                  }
+                />
+                <label htmlFor="landmark">Repère</label>
+                <input
+                  id="landmark"
+                  maxLength={500}
+                  placeholder="Repère"
+                  value={address.landmark}
+                  disabled={locked}
+                  onChange={(e) => updateAddress("landmark", e.target.value)}
+                />
+                <label htmlFor="instructions">Instructions (facultatif)</label>
+                <textarea
+                  id="instructions"
+                  maxLength={1000}
+                  placeholder="Instructions (facultatif)"
+                  value={address.instructions}
+                  disabled={locked}
+                  onChange={(e) =>
+                    updateAddress("instructions", e.target.value)
+                  }
+                />
+              </div>
+              {checkout && !locked && (
+                <div className="df-breakdown">
+                  <div>
+                    <span>Sous-total</span>
+                    <span>{formatXof(checkout.subtotal)}</span>
+                  </div>
+                  <div>
+                    <span>Livraison</span>
+                    <span>{formatXof(checkout.deliveryFee)}</span>
+                  </div>
+                  <div>
+                    <span>Service</span>
+                    <span>{formatXof(checkout.serviceFee)}</span>
+                  </div>
+                  <div>
+                    <span>Taxes</span>
+                    <span>{formatXof(checkout.tax)}</span>
+                  </div>
+                  <div className="df-total">
+                    <span>Total serveur</span>
+                    <strong>{formatXof(checkout.total)}</strong>
+                  </div>
+                </div>
+              )}
+              <button
+                className="df-primary"
+                disabled={
+                  loading === "order" ||
+                  (!locked && (loading === "checkout" || !checkout))
+                }
+                onClick={place}
+              >
+                {loading === "order"
+                  ? "Enregistrement…"
+                  : locked
+                    ? "Reprendre la même tentative"
+                    : "Enregistrer la commande"}
+              </button>
+              <p className="df-footnote">
+                La commande sera créée avec le statut PAYMENT_PENDING. Aucun
+                bouton de paiement n’est disponible dans cette démo.
+              </p>
+            </>
+          )}
+        </aside>
+      </section>
+    </main>
+  );
+}
+function Header({ cartCount }: { cartCount: number }) {
+  return (
+    <header className="df-header">
+      <a className="df-brand" href="/delifast">
+        <span>DF</span> Delifast <b>Multivendor</b>
+      </a>
+      <div className="df-header-note">
+        OUAGADOUGOU / <strong>XOF</strong>{" "}
+        <span className="df-cart-pill">{cartCount}</span>
+      </div>
+    </header>
+  );
+}

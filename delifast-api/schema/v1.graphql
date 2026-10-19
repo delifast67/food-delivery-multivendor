@@ -1,0 +1,70 @@
+type Query {
+  restaurants: [Restaurant!]!
+  restaurant(id: ID!): Restaurant
+  calculateCheckout(input: CartInput!): Checkout!
+  order(id: ID!, accessToken: String!): Order
+}
+type Mutation {
+  placeOrder(input: PlaceOrderInput!): Order!
+}
+type Restaurant {
+  id: ID!
+  name: String!
+  description: String!
+  menu: [MenuItem!]!
+}
+type MenuItem {
+  id: ID!
+  name: String!
+  description: String!
+  priceXof: Int!
+  available: Boolean!
+}
+input CartInput {
+  restaurantId: ID!
+  items: [CartItemInput!]!
+}
+input CartItemInput {
+  menuItemId: ID!
+  quantity: Int!
+}
+type Checkout {
+  currency: String!
+  subtotal: Int!
+  deliveryFee: Int!
+  serviceFee: Int!
+  tax: Int!
+  discount: Int!
+  total: Int!
+  items: [CheckoutItem!]!
+}
+type CheckoutItem {
+  menuItemId: ID!
+  name: String!
+  quantity: Int!
+  unitPrice: Int!
+  total: Int!
+}
+input PlaceOrderInput {
+  restaurantId: ID!
+  items: [CartItemInput!]!
+  idempotencyKey: String!
+  deliveryAddress: DeliveryAddressInput!
+}
+input DeliveryAddressInput {
+  recipientName: String!
+  phone: String!
+  city: String!
+  neighborhood: String!
+  landmark: String!
+  instructions: String
+}
+type Order {
+  id: String!
+  accessToken: String!
+  status: String!
+  paymentStatus: String!
+  createdAt: String!
+  restaurantId: String!
+  checkout: Checkout!
+}

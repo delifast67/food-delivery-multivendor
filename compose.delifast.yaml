@@ -1,0 +1,73 @@
+name: delifast-local
+
+# Démonstration locale uniquement : aucun paiement ou envoi réel.
+# Redis est provisionné pour les lots suivants, pas utilisé pour l'idempotence.
+services:
+  mongo:
+    image: mongo:7.0
+    command: ["mongod", "--bind_ip_all"]
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - delifast-mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - delifast-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  init:
+    build: ./delifast-api
+    environment:
+      NODE_ENV: development
+      MONGODB_URI: mongodb://mongo:27017/delifast
+    command: ["sh", "-c", "node dist/migrations/index.js && node dist/migrations/seed.js"]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: ./delifast-api
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: "4000"
+      MONGODB_URI: mongodb://mongo:27017/delifast
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  web:
+    build: ./enatega-multivendor-web
+    environment:
+      NODE_ENV: production
+      DELIFAST_LOCAL_MODE: "true"
+      DELIFAST_API_URL: http://api:4000/graphql
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  delifast-mongo:
+  delifast-redis:

@@ -73,3 +73,10 @@ enatega-multivendor-app/.env
 goodbite-multivendor-app
 **/*service-account*.json
 **/serviceAccountKey*.json
+
+# Delifast local: données privées et artefacts reproductibles
+**/.local-data/
+delifast-api/dist/
+delifast-api/coverage/
+test-results/
+playwright-report/

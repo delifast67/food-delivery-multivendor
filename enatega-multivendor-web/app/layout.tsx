@@ -4,16 +4,9 @@ import { DirectionHandler } from "@/lib/ui/layouts/global/rtl/DirectionHandler";
 // import InstallPWA from "@/lib/ui/pwa/InstallPWA";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
-import { Inter } from "next/font/google";
 import Script from "next/script";
 import "@fontsource/barlow-condensed/600.css";
 import "@fontsource/cormorant-garamond/500-italic.css";
-
-const interfaceFont = Inter({
-  subsets: ["latin"],
-  variable: "--font-interface",
-  display: "swap",
-});
 
 export const metadata = {
   title: "Enatega Multivendor",
@@ -25,6 +18,13 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  if (process.env.DELIFAST_LOCAL_MODE === "true") {
+    return (
+      <html lang="fr" dir="ltr">
+        <body>{children}</body>
+      </html>
+    );
+  }
   const locale = await getLocale();
   const rtlLocales = ["ar", "hr", "fa", "ur"];
   const baseLocale = locale.split("-")[0];
@@ -87,7 +87,7 @@ export default async function RootLayout({
         {/* Add more media queries for other device sizes if needed */}
       </head>
       <body
-        className={`${interfaceFont.variable} ${dir === "rtl" ? "rtl" : ""}`}
+        className={`${dir === "rtl" ? "rtl" : ""}`}
         suppressHydrationWarning
       >
         <template

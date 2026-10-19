@@ -1,3 +1,10 @@
+> **Delifast Multivendor — premier lot autonome local**
+>
+> Le parcours menu → panier mono-restaurant → total serveur XOF → commande persistée
+> possède désormais son propre backend. Voir [le guide de démarrage Delifast](README_DELIFAST_LOCAL.md).
+> C’est une démonstration locale sans paiement ni livraison réels, pas une plateforme prête à lancer.
+> Le README ci-dessous décrit le produit historique ; ses endpoints distants ne sont pas requis pour ce lot.
+
 <div align="right">
 <a target="_blank" href="https://www.facebook.com/sharer/sharer.php?u=https://github.com/Ninjas-Code-official/Enatega-Multivendor-Food-Delivery-Solution" style="text-decoration:none">
   <img src="https://img.shields.io/badge/-0d1117?logo=facebook"  width="40" height="30">
