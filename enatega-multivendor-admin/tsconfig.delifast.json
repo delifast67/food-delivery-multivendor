@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "incremental": false },
+  "include": [
+    "next-env.d.ts",
+    "app/**/*.local.ts",
+    "app/**/*.local.tsx",
+    "app/delifast/**/*.tsx",
+    "lib/delifast/**/*.ts",
+    "middleware.local.ts",
+    ".next/types/**/*.ts"
+  ],
+  "exclude": ["node_modules", "cypress", "**/*.test.ts", "**/*.test.tsx"]
+}

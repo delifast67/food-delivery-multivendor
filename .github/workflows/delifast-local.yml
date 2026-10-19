@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'delifast-api/**'
+      - 'enatega-multivendor-admin/**'
       - 'enatega-multivendor-web/**'
       - 'enatega-multivendor-app/**'
       - 'enatega-multivendor-store/**'
@@ -14,6 +15,7 @@ on:
   pull_request:
     paths:
       - 'delifast-api/**'
+      - 'enatega-multivendor-admin/**'
       - 'enatega-multivendor-web/**'
       - 'enatega-multivendor-app/**'
       - 'enatega-multivendor-store/**'
@@ -189,3 +191,32 @@ jobs:
       - name: Exporter les bundles sans publication
         working-directory: enatega-multivendor-rider
         run: npx expo export --platform android --platform ios --output-dir dist/delifast
+
+  admin-web-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DELIFAST_LOCAL_MODE: 'true'
+      DELIFAST_API_URL: http://127.0.0.1:4113/graphql
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            delifast-api/package-lock.json
+            enatega-multivendor-admin/package-lock.json
+      - name: Installer API et admin sans scripts historiques
+        run: |
+          npm ci --prefix delifast-api --ignore-scripts --no-audit --no-fund
+          npm ci --prefix enatega-multivendor-admin --ignore-scripts --no-audit --no-fund
+      - name: Compiler l’API et vérifier l’admin local
+        run: |
+          npm run build --prefix delifast-api
+          node --test scripts/delifast-admin-entry.test.mjs
+          npm run test:delifast --prefix enatega-multivendor-admin
+          npm run build --prefix enatega-multivendor-admin
+      - name: Recette HTTP admin et MongoDB jetable, sans paiement
+        run: node scripts/delifast-admin-smoke.mjs
