@@ -245,7 +245,12 @@ export async function simulatePayment(db: Db, user: Staff, id: string) {
   await provider.confirmPayment(id);
   const at = now();
   const result = await orders.findOneAndUpdate(
-    { id, status: "PAYMENT_PENDING", paymentStatus: "PENDING" },
+    {
+      id,
+      status: "PAYMENT_PENDING",
+      paymentStatus: "PENDING",
+      paymentAttempt: { $exists: false },
+    },
     {
       $set: { status: "CONFIRMED", paymentStatus: "PAID", updatedAt: at },
       $push: { history: { status: "CONFIRMED", at, actorRole: "ADMIN" } },

@@ -1,6 +1,6 @@
 # Delifast API v1
 
-API GraphQL locale autonome, sans appel Enatega ni paiement réel. Les montants sont des entiers XOF. Le paiement local reste `PENDING` jusqu'à la simulation explicitement activée.
+API GraphQL locale autonome, sans appel Enatega. Les montants sont des entiers XOF. PayDunya reste désactivé par défaut ; ce lot n’a créé aucun paiement, même sandbox. Le [contrat PayDunya](PAYDUNYA_CONTRACT.md) décrit l’adaptateur Orange Money/Moov Money Burkina, les sources officielles, les garanties et les autorisations encore nécessaires. L’API conserve son verrou anti-production.
 
 ## Démarrage
 
@@ -29,7 +29,11 @@ SDL versionnée : [`schema/v1.graphql`](schema/v1.graphql). HTTP : `POST /graphq
 
 ## Paiement de démonstration
 
-`simulateDemoPayment` est disponible uniquement pour un admin lorsque `DELIFAST_DEMO_PAYMENTS=true`. `PaymentProvider` et `DemoPaymentProvider` sont dans [`src/payment.ts`](src/payment.ts). Il n'existe aucun webhook ni appel à un fournisseur réel ; l'état local et son événement sont mis à jour atomiquement.
+`simulateDemoPayment` est disponible uniquement pour un admin lorsque `DELIFAST_DEMO_PAYMENTS=true`, hors production, avec PayDunya désactivé et sans tentative fournisseur sur la commande. `PaymentProvider` et `DemoPaymentProvider` sont dans [`src/payment.ts`](src/payment.ts). Cette simulation locale ne contacte aucun fournisseur et ne prouve aucun encaissement.
+
+## Paiement PayDunya (préparation, désactivée)
+
+`startPayment`, `paymentSession` et `refreshPayment` exigent le jeton client de la commande. `POST /payments/paydunya/ipn` reçoit les notifications en formulaire et les fait revérifier par l’API authentifiée avant toute confirmation financière. Une création ambiguë n’est jamais réessayée automatiquement. Une confirmation en mode test ne passe jamais la commande en `PAID`. Aucun écran checkout n’est encore relié au web/mobile. Voir le [contrat complet et les limites](PAYDUNYA_CONTRACT.md).
 
 ## Vérification
 

@@ -11,6 +11,17 @@ export async function connect(
   await db
     .collection("orders")
     .createIndex({ idempotencyKey: 1 }, { unique: true });
+  await db
+    .collection("orders")
+    .createIndex(
+      { "paymentAttempt.token": 1 },
+      {
+        unique: true,
+        partialFilterExpression: {
+          "paymentAttempt.token": { $type: "string" },
+        },
+      },
+    );
   await db.collection("restaurants").createIndex({ id: 1 }, { unique: true });
   await db.collection("menu_items").createIndex({ id: 1 }, { unique: true });
   await db

@@ -12,7 +12,9 @@ export class DemoPaymentProvider implements PaymentProvider {
 }
 
 export function getPaymentProvider(): PaymentProvider | undefined {
-  return process.env.DELIFAST_DEMO_PAYMENTS === "true"
+  return process.env.DELIFAST_DEMO_PAYMENTS === "true" &&
+    process.env.NODE_ENV !== "production" &&
+    process.env.PAYDUNYA_ENABLED !== "true"
     ? new DemoPaymentProvider()
     : undefined;
 }

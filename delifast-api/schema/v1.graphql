@@ -3,6 +3,7 @@ type Query {
   restaurant(id: ID!): Restaurant
   calculateCheckout(input: CartInput!): Checkout!
   order(id: ID!, accessToken: String!): Order
+  paymentSession(orderId: ID!, accessToken: String!): PaymentSession
   operationsOrders: [Order!]!
   operationsRestaurants: [Restaurant!]!
   availableRiders: [StaffUser!]!
@@ -10,6 +11,8 @@ type Query {
 }
 type Mutation {
   placeOrder(input: PlaceOrderInput!): Order!
+  startPayment(input: StartPaymentInput!): PaymentSession!
+  refreshPayment(orderId: ID!, accessToken: String!): PaymentSession!
   staffLogin(email: String!, password: String!): StaffSession!
   staffLogout: Boolean!
   simulateDemoPayment(orderId: ID!): Order!
@@ -45,3 +48,6 @@ type OrderEvent { status: String!, at: String!, actorRole: String! }
 type Order { id: String!, accessToken: String!, status: String!, paymentStatus: String!, createdAt: String!, updatedAt: String!, restaurantId: String!, riderId: String, deliveryAddress: DeliveryAddress!, history: [OrderEvent!]!, checkout: Checkout! }
 type StaffUser { id: ID!, name: String!, role: String!, restaurantId: String }
 type StaffSession { token: String!, user: StaffUser! }
+enum PaymentChannel { ORANGE_MONEY_BF MOOV_MONEY_BF }
+input StartPaymentInput { orderId: ID!, accessToken: String!, idempotencyKey: String!, channel: PaymentChannel! }
+type PaymentSession { orderId: ID!, phase: String!, channel: PaymentChannel!, mode: String!, checkoutUrl: String, providerStatus: String, paymentStatus: String! }

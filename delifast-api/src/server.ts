@@ -6,6 +6,8 @@ import { readFile } from "node:fs/promises";
 import { connect, getDb } from "./db.js";
 import { config } from "./config.js";
 import { normalizeAddress, normalizeCart } from "./validation.js";
+import { PaymentService, type CheckoutGateway } from "./payment-service.js";
+import { createPaymentGateway } from "./payment-gateway.js";
 import { calculateCheckout } from "./pricing.js";
 import {
   placeOrder,
@@ -62,6 +64,10 @@ const knownCodes = new Set([
   "CONCURRENT_MODIFICATION",
   "INVALID_OPTIONS",
   "CATEGORY_NOT_FOUND",
+  "PAYMENT_IN_PROGRESS",
+  "PAYMENT_REVIEW_REQUIRED",
+  "PAYMENT_NOT_ALLOWED",
+  "PAYMENT_UNAVAILABLE",
 ]);
 function complexityRule(context: ValidationContext) {
   let depth = 0,
@@ -123,6 +129,8 @@ const resolvers: any = {
       calculateCheckout(getDb(), normalizeCart(input)),
     order: (_: any, { id, accessToken }: any) =>
       customerOrder(getDb(), id, accessToken),
+    paymentSession: (_: any, { orderId, accessToken }: any, ctx: any) =>
+      ctx.payments.getSession(orderId, accessToken),
     operationsOrders: (_: any, _a: any, ctx: any) =>
       operationsOrders(
         getDb(),
@@ -153,6 +161,10 @@ const resolvers: any = {
         normalizeAddress(input.deliveryAddress),
         input.idempotencyKey,
       ),
+    startPayment: (_: any, { input }: any, ctx: any) =>
+      ctx.payments.start(input),
+    refreshPayment: (_: any, { orderId, accessToken }: any, ctx: any) =>
+      ctx.payments.refresh(orderId, accessToken),
     staffLogin: (_: any, { email, password }: any) =>
       login(getDb(), email, password),
     staffLogout: (_: any, _a: any, ctx: any) => logout(getDb(), ctx),
@@ -250,8 +262,11 @@ const resolvers: any = {
       ),
   },
 };
-export async function createApp() {
+export async function createApp(
+  gateway: CheckoutGateway | undefined = createPaymentGateway(),
+) {
   await connect();
+  const payments = new PaymentService(getDb(), gateway);
   const apollo = new ApolloServer({
     typeDefs,
     resolvers,
@@ -261,16 +276,23 @@ export async function createApp() {
       const complex = /complex|opération|operation|only be the only/i.test(
         String(f.message),
       );
-      const code = complex
-        ? "QUERY_TOO_COMPLEX"
-        : typeof f.extensions?.code === "string" &&
-            knownCodes.has(f.extensions.code)
-          ? f.extensions.code
-          : f.extensions?.code === "GRAPHQL_VALIDATION_FAILED"
+      const invalidVariables = f.extensions?.code === "BAD_USER_INPUT";
+      const code = invalidVariables
+        ? "INVALID_INPUT"
+        : complex
+          ? "QUERY_TOO_COMPLEX"
+          : typeof f.extensions?.code === "string" &&
+              knownCodes.has(f.extensions.code)
             ? f.extensions.code
-            : "INTERNAL_ERROR";
+            : f.extensions?.code === "GRAPHQL_VALIDATION_FAILED"
+              ? f.extensions.code
+              : "INTERNAL_ERROR";
       return {
-        message: code === "INTERNAL_ERROR" ? "Erreur interne" : f.message,
+        message: invalidVariables
+          ? "Entrées invalides"
+          : code === "INTERNAL_ERROR"
+            ? "Erreur interne"
+            : f.message,
         extensions: { code },
       };
     },
@@ -279,6 +301,38 @@ export async function createApp() {
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: config.maxBody }));
+  const ipnParserOptions = {
+    extended: true,
+    limit: 16_384,
+    parameterLimit: 100,
+    depth: 6,
+  };
+  app.post(
+    "/payments/paydunya/ipn",
+    rateLimit(),
+    (req, res, next) => {
+      if (!req.is("application/x-www-form-urlencoded")) {
+        res.status(415).json({ error: "INVALID_IPN" });
+        return;
+      }
+      next();
+    },
+    express.urlencoded(ipnParserOptions),
+    async (req, res) => {
+      try {
+        await payments.ipn(req.body?.data);
+        res.status(200).json({ received: true });
+      } catch (error: any) {
+        const code = error?.extensions?.code;
+        const status = code === "INVALID_IPN" ? 400 : 503;
+        res
+          .status(status)
+          .json({
+            error: status === 400 ? "INVALID_IPN" : "PAYMENT_UNAVAILABLE",
+          });
+      }
+    },
+  );
   app.get("/health", async (_req, res) => {
     try {
       await getDb().command({ ping: 1 });
@@ -291,10 +345,17 @@ export async function createApp() {
     "/graphql",
     rateLimit(),
     expressMiddleware(apollo, {
-      context: async ({ req }) =>
-        authenticate(getDb(), req.headers.authorization),
+      context: async ({ req }) => ({
+        ...(await authenticate(getDb(), req.headers.authorization)),
+        payments,
+      }),
     }),
   );
+  app.use((error: any, _req: Request, res: Response, _next: NextFunction) => {
+    res
+      .status(error?.status === 413 ? 413 : 400)
+      .json({ error: "INVALID_INPUT" });
+  });
   return app;
 }
 if (process.env.NODE_ENV !== "test") {
