@@ -162,6 +162,14 @@ describe("connexion et session staff", () => {
 });
 
 describe("permissions et mutations opérations", () => {
+  it("n'affiche pas l'onglet Catalogue pour un rider", async () => {
+    me.mockResolvedValue(rider);
+    await login();
+    expect(
+      screen.queryByRole("tab", { name: "Catalogue" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("permet au restaurant ses transitions mais jamais livraison, assignation ou paiement démo", async () => {
     await openOrder();
     expect(

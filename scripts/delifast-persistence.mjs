@@ -48,8 +48,8 @@ async function stopApi() {
   if (api.exitCode === null) { const stopped = once(api, 'exit'); api.kill('SIGTERM'); await stopped; }
   api = undefined;
 }
-async function gql(query, variables = {}) {
-  const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query, variables }), signal: AbortSignal.timeout(10000) });
+async function gql(query, variables = {}, token) {
+  const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ query, variables }), signal: AbortSignal.timeout(10000) });
   const result = await response.json();
   assert.ok(!result.errors, JSON.stringify(result.errors));
   return result.data;
@@ -59,23 +59,37 @@ try {
   await cli('dist/migrations/index.js');
   await cli('dist/migrations/seed.js');
   await startApi();
-  const restaurants = (await gql('{restaurants{id menu{id available}}}')).restaurants;
+  const restaurants = (await gql('{restaurants{id open version menu{id name description priceXof available version archived}}}')).restaurants;
   const restaurant = restaurants.find(r => r.menu.some(item => item.available));
   const item = restaurant.menu.find(item => item.available);
   const input = { restaurantId: restaurant.id, items: [{ menuItemId: item.id, quantity: 1 }], idempotencyKey: 'restart-proof-0001', deliveryAddress: { recipientName: 'Test de persistance', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Démo', landmark: 'Aucune livraison réelle', instructions: '' } };
   const fields = 'id accessToken status paymentStatus checkout{currency subtotal deliveryFee serviceFee tax discount total items{menuItemId name quantity unitPrice total}}';
   const mutation = `mutation($input:PlaceOrderInput!){placeOrder(input:$input){${fields}}}`;
   const original = (await gql(mutation, { input })).placeOrder;
+  const session = (await gql('mutation{staffLogin(email:"admin@delifast.local",password:"AdminDemo!2026"){token}}')).staffLogin.token;
+  const edited = (await gql('mutation($id:ID!,$v:Int!,$input:MenuItemInput!){updateMenuItem(id:$id,expectedVersion:$v,input:$input){version}}', { id: item.id, v: item.version, input: { name: 'Plat modifié avant arrêt', description: 'Donnée de persistance fictive', priceXof: 9876, available: false } }, session)).updateMenuItem;
+  const archived = (await gql('mutation($id:ID!,$v:Int!){setMenuItemArchived(id:$id,expectedVersion:$v,archived:true){version}}', { id: item.id, v: edited.version }, session)).setMenuItemArchived;
+  const closed = (await gql('mutation($id:ID!,$v:Int!){setRestaurantOpen(id:$id,expectedVersion:$v,open:false){version}}', { id: restaurant.id, v: restaurant.version }, session)).setRestaurantOpen;
   await stopApi();
   await mongo.stop({ doCleanup: false, force: false });
   mongo = undefined;
   console.log('OK — API et mongod complètement arrêtés après création');
   await startMongo();
+  await cli('dist/migrations/index.js');
+  await cli('dist/migrations/seed.js');
   await startApi();
   const restored = (await gql(`query($id:ID!,$token:String!){order(id:$id,accessToken:$token){${fields}}}`, { id: original.id, token: original.accessToken })).order;
   assert.deepEqual(restored, original);
   const replay = (await gql(mutation, { input })).placeOrder;
   assert.deepEqual(replay, original);
+  const staffToken = (await gql('mutation{staffLogin(email:"admin@delifast.local",password:"AdminDemo!2026"){token}}')).staffLogin.token;
+  const catalog = (await gql('{operationsRestaurants{id open version menu{id name description priceXof available version archived}}}', {}, staffToken)).operationsRestaurants;
+  const savedRestaurant = catalog.find(r => r.id === restaurant.id);
+  assert.equal(savedRestaurant.open, false);
+  assert.equal(savedRestaurant.version, closed.version);
+  assert.deepEqual(savedRestaurant.menu.find(m => m.id === item.id), { id: item.id, name: 'Plat modifié avant arrêt', description: 'Donnée de persistance fictive', priceXof: 9876, available: false, version: archived.version, archived: true });
+  assert.ok(!(await gql('query($id:ID!){restaurant(id:$id){menu{id}}}', { id: restaurant.id })).restaurant.menu.some(m => m.id === item.id));
+  console.log('OK — prix, disponibilité, archivage, fermeture et versions conservés malgré redémarrage et seed rejoué');
   const client = await new MongoClient(mongo.getUri('delifast_restart')).connect();
   try { assert.equal(await client.db().collection('orders').countDocuments(), 1); } finally { await client.close(); }
   console.log('SUCCÈS — commande, jeton, total et clé d’idempotence conservés après redémarrage MongoDB + API ; une seule commande en base.');

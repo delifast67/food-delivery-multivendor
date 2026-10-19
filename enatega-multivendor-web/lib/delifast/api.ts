@@ -4,6 +4,8 @@ export type MenuItem = {
   description: string;
   priceXof: number;
   available: boolean;
+  version?: number;
+  archived?: boolean;
 };
 
 export type Restaurant = {
@@ -11,6 +13,8 @@ export type Restaurant = {
   name: string;
   description: string;
   menu: MenuItem[];
+  version?: number;
+  open?: boolean;
 };
 
 export type CartLine = { menuItemId: string; quantity: number };
@@ -60,15 +64,23 @@ export type StaffUser = {
   restaurantId?: string | null;
 };
 export type StaffSession = { token: string; user: StaffUser };
+export type MenuItemInput = { name: string; description: string; priceXof: number; available: boolean };
 
-const RESTAURANTS = `query Restaurants { restaurants { id name description menu { id name description priceXof available } } }`;
-const RESTAURANT = `query Restaurant($id: ID!) { restaurant(id: $id) { id name description menu { id name description priceXof available } } }`;
+const RESTAURANT_FIELDS = `id name description open version menu { id name description priceXof available archived version }`;
+const RESTAURANTS = `query Restaurants { restaurants { ${RESTAURANT_FIELDS} } }`;
+const RESTAURANT = `query Restaurant($id: ID!) { restaurant(id: $id) { ${RESTAURANT_FIELDS} } }`;
 const CHECKOUT = `query CalculateCheckout($input: CartInput!) { calculateCheckout(input: $input) { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total } } }`;
 const PLACE_ORDER = `mutation PlaceOrder($input: PlaceOrderInput!) { placeOrder(input: $input) { id accessToken status paymentStatus createdAt restaurantId checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total } } } }`;
 const ORDER = `query Order($id: ID!, $accessToken: String!) { order(id: $id, accessToken: $accessToken) { id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total } } } }`;
 const ORDER_OPERATIONS_FIELDS = `id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total } }`;
 const STAFF_LOGIN = `mutation StaffLogin($email: String!, $password: String!) { staffLogin(email: $email, password: $password) { token user { id name role restaurantId } } }`;
 const OPERATIONS_ORDERS = `query OperationsOrders { operationsOrders { ${ORDER_OPERATIONS_FIELDS} } }`;
+const OPERATIONS_RESTAURANTS = `query OperationsRestaurants { operationsRestaurants { ${RESTAURANT_FIELDS} } }`;
+const MENU_ITEM_FIELDS = `id name description priceXof available archived version`;
+const CREATE_MENU_ITEM = `mutation CreateMenuItem($restaurantId: ID!, $input: MenuItemInput!) { createMenuItem(restaurantId: $restaurantId, input: $input) { ${MENU_ITEM_FIELDS} } }`;
+const UPDATE_MENU_ITEM = `mutation UpdateMenuItem($id: ID!, $expectedVersion: Int!, $input: MenuItemInput!) { updateMenuItem(id: $id, expectedVersion: $expectedVersion, input: $input) { ${MENU_ITEM_FIELDS} } }`;
+const SET_MENU_ITEM_ARCHIVED = `mutation SetMenuItemArchived($id: ID!, $expectedVersion: Int!, $archived: Boolean!) { setMenuItemArchived(id: $id, expectedVersion: $expectedVersion, archived: $archived) { ${MENU_ITEM_FIELDS} } }`;
+const SET_RESTAURANT_OPEN = `mutation SetRestaurantOpen($id: ID!, $expectedVersion: Int!, $open: Boolean!) { setRestaurantOpen(id: $id, expectedVersion: $expectedVersion, open: $open) { ${RESTAURANT_FIELDS} } }`;
 const AVAILABLE_RIDERS = `query AvailableRiders { availableRiders { id name role restaurantId } }`;
 const ME = `query Me { me { id name role restaurantId } }`;
 const STAFF_LOGOUT = `mutation StaffLogout { staffLogout }`;
@@ -200,6 +212,16 @@ export const delifastApi = {
       undefined,
       token,
     ).then((data) => data.operationsOrders),
+  operationsRestaurants: (token: string) =>
+    request<{ operationsRestaurants: Restaurant[] }>(OPERATIONS_RESTAURANTS, undefined, token).then((data) => data.operationsRestaurants),
+  createMenuItem: (token: string, restaurantId: string, input: MenuItemInput) =>
+    request<{ createMenuItem: MenuItem }>(CREATE_MENU_ITEM, { restaurantId, input }, token).then((data) => data.createMenuItem),
+  updateMenuItem: (token: string, id: string, expectedVersion: number, input: MenuItemInput) =>
+    request<{ updateMenuItem: MenuItem }>(UPDATE_MENU_ITEM, { id, expectedVersion, input }, token).then((data) => data.updateMenuItem),
+  setMenuItemArchived: (token: string, id: string, expectedVersion: number, archived: boolean) =>
+    request<{ setMenuItemArchived: MenuItem }>(SET_MENU_ITEM_ARCHIVED, { id, expectedVersion, archived }, token).then((data) => data.setMenuItemArchived),
+  setRestaurantOpen: (token: string, id: string, expectedVersion: number, open: boolean) =>
+    request<{ setRestaurantOpen: Restaurant }>(SET_RESTAURANT_OPEN, { id, expectedVersion, open }, token).then((data) => data.setRestaurantOpen),
   availableRiders: (token: string) =>
     request<{ availableRiders: StaffUser[] }>(
       AVAILABLE_RIDERS,

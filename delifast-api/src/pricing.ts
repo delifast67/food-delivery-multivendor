@@ -37,7 +37,7 @@ export async function calculateCheckout(db: Db, cart: Cart): Promise<Checkout> {
     const item = menu.find((x) => x.id === line.menuItemId);
     if (!item || item.restaurantId !== cart.restaurantId)
       fail("ITEM_RESTAURANT_MISMATCH", "Plat hors restaurant");
-    if (item.available !== true) fail("ITEM_UNAVAILABLE", "Plat indisponible");
+    if (item.archived === true || item.available !== true) fail("ITEM_UNAVAILABLE", "Plat indisponible");
     if (
       !Number.isSafeInteger(item.priceXof) ||
       item.priceXof < 0 ||

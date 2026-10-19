@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { delifastApi, type Order, type StaffUser } from "@/lib/delifast/api";
 import "../delifast.css";
+import Catalogue from "./Catalogue";
 
 const TOKEN_KEY = "delifast-staff-token";
 const labels: Record<string, string> = {
@@ -38,6 +39,7 @@ export default function OperationsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<string | null>(null);
+  const [section, setSection] = useState<"orders" | "catalogue">("orders");
 
   const load = useCallback(async (activeToken: string, clearError = true) => {
     setBusy("orders");
@@ -63,6 +65,7 @@ export default function OperationsPage() {
         setUser(null);
         setOrders([]);
         setRiders([]);
+        setSection("orders");
       }
       setError(text);
     } finally {
@@ -115,6 +118,7 @@ export default function OperationsPage() {
     setUser(null);
     setOrders([]);
     setRiders([]);
+    setSection("orders");
     setBusy("");
   };
   const refresh = () => token && void load(token);
@@ -209,19 +213,47 @@ export default function OperationsPage() {
         <div className="df-ops-head">
           <div>
             <span className="df-kicker">OPÉRATIONS · {user.role}</span>
-            <h1>Commandes</h1>
+            <h1>{section === "orders" ? "Commandes" : "Catalogue"}</h1>
             <p className="df-muted">
               Les statuts affichés sont la source serveur. Actualisation
               automatique toutes les 30 secondes.
             </p>
           </div>
-          <button
-            className="df-secondary"
-            onClick={refresh}
-            disabled={busy === "orders"}
+          <div
+            className="df-ops-tabs"
+            role="tablist"
+            aria-label="Espace opérations"
           >
-            {busy === "orders" ? "Actualisation…" : "Actualiser"}
-          </button>
+            <button
+              role="tab"
+              aria-selected={section === "orders"}
+              className={section === "orders" ? "df-primary" : "df-secondary"}
+              onClick={() => setSection("orders")}
+            >
+              Commandes
+            </button>
+            {(role === "admin" || role === "restaurant") && (
+              <button
+                role="tab"
+                aria-selected={section === "catalogue"}
+                className={
+                  section === "catalogue" ? "df-primary" : "df-secondary"
+                }
+                onClick={() => setSection("catalogue")}
+              >
+                Catalogue
+              </button>
+            )}
+            {section === "orders" && (
+              <button
+                className="df-secondary"
+                onClick={refresh}
+                disabled={busy === "orders"}
+              >
+                {busy === "orders" ? "Actualisation…" : "Actualiser"}
+              </button>
+            )}
+          </div>
         </div>
         {error && (
           <div className="df-error" role="alert">
@@ -233,56 +265,64 @@ export default function OperationsPage() {
             {notice}
           </div>
         )}
-        <div className="df-ops-list">
-          {orders.length === 0 && (
-            <p className="df-muted">
-              Aucune commande accessible pour votre rôle.
-            </p>
-          )}
-          {orders.map((order) => (
-            <article className="df-ops-card" key={order.id}>
-              <button
-                className="df-order-title"
-                onClick={() =>
-                  setSelectedOrder(selectedOrder === order.id ? null : order.id)
-                }
-              >
-                <strong>#{order.id}</strong>
-                <span className={`df-status status-${order.status}`}>
-                  {labels[order.status] || order.status}
-                </span>
-              </button>
+        {section === "catalogue" &&
+        (role === "admin" || role === "restaurant") ? (
+          <Catalogue token={token} user={user} />
+        ) : (
+          <div className="df-ops-list">
+            {orders.length === 0 && (
               <p className="df-muted">
-                Restaurant {order.restaurantId} · paiement {order.paymentStatus}
-                {order.riderId ? ` · livreur ${order.riderId}` : ""}
+                Aucune commande accessible pour votre rôle.
               </p>
-              {selectedOrder === order.id && (
-                <OrderDetails
-                  order={order}
-                  role={role}
-                  riders={riders}
-                  busy={busy}
-                  onTransition={(status) => transition(order, status)}
-                  onPayment={() =>
-                    act(`payment-${order.id}`, () =>
-                      delifastApi.simulateDemoPayment(token, order.id),
+            )}
+            {orders.map((order) => (
+              <article className="df-ops-card" key={order.id}>
+                <button
+                  className="df-order-title"
+                  onClick={() =>
+                    setSelectedOrder(
+                      selectedOrder === order.id ? null : order.id,
                     )
                   }
-                  onAssign={(riderId) =>
-                    act(`assign-${order.id}`, () =>
-                      delifastApi.assignRider(
-                        token,
-                        order.id,
-                        riderId,
-                        order.status,
-                      ),
-                    )
-                  }
-                />
-              )}
-            </article>
-          ))}
-        </div>
+                >
+                  <strong>#{order.id}</strong>
+                  <span className={`df-status status-${order.status}`}>
+                    {labels[order.status] || order.status}
+                  </span>
+                </button>
+                <p className="df-muted">
+                  Restaurant {order.restaurantId} · paiement{" "}
+                  {order.paymentStatus}
+                  {order.riderId ? ` · livreur ${order.riderId}` : ""}
+                </p>
+                {selectedOrder === order.id && (
+                  <OrderDetails
+                    order={order}
+                    role={role}
+                    riders={riders}
+                    busy={busy}
+                    onTransition={(status) => transition(order, status)}
+                    onPayment={() =>
+                      act(`payment-${order.id}`, () =>
+                        delifastApi.simulateDemoPayment(token, order.id),
+                      )
+                    }
+                    onAssign={(riderId) =>
+                      act(`assign-${order.id}`, () =>
+                        delifastApi.assignRider(
+                          token,
+                          order.id,
+                          riderId,
+                          order.status,
+                        ),
+                      )
+                    }
+                  />
+                )}
+              </article>
+            ))}
+          </div>
+        )}
       </div>
     </main>
   );

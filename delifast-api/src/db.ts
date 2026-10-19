@@ -13,6 +13,7 @@ export async function connect(
     .createIndex({ idempotencyKey: 1 }, { unique: true });
   await db.collection("restaurants").createIndex({ id: 1 }, { unique: true });
   await db.collection("menu_items").createIndex({ id: 1 }, { unique: true });
+  await db.collection("menu_items").createIndex({ restaurantId: 1, archived: 1 });
   await db.collection("staff_users").createIndex({ id: 1 }, { unique: true });
   await db.collection("staff_users").createIndex({ email: 1 }, { unique: true });
   await db.collection("staff_sessions").createIndex({ id: 1 }, { unique: true });

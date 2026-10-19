@@ -1,6 +1,5 @@
 import { connect, closeDb } from "../src/db.js";
 import { passwordHash } from "../src/auth.js";
-const db = await connect();
 const rs = [
   {
     id: "rest-koudougou",
@@ -61,29 +60,86 @@ const rs = [
     ],
   },
 ];
-for (const r of rs) {
-  const { menu, ...restaurant } = r;
-  await db
-    .collection("restaurants")
-    .updateOne({ id: r.id }, { $set: restaurant }, { upsert: true });
-  for (const m of menu)
+export async function seedCatalog(db: any) {
+  for (const r of rs) {
+    const { menu, ...restaurant } = r;
     await db
-      .collection("menu_items")
+      .collection("restaurants")
       .updateOne(
-        { id: m.id },
-        { $set: { ...m, restaurantId: r.id } },
+        { id: r.id },
+        { $setOnInsert: { ...restaurant, version: 0, audit: [] } },
         { upsert: true },
       );
+    for (const m of menu)
+      await db
+        .collection("menu_items")
+        .updateOne(
+          { id: m.id },
+          {
+            $setOnInsert: {
+              ...m,
+              restaurantId: r.id,
+              version: 0,
+              archived: false,
+              audit: [],
+            },
+          },
+          { upsert: true },
+        );
+  }
 }
-const staff = [
-  { id: "staff-admin", name: "Admin Démo", email: "admin@delifast.local", role: "ADMIN", restaurantId: null, password: "AdminDemo!2026" },
-  { id: "staff-rest-1", name: "Restaurant Koudougou", email: "restaurant1@delifast.local", role: "RESTAURANT", restaurantId: "rest-koudougou", password: "RestaurantDemo!2026" },
-  { id: "staff-rest-2", name: "Restaurant Ouaga Centre", email: "restaurant2@delifast.local", role: "RESTAURANT", restaurantId: "rest-ouaga-centre", password: "RestaurantDemo!2026" },
-  { id: "staff-rider", name: "Livreur Démo", email: "rider@delifast.local", role: "RIDER", restaurantId: null, password: "RiderDemo!2026" },
-];
-for (const s of staff) {
-  const { password, ...user } = s;
-  await db.collection("staff_users").updateOne({ id: s.id }, { $set: { ...user, passwordHash: passwordHash(password), active: true } }, { upsert: true });
+export async function seedAll(db: any) {
+  await seedCatalog(db);
+  const staff = [
+    {
+      id: "staff-admin",
+      name: "Admin Démo",
+      email: "admin@delifast.local",
+      role: "ADMIN",
+      restaurantId: null,
+      password: "AdminDemo!2026",
+    },
+    {
+      id: "staff-rest-1",
+      name: "Restaurant Koudougou",
+      email: "restaurant1@delifast.local",
+      role: "RESTAURANT",
+      restaurantId: "rest-koudougou",
+      password: "RestaurantDemo!2026",
+    },
+    {
+      id: "staff-rest-2",
+      name: "Restaurant Ouaga Centre",
+      email: "restaurant2@delifast.local",
+      role: "RESTAURANT",
+      restaurantId: "rest-ouaga-centre",
+      password: "RestaurantDemo!2026",
+    },
+    {
+      id: "staff-rider",
+      name: "Livreur Démo",
+      email: "rider@delifast.local",
+      role: "RIDER",
+      restaurantId: null,
+      password: "RiderDemo!2026",
+    },
+  ];
+  for (const s of staff) {
+    const { password, ...user } = s;
+    await db
+      .collection("staff_users")
+      .updateOne(
+        { id: s.id },
+        {
+          $set: { ...user, passwordHash: passwordHash(password), active: true },
+        },
+        { upsert: true },
+      );
+  }
 }
-console.log("Seed démo idempotent appliqué");
-await closeDb();
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const db = await connect();
+  await seedAll(db);
+  console.log("Seed démo idempotent appliqué");
+  await closeDb();
+}

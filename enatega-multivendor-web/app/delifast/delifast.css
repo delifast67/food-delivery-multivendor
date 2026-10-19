@@ -450,3 +450,25 @@
   .df-ops-head .df-secondary { margin-top: 0; }
   .df-history > div { flex-direction: column; gap: 2px; }
 }
+.df-ops-tabs { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.df-ops-tabs .df-primary, .df-ops-tabs .df-secondary { width: auto; margin-top: 0; padding: 11px 15px; }
+.df-catalogue { display: grid; gap: 18px; }
+.df-catalogue-status { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 18px; background: var(--df-card); border: 1px solid var(--df-line); }
+.df-catalogue-status span { color: var(--df-muted); font-size: 12px; }
+.df-catalogue-status button { margin-left: auto; }
+.df-catalogue-form { display: grid; gap: 10px; padding: 20px; background: var(--df-card); border: 1px solid var(--df-line); }
+.df-catalogue-form h3, .df-menu-admin h3 { margin: 0 0 5px; }
+.df-catalogue-form label { display: grid; gap: 5px; color: var(--df-muted); font-size: 12px; }
+.df-catalogue-form input:not([type="checkbox"]), .df-catalogue-form textarea { width: 100%; border: 1px solid var(--df-line); padding: 10px; background: white; font: inherit; }
+.df-catalogue-form textarea { min-height: 70px; }
+.df-check { display: flex !important; align-items: center; gap: 8px; }
+.df-check input { width: auto; }
+.df-catalogue-form .df-primary { width: auto; margin-top: 6px; }
+.df-menu-admin { display: grid; gap: 10px; }
+.df-catalogue-item { display: flex; justify-content: space-between; gap: 15px; align-items: center; background: var(--df-card); border: 1px solid var(--df-line); padding: 16px; }
+.df-catalogue-item p { margin: 5px 0; color: var(--df-muted); font-size: 12px; }
+.df-catalogue-item span { color: var(--df-green); font-size: 11px; }
+.df-catalogue-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.df-catalogue-actions button { width: auto; margin: 0; padding: 10px 12px; }
+.df-closed { display: block; color: #8d3024; font-size: 12px; }
+@media (max-width: 600px) { .df-catalogue-item { align-items: flex-start; flex-direction: column; } .df-catalogue-status button { margin-left: 0; } }

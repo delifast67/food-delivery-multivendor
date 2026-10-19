@@ -4,6 +4,7 @@ type Query {
   calculateCheckout(input: CartInput!): Checkout!
   order(id: ID!, accessToken: String!): Order
   operationsOrders: [Order!]!
+  operationsRestaurants: [Restaurant!]!
   availableRiders: [StaffUser!]!
   me: StaffUser
 }
@@ -14,9 +15,14 @@ type Mutation {
   simulateDemoPayment(orderId: ID!): Order!
   transitionOrder(orderId: ID!, status: String!, expectedStatus: String!): Order!
   assignRider(orderId: ID!, riderId: ID!, expectedStatus: String!): Order!
+  createMenuItem(restaurantId: ID!, input: MenuItemInput!): MenuItem!
+  updateMenuItem(id: ID!, expectedVersion: Int!, input: MenuItemInput!): MenuItem!
+  setMenuItemArchived(id: ID!, expectedVersion: Int!, archived: Boolean!): MenuItem!
+  setRestaurantOpen(id: ID!, expectedVersion: Int!, open: Boolean!): Restaurant!
 }
-type Restaurant { id: ID!, name: String!, description: String!, menu: [MenuItem!]! }
-type MenuItem { id: ID!, name: String!, description: String!, priceXof: Int!, available: Boolean! }
+type Restaurant { id: ID!, name: String!, description: String!, open: Boolean!, version: Int!, menu: [MenuItem!]! }
+type MenuItem { id: ID!, name: String!, description: String!, priceXof: Int!, available: Boolean!, version: Int!, archived: Boolean! }
+input MenuItemInput { name: String!, description: String!, priceXof: Int!, available: Boolean! }
 input CartInput { restaurantId: ID!, items: [CartItemInput!]! }
 input CartItemInput { menuItemId: ID!, quantity: Int! }
 type Checkout { currency: String!, subtotal: Int!, deliveryFee: Int!, serviceFee: Int!, tax: Int!, discount: Int!, total: Int!, items: [CheckoutItem!]! }

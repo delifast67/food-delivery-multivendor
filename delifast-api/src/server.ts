@@ -17,11 +17,22 @@ import {
   assign,
 } from "./orders.js";
 import { authenticate, login, logout, requireRole } from "./auth.js";
+import {
+  publicRestaurants,
+  publicRestaurant,
+  operationsRestaurants,
+  menuFor,
+  createMenuItem,
+  updateMenuItem,
+  setMenuItemArchived,
+  setRestaurantOpen,
+} from "./catalog.js";
 const typeDefs = await readFile(
   new URL("../schema/v1.graphql", import.meta.url),
   "utf8",
 );
 const knownCodes = new Set([
+  "INVALID_INPUT",
   "INVALID_CART",
   "INVALID_QUANTITY",
   "INVALID_INPUT",
@@ -83,16 +94,14 @@ function rateLimit() {
     if (!c || now - c.start >= config.rateLimitWindowMs)
       buckets.set(key, { start: now, count: 1 });
     else if (++c.count > config.rateLimitMax) {
-      res
-        .status(429)
-        .json({
-          errors: [
-            {
-              message: "Trop de requêtes",
-              extensions: { code: "RATE_LIMITED" },
-            },
-          ],
-        });
+      res.status(429).json({
+        errors: [
+          {
+            message: "Trop de requêtes",
+            extensions: { code: "RATE_LIMITED" },
+          },
+        ],
+      });
       return;
     }
     next();
@@ -100,9 +109,10 @@ function rateLimit() {
 }
 const resolvers: any = {
   Query: {
-    restaurants: () => getDb().collection("restaurants").find({}).toArray(),
-    restaurant: (_: any, { id }: any) =>
-      getDb().collection("restaurants").findOne({ id }),
+    restaurants: () => publicRestaurants(getDb()),
+    restaurant: (_: any, { id }: any) => publicRestaurant(getDb(), id),
+    operationsRestaurants: (_: any, _a: any, ctx: any) =>
+      operationsRestaurants(getDb(), requireRole(ctx, ["ADMIN", "RESTAURANT"])),
     calculateCheckout: (_: any, { input }: any) =>
       calculateCheckout(getDb(), normalizeCart(input)),
     order: (_: any, { id, accessToken }: any) =>
@@ -117,8 +127,7 @@ const resolvers: any = {
     me: (_: any, _a: any, ctx: any) => ctx.user || null,
   },
   Restaurant: {
-    menu: (r: any) =>
-      getDb().collection("menu_items").find({ restaurantId: r.id }).toArray(),
+    menu: (r: any) => menuFor(getDb(), r),
   },
   Mutation: {
     placeOrder: (_: any, { input }: any) =>
@@ -156,6 +165,41 @@ const resolvers: any = {
         orderId,
         riderId,
         expectedStatus,
+      ),
+    createMenuItem: (_: any, { restaurantId, input }: any, ctx: any) =>
+      createMenuItem(
+        getDb(),
+        requireRole(ctx, ["ADMIN", "RESTAURANT"]),
+        restaurantId,
+        input,
+      ),
+    updateMenuItem: (_: any, { id, expectedVersion, input }: any, ctx: any) =>
+      updateMenuItem(
+        getDb(),
+        requireRole(ctx, ["ADMIN", "RESTAURANT"]),
+        id,
+        expectedVersion,
+        input,
+      ),
+    setMenuItemArchived: (
+      _: any,
+      { id, expectedVersion, archived }: any,
+      ctx: any,
+    ) =>
+      setMenuItemArchived(
+        getDb(),
+        requireRole(ctx, ["ADMIN", "RESTAURANT"]),
+        id,
+        expectedVersion,
+        archived,
+      ),
+    setRestaurantOpen: (_: any, { id, expectedVersion, open }: any, ctx: any) =>
+      setRestaurantOpen(
+        getDb(),
+        requireRole(ctx, ["ADMIN", "RESTAURANT"]),
+        id,
+        expectedVersion,
+        open,
       ),
   },
 };

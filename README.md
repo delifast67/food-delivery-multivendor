@@ -16,13 +16,15 @@ Ouvrir [le site client](http://localhost:3000/delifast) et [l’espace opératio
 
 Le parcours autonome couvre le catalogue, le panier mono-restaurant, le calcul serveur, la commande persistée, les connexions du personnel et le cycle restaurant → affectation manuelle → livraison simulée avec historique et permissions. Un paiement réel n’est pas disponible : sans activation explicite du simulateur, la commande reste en attente de paiement.
 
+L’onglet **Catalogue** permet désormais à l’administration et au restaurant autorisé de créer ou modifier les plats, changer les prix et disponibilités, archiver/restaurer et ouvrir/fermer manuellement le restaurant. Les versions protègent contre les écrasements concurrents, le seed ne réinitialise plus les menus et les commandes existantes gardent leurs montants figés. Voir le [contrat catalogue](delifast-api/CATALOG_CONTRACT.md). Les catégories, options, photos, horaires automatiques et zones GPS restent à développer.
+
 ## Organisation
 
 | Répertoire | État |
 | --- | --- |
 | `delifast-api` | API GraphQL autonome, MongoDB, migrations, seed, authentification locale et opérations |
 | `enatega-multivendor-web/app/delifast` | Parcours client et espace opérations autonomes, indépendants du backend historique |
-| `scripts/delifast-*.mjs` | Contrat GraphQL, parcours HTTP, persistance et sauvegarde/restauration |
+| `scripts/delifast-*.mjs` | Contrat GraphQL, parcours HTTP client/opérations/catalogue, persistance et sauvegarde/restauration |
 | `enatega-multivendor-admin` | Ancien back-office multivendeur, non raccordé intégralement à la nouvelle API |
 | `enatega-multivendor-app`, `enatega-multivendor-store`, `enatega-multivendor-rider` | Applications mobiles historiques restant à migrer et à tester sur appareils |
 | `docs/historique` | Documentation héritée, non contractuelle pour Delifast |
@@ -37,7 +39,7 @@ Les détails de fonctionnement et les limites sont dans le [guide Delifast](READ
 
 ## Vérifications de la recette locale
 
-Les builds API et web passent, avec **27 tests API**, **100 tests web**, **13 documents GraphQL** validés et **23 contrôles HTTP** client/opérations. La persistance après redémarrage complet de MongoDB et de l’API et la sauvegarde/restauration dans une base vierge sont testées. Le parcours navigateur a été vérifié jusqu’au statut livré fictif. Le démarrage Docker est fourni mais n’a pas été exécuté dans cet environnement sans Docker ; cela ne constitue pas une recette des applications mobiles ou de l’ancien admin.
+Les builds API et web passent, avec **36 tests API**, **110 tests web**, **18 documents GraphQL** validés et **28 contrôles HTTP** client/opérations/catalogue. La persistance après redémarrage complet de MongoDB et de l’API, le seed non destructif et la sauvegarde/restauration du catalogue, de ses versions et audits dans une base vierge sont testés. Le parcours HTTP va jusqu’à la livraison fictive ; la nouvelle recette navigateur vérifie création/modification/archivage d’un plat, conflit de version visible et fermeture/réouverture. Le démarrage Docker est fourni mais n’a pas été exécuté dans cet environnement sans Docker ; cela ne constitue pas une recette des applications mobiles ou de l’ancien admin.
 
 ## Licence
 

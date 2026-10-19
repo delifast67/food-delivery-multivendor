@@ -419,9 +419,10 @@ export default function DelifastPage() {
                   <div>
                     <h3>{restaurant.name}</h3>
                     <p>{restaurant.description}</p>
+                    {restaurant.open === false && <strong className="df-closed">Fermé actuellement · commandes désactivées</strong>}
                   </div>
                   <div className="df-menu">
-                    {restaurant.menu.map((item) => (
+                    {restaurant.menu.filter((item) => !item.archived).map((item) => (
                       <div
                         className={`df-item ${!item.available ? "unavailable" : ""}`}
                         key={item.id}
@@ -433,10 +434,10 @@ export default function DelifastPage() {
                         </div>
                         <button
                           aria-label={`Ajouter ${item.name}`}
-                          disabled={!item.available || locked}
+                          disabled={!item.available || restaurant.open === false || locked}
                           onClick={() => add(restaurant, item.id)}
                         >
-                          {item.available ? "+" : "Indisponible"}
+                          {restaurant.open === false ? "Fermé" : item.available ? "+" : "Indisponible"}
                         </button>
                       </div>
                     ))}
@@ -615,7 +616,7 @@ export default function DelifastPage() {
                 className="df-primary"
                 disabled={
                   loading === "order" ||
-                  (!locked && (loading === "checkout" || !checkout))
+                  (!locked && (loading === "checkout" || !checkout || selected?.open === false))
                 }
                 onClick={place}
               >
