@@ -6,6 +6,7 @@ on:
       - 'delifast-api/**'
       - 'enatega-multivendor-web/**'
       - 'enatega-multivendor-app/**'
+      - 'enatega-multivendor-store/**'
       - 'scripts/delifast-*.mjs'
       - '.github/workflows/delifast-local.yml'
       - 'compose.delifast.yaml'
@@ -14,6 +15,7 @@ on:
       - 'delifast-api/**'
       - 'enatega-multivendor-web/**'
       - 'enatega-multivendor-app/**'
+      - 'enatega-multivendor-store/**'
       - 'scripts/delifast-*.mjs'
       - '.github/workflows/delifast-local.yml'
       - 'compose.delifast.yaml'
@@ -123,3 +125,34 @@ jobs:
           node scripts/delifast-mobile-contract.mjs
       - name: Produire les bundles JS Android et iOS sans publication
         run: npm run export:delifast --prefix enatega-multivendor-app
+
+  restaurant-mobile-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: '1'
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_PUBLIC_DELIFAST_API_URL: http://127.0.0.1:4000/graphql
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            delifast-api/package-lock.json
+            enatega-multivendor-store/package-lock.json
+      - name: Installer API et restaurant
+        run: |
+          npm ci --prefix delifast-api --ignore-scripts --no-audit --no-fund
+          npm ci --prefix enatega-multivendor-store --ignore-scripts --no-audit --no-fund
+      - name: Tester le restaurant et son contrat
+        run: |
+          node --test scripts/delifast-store-entry.test.mjs
+          npm run test:delifast --prefix enatega-multivendor-store
+          node scripts/delifast-store-contract.mjs
+          npm run build --prefix delifast-api
+          node scripts/delifast-store-smoke.mjs
+      - name: Exporter les bundles sans publication
+        working-directory: enatega-multivendor-store
+        run: npx expo export --platform android --platform ios --output-dir dist/delifast
