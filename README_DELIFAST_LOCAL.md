@@ -202,3 +202,35 @@ Le restaurant se connecte avec son compte personnel fictif, retrouve ses command
 La recette de ce lot exécute **43 tests restaurant** (transport, contrôleur, rendu et stockage), **3 tests entrée/configuration**, **5 documents GraphQL restaurant**, **9 contrôles HTTP avec API/MongoDB jetables** et les exports JS/Hermes Android/iOS. Régressions effectivement exécutées : **151 tests API**, **126 tests web**, **44 tests mobile client**, **21 documents web/opérations** et **5 documents client mobile**. Compilation et typecheck API sont exécutés aussi. La recette restaurant crée puis détruit sa propre base et son propre serveur : aucun changement aux données de travail, aucun appel marchand.
 
 Ce lot ne migre pas encore le catalogue mobile, l’impression, les finances, les notifications ni le client livreur. L’actualisation reste manuelle et il n’y a pas de cache de commandes hors ligne. Aucun build APK/IPA signé, essai sur appareil physique, publication, fusion ou déploiement n’a été réalisé. Les verrous paiement/production restent en place. La configuration du job CI restaurant est ajoutée, sans prétendre à une exécution GitHub tant que le commit n’est pas publié.
+
+## Parcours mobile livreur autonome
+
+L’entrée active de `enatega-multivendor-rider` charge le parcours Delifast Livreur. Le [guide livreur](enatega-multivendor-rider/src/delifast/README.md) décrit les commandes Expo et les adresses adaptées au téléphone ou à l’émulateur. Les anciennes routes restent archivées sous `historique/app` ; elles ne sont pas migrées intégralement et ne sont pas chargées au démarrage.
+
+Le compte `RIDER` consulte uniquement les commandes qui lui sont déjà affectées. L’affectation reste l’opération administrative existante du backend : le client livreur ne peut ni prendre une mission libre, ni affecter ou réaffecter une commande. Les adresses, quantités, options, montants et événements affichés viennent de la commande serveur. Une mission affectée avant qu’elle soit prête est consultable, mais les seules transitions livreur sont **prête → récupérée → livrée** (`READY → PICKED_UP → DELIVERED`), avec paiement confirmé et `expectedStatus`. L’écran demande une confirmation avant de déclarer la livraison.
+
+La session est conservée séparément dans SecureStore et revalidée côté serveur. Les réponses tardives ne doivent pas rétablir une session déconnectée. Aucun statut n’est anticipé localement : en cas de réponse de mutation perdue, le client relit les missions sans rejouer automatiquement la mutation. Une relecture indisponible ne constitue pas un succès ; les actions restent bloquées jusqu’à une actualisation réussie. La révocation de session efface l’identité et les commandes de la mémoire de l’application.
+
+```bash
+npm ci --prefix enatega-multivendor-rider --ignore-scripts --no-audit --no-fund
+npm run test:delifast --prefix enatega-multivendor-rider
+node --test scripts/delifast-rider-entry.test.mjs
+node scripts/delifast-rider-contract.mjs
+npm run build --prefix delifast-api
+# Démarre puis détruit sa propre API et sa propre base MongoDB fictive :
+node scripts/delifast-rider-smoke.mjs
+# Export JS Android/iOS uniquement, sans publication :
+(cd enatega-multivendor-rider && CI=1 EXPO_NO_TELEMETRY=1 npx expo export --platform android --platform ios --output-dir dist/delifast)
+```
+
+La recette HTTP livreur est autonome : elle n’utilise pas la base de travail, crée un second livreur fictif seulement dans sa base jetable, et vérifie l’isolation, les interdictions de dispatch, la progression, le suivi client, les sessions, la double soumission et les résultats réseau incertains avant/après écriture. Elle n’effectue aucune livraison physique, aucun appel marchand et aucun paiement réel. Le job CI livreur est préparé localement ; sa présence n’atteste pas une exécution distante.
+
+Ce parcours ne fournit pas le GPS temps réel, les itinéraires, les notifications, le chat, le portefeuille ou la rémunération, les horaires ou la gestion des véhicules. L’actualisation est manuelle. Les exports JS ne sont pas un APK/IPA signé ni une recette sur appareil. Le projet global demeure une démonstration : les autres limites décrites ci-dessus restent applicables. La publication du code nécessite une réautorisation de l’intégration GitHub ; aucune fusion ni aucun déploiement ne sont réalisés ici.
+
+### Vérifications du lot livreur
+
+La recette locale comprend **55 tests livreur** (14 transport, 32 contrôleur, 8 interface et 1 stockage), **3 tests d’entrée/configuration**, **5 documents GraphQL conformes au schéma** et **13 contrôles livreur/API/MongoDB jetables**. Elle couvre notamment les confirmations de livraison perdues avant et après écriture, l’absence de faux succès, la relecture impossible, le déverrouillage par actualisation, les réponses tardives après déconnexion et la confirmation/annulation dans l’interface.
+
+Régressions réellement exécutées pendant ce lot : **151 tests API**, **126 tests web**, **44 tests client mobile** et **43 tests restaurant**, ainsi que les **9 contrôles restaurant/API/MongoDB**, les contrats GraphQL web/client/restaurant et les tests d’entrée client/restaurant. La compilation et le contrôle TypeScript de l’API passent. Les 43 anciennes routes livreur ont été conservées à l’identique en archive. La suite TypeScript/lint de toutes les sources historiques n’est pas présentée comme validée ; l’application active est le parcours JavaScript autonome décrit ici.
+
+Les exports **JS/Hermes Android et iOS du client livreur passent** également (`npm run export:delifast`). Ils restent dans `enatega-multivendor-rider/dist/delifast` et ne sont pas versionnés. Aucun APK/IPA signé, aucune exécution sur téléphone physique et aucune livraison réelle n’ont été validés par ces exports.

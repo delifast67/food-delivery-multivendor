@@ -10,3 +10,8 @@ google-service-account.json
 .env
 .env.local
 .env.*.local
+
+# Dépendances et exports locaux reproductibles
+node_modules/
+.expo/
+dist/
