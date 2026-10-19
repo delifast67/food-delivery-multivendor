@@ -1,0 +1,58 @@
+# Delifast mobile — commander et suivre une commande fictive
+
+L’application client pertinente est `enatega-multivendor-app` (React Native et Expo SDK 53). Son entrée par défaut utilise désormais le backend autonome Delifast, sans initialiser les anciens services Google/Firebase, Stripe/PayPal, analytics, notifications ou bascules mono-vendeur. Le code historique reste archivé dans `App.legacy.js`, `app.config.legacy.js` et les anciens répertoires ; il n’est pas migré ni supprimé intégralement par ce lot.
+
+## Démarrer localement
+
+Démarrer MongoDB et l’API selon le [guide local](../../../README_DELIFAST_LOCAL.md). Laisser les paiements désactivés pour ce parcours : la commande reste `PAYMENT_PENDING/PENDING`. Utiliser uniquement des coordonnées fictives.
+
+Depuis la racine du dépôt, avec Node indiqué dans `.nvmrc` :
+
+```bash
+npm ci --prefix enatega-multivendor-app --ignore-scripts --no-audit --no-fund
+cd enatega-multivendor-app
+# Simulateur iOS sur la même machine que l’API
+EXPO_PUBLIC_DELIFAST_API_URL=http://localhost:4000/graphql npx expo start --go
+# Émulateur Android standard sur la même machine que l’API
+EXPO_PUBLIC_DELIFAST_API_URL=http://10.0.2.2:4000/graphql npx expo start --go
+```
+
+Il faut un client Expo compatible SDK 53. La présence des anciennes dépendances natives ne signifie pas qu’elles sont utilisées par ce point d’entrée ; les anciens parcours, eux, exigeaient un development build. Aucun APK/IPA ni essai sur appareil physique n’est certifié par les tests JS de ce lot.
+
+Sur un téléphone physique, `localhost` désigne le téléphone et non l’ordinateur. Fournir explicitement l’URL d’une API de démonstration joignable. Une API sur un autre ordinateur doit être atteignable depuis le téléphone. Un tunnel Metro ne rend pas automatiquement l’API accessible. Ne pas publier ce backend local ou ses comptes d’essai sur Internet. Pour une recette sur un LAN privé de confiance, une personne peut choisir d’écouter sur une adresse LAN avec `HOST=<IP-LAN>` et limiter le pare-feu au téléphone ; ce lot ne modifie ni le réseau ni le pare-feu. Docker lie les ports à `127.0.0.1` par défaut et nécessite une adaptation explicite pour ce cas. Un binaire natif peut aussi imposer HTTPS ; son comportement réseau n’est pas validé ici.
+
+`EXPO_PUBLIC_DELIFAST_API_URL` est une configuration publique compilée dans le bundle, jamais une clé secrète. Redémarrer Metro après une modification. Les valeurs de secours restent strictement locales : Android `10.0.2.2`, iOS `localhost`. Aucun backend historique n’est utilisé en secours.
+
+## Ce qu’on peut essayer
+
+Choisir un restaurant ouvert, parcourir ses catégories et plats, sélectionner les variantes obligatoires et suppléments, puis ajouter au panier. Deux configurations distinctes occupent deux lignes ; la même configuration augmente la quantité. Vider explicitement le panier avant de changer de restaurant. La limite serveur est de 20 lignes et 99 unités par configuration.
+
+Le menu montre des prix indicatifs. Le panier affiche le devis retourné par `calculateCheckout`, avec sous-total, livraison, service, taxes et total XOF. Toute modification du panier invalide le devis précédent. L’adresse utilise une ville de démonstration, par défaut Ouagadougou, et un numéro `+226` suivi de huit chiffres. Le serveur reste l’autorité finale, y compris si le catalogue ou la zone ont changé.
+
+La création utilise `placeOrder`, sans moyen de paiement ni prix fourni par le client. Elle ne déclenche ni encaissement, ni paiement à la livraison, ni livraison physique. Le suivi utilise `order(id, accessToken)` et son historique serveur ; le client ne dispose d’aucune mutation de personnel ou de simulation de paiement. Le suivi peut afficher les changements effectués dans l’espace opérations local, si un administrateur y utilise le simulateur fictif déjà existant.
+
+## Reprise après coupure
+
+Avant d’envoyer la commande, l’application enregistre la clé d’idempotence et le payload exact dans **Expo SecureStore**, pas dans AsyncStorage. Cette tentative contient l’adresse fictive afin qu’un redémarrage puisse rejouer strictement la même demande. Les longues valeurs sont fragmentées en chaînes ASCII de moins de 2 Ko ; une référence n’est publiée qu’après l’écriture de tous les fragments. La limite locale est de 150 000 caractères encodés. Une erreur de stockage avant envoi bloque la création.
+
+Après un résultat réseau indéterminé, le panier reste verrouillé et l’utilisateur peut reprendre la même tentative, y compris après redémarrage. Il ne faut pas supprimer les données de l’application ou la réinstaller pour résoudre cette situation : cela peut perdre la clé nécessaire à la reprise. Après succès, seuls l’identifiant et le jeton de la dernière commande sont nécessaires au suivi. Le jeton n’est jamais affiché dans l’interface.
+
+La protection contre les doubles commandes repose aussi sur l’index unique MongoDB. Ce stockage local ne remplace pas un compte client permanent ou un historique synchronisé entre appareils. Des fragments chiffrés orphelins peuvent subsister si l’application est interrompue pendant un remplacement ; aucun payload n’est écrit en clair.
+
+## Vérifier sans publier
+
+```bash
+npm run test:delifast --prefix enatega-multivendor-app
+node --test scripts/delifast-mobile-entry.test.mjs
+node scripts/delifast-mobile-contract.mjs
+# API et MongoDB de démonstration déjà démarrés, seed appliqué :
+node scripts/delifast-mobile-smoke.mjs
+# Bundles JS/Hermes uniquement, sans compte Expo ni envoi aux stores :
+EXPO_PUBLIC_DELIFAST_API_URL=http://127.0.0.1:4000/graphql npm run export:delifast --prefix enatega-multivendor-app
+```
+
+Les tests de rendu utilisent les vrais hooks/composants React avec des primitives natives simulées : ils ne valent pas une recette tactile ou un build natif. La recette HTTP utilise le vrai client et contrôleur mobiles contre l’API et MongoDB, crée uniquement des commandes fictives en attente, puis reproduit une réponse perdue après enregistrement et une reprise après redémarrage.
+
+## Avant une publication réelle
+
+Les identifiants Android/iOS historiques sont conservés ; le propriétaire doit confirmer s’il existe déjà des applications publiées avant de les remplacer par des identifiants Delifast. Aucun projet EAS, compte éditeur, certificat, notification, prestataire marchand ou service payant n’est activé par ce lot. Restent notamment la recette sur appareil, les builds/signatures, le rebranding global et la migration des applications restaurant/livreur et de l’ancien back-office. La PR doit rester non fusionnée et non déployée selon les consignes du lot.

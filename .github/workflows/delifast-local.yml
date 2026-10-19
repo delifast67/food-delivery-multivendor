@@ -1,10 +1,11 @@
-name: Delifast local — API et parcours web
+name: Delifast local — API, web et mobile
 
 on:
   push:
     paths:
       - 'delifast-api/**'
       - 'enatega-multivendor-web/**'
+      - 'enatega-multivendor-app/**'
       - 'scripts/delifast-*.mjs'
       - '.github/workflows/delifast-local.yml'
       - 'compose.delifast.yaml'
@@ -12,6 +13,7 @@ on:
     paths:
       - 'delifast-api/**'
       - 'enatega-multivendor-web/**'
+      - 'enatega-multivendor-app/**'
       - 'scripts/delifast-*.mjs'
       - '.github/workflows/delifast-local.yml'
       - 'compose.delifast.yaml'
@@ -89,6 +91,35 @@ jobs:
           node scripts/delifast-operations-smoke.mjs
           node scripts/delifast-catalog-smoke.mjs
           node scripts/delifast-options-smoke.mjs
+          node scripts/delifast-mobile-smoke.mjs
       - name: Afficher les journaux en cas d’échec
         if: failure()
         run: cat /tmp/delifast-api.log /tmp/delifast-web.log 2>/dev/null || true
+
+  mobile-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: '1'
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_PUBLIC_DELIFAST_API_URL: http://127.0.0.1:4000/graphql
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            delifast-api/package-lock.json
+            enatega-multivendor-app/package-lock.json
+      - name: Installer les outils et dépendances mobiles
+        run: |
+          npm ci --prefix delifast-api --ignore-scripts --no-audit --no-fund
+          npm ci --prefix enatega-multivendor-app --ignore-scripts --no-audit --no-fund
+      - name: Tester le parcours mobile et son isolation
+        run: |
+          node --test scripts/delifast-mobile-entry.test.mjs
+          npm run test:delifast --prefix enatega-multivendor-app
+          node scripts/delifast-mobile-contract.mjs
+      - name: Produire les bundles JS Android et iOS sans publication
+        run: npm run export:delifast --prefix enatega-multivendor-app

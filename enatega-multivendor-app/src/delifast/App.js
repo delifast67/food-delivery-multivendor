@@ -1,0 +1,490 @@
+import React, { useEffect, useMemo, useState } from 'react'
+import * as SecureStore from 'expo-secure-store'
+import * as Crypto from 'expo-crypto'
+import { ActivityIndicator, Button, FlatList, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { createClient } from './api'
+import { createController } from './controller'
+import { createSecureStorage } from './secure-storage'
+
+const endpoint = (typeof process !== 'undefined' && process.env && process.env.EXPO_PUBLIC_DELIFAST_API_URL) || `http://${Platform.OS === 'android' ? '10.0.2.2' : 'localhost'}:4000/graphql`
+const initialAddress = { recipientName: '', phone: '+226 ', city: 'Ouagadougou', neighborhood: '', landmark: '', instructions: '' }
+
+const money = (value) => `${Number(value || 0).toLocaleString('fr-FR')} XOF`
+const errorText = (error) => (error ? error.message || String(error) : '')
+const normalizeSelections = (selections) =>
+  (selections || [])
+    .map((selection) => ({
+      groupId: String(selection.groupId),
+      optionIds: (selection.optionIds || []).map(String).sort()
+    }))
+    .sort((a, b) => a.groupId.localeCompare(b.groupId))
+const lineKey = (line) => {
+  const grouped = new Map()
+  for (const option of line.selectedOptions || []) {
+    if (!grouped.has(option.groupId)) grouped.set(option.groupId, [])
+    grouped.get(option.groupId).push(option.optionId)
+  }
+  const selections = line.selections || [...grouped].map(([groupId, optionIds]) => ({ groupId, optionIds }))
+  return JSON.stringify([String(line.menuItemId), normalizeSelections(selections).filter(selection => selection.optionIds.length)])
+}
+const quoteLine = (quote, line) => ((quote && quote.items) || []).find((item) => lineKey(item) === lineKey(line))
+const optionLabels = (menuItem, selections) => {
+  const groups = new Map(((menuItem && menuItem.optionGroups) || []).map((group) => [String(group.id), group]))
+  return normalizeSelections(selections).flatMap((selection) =>
+    (selection.optionIds || []).map((optionId) => {
+      const option = ((groups.get(selection.groupId) && groups.get(selection.groupId).options) || []).find((item) => String(item.id) === optionId)
+      return option ? option.name : optionId
+    })
+  )
+}
+
+function Header({ title, onBack, right }) {
+  return (
+    <View style={styles.header}>
+      {onBack
+        ? (
+        <TouchableOpacity onPress={onBack} style={styles.back}>
+          <Text style={styles.backText}>‹ Retour</Text>
+        </TouchableOpacity>
+          )
+        : (
+        <View style={styles.back} />
+          )}
+      <Text style={styles.headerTitle}>{title}</Text>
+      <View style={styles.headerRight}>{right}</View>
+    </View>
+  )
+}
+
+function App({ api, storage }) {
+  const resolvedStorage = useMemo(() => storage || createSecureStorage(SecureStore), [storage])
+  const [state, setState] = useState(null)
+  const controller = useMemo(() => createController({ api: api || createClient({ endpoint }), storage: resolvedStorage, random: Crypto.randomUUID, onChange: setState }), [api, resolvedStorage])
+  const [screen, setScreen] = useState('restaurants')
+  const [address, setAddress] = useState(initialAddress)
+  const [selected, setSelected] = useState(null)
+  const [localError, setLocalError] = useState('')
+
+  useEffect(() => {
+    Promise.allSettled([controller.loadRestaurants(), controller.restoreAttempt()])
+    return () => {
+      controller.stopPolling()
+    }
+  }, [controller])
+
+  if (!state) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <ActivityIndicator color='#1f6f5b' style={styles.loader} />
+      </SafeAreaView>
+    )
+  }
+
+  const restaurants = state.restaurants || []
+  const cart = state.cart || { items: [] }
+  const cartCount = cart.items.reduce((sum, item) => sum + (item.quantity || 0), 0)
+  const restaurant = state.restaurant
+  const pending = state.pending
+  const lastOrder = state.lastOrder
+
+  const openRestaurant = async(item) => {
+    if (item.open === false) return
+    setLocalError('')
+    try {
+      await controller.selectRestaurant(item.id)
+      setScreen('menu')
+    } catch (error) {
+      setLocalError(errorText(error))
+    }
+  }
+  const beginNewRestaurant = (item) => {
+    if (cart.items.length && cart.restaurantId && cart.restaurantId !== item.id) {
+      setLocalError('Votre panier vient d’un autre restaurant. Videz-le avant de changer de restaurant.')
+      return
+    }
+    openRestaurant(item)
+  }
+  const submit = async() => {
+    setLocalError('')
+    try {
+      await controller.submit(address)
+      setScreen('tracking')
+    } catch (error) {
+      setLocalError(errorText(error))
+    }
+  }
+  const trackLast = async() => {
+    if (!lastOrder || !lastOrder.id || !lastOrder.accessToken) return
+    setLocalError('')
+    try {
+      await controller.track(lastOrder.id, lastOrder.accessToken)
+      setScreen('tracking')
+    } catch (error) {
+      setLocalError(errorText(error))
+    }
+  }
+
+  if (screen === 'restaurants') {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <Header
+          title='Delifast'
+          right={
+            <TouchableOpacity onPress={() => setScreen('tracking')}>
+              <Text style={styles.link}>Suivi</Text>
+            </TouchableOpacity>
+          }
+        />
+        <ScrollView contentContainerStyle={styles.content}>
+          <Text style={styles.title}>Restaurants</Text>
+          <Text style={styles.subtitle}>Démonstration locale — aucun paiement disponible.</Text>
+          <Text style={styles.warning}>Démonstration locale : aucun paiement réel ni paiement à la livraison n’est disponible.</Text>
+          {state.loading && <ActivityIndicator color='#1f6f5b' style={styles.loader} />}
+          {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
+          {pending && (
+            <View style={styles.notice}>
+              <Text style={styles.noticeTitle}>Commande en attente</Text>
+              <Text>Une tentative est enregistrée sur cet appareil.</Text>
+              <Button
+                title='Réessayer'
+                onPress={async() => {
+                  setLocalError('')
+                  try {
+                    await controller.retryPending()
+                    setScreen('tracking')
+                  } catch (e) {
+                    setLocalError(errorText(e))
+                  }
+                }}
+                disabled={state.busy || !state.restored}
+              />
+            </View>
+          )}
+          {lastOrder && (
+            <View style={styles.notice}>
+              <Text style={styles.noticeTitle}>Dernière commande</Text>
+              <Text>Référence : {lastOrder.id}</Text>
+              <Button title='Actualiser le suivi' onPress={trackLast} disabled={state.busy} />
+            </View>
+          )}
+          <FlatList
+            data={restaurants}
+            scrollEnabled={false}
+            keyExtractor={(item) => String(item.id)}
+            renderItem={({ item }) => (
+              <TouchableOpacity style={[styles.card, item.open === false && styles.cardClosed]} disabled={item.open === false || state.busy || !!pending || !state.restored} onPress={() => beginNewRestaurant(item)}>
+                <View style={styles.row}>
+                  <Text style={styles.cardTitle}>{item.name}</Text>
+                  <Text style={item.open === false ? styles.closed : styles.open}>{item.open === false ? 'Fermé' : 'Ouvert'}</Text>
+                </View>
+                {item.description ? <Text style={styles.muted}>{item.description}</Text> : null}
+                {item.open === false && <Text style={styles.muted}>Ce restaurant n’accepte pas de commandes.</Text>}
+              </TouchableOpacity>
+            )}
+            ListEmptyComponent={!state.loading ? <Text style={styles.muted}>Aucun restaurant disponible.</Text> : null}
+          />
+          {lastOrder && (
+            <TouchableOpacity style={styles.outlineButton} onPress={trackLast}>
+              <Text style={styles.outlineText}>Voir le suivi et l’historique</Text>
+            </TouchableOpacity>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    )
+  }
+
+  if (screen === 'menu') {
+    const menu = ((restaurant && restaurant.menu) || []).filter((item) => item.available !== false && !item.archived)
+    const categoryMap = ((restaurant && restaurant.categories) || []).filter((category) => !category.archived).reduce((map, category) => ({ ...map, [category.id]: category }), {})
+    const categories = [...new Set(menu.map((item) => (item.categoryId && categoryMap[item.categoryId] ? item.categoryId : '__uncategorized')))]
+      .sort((a, b) => {
+        if (a === '__uncategorized') return 1
+        if (b === '__uncategorized') return -1
+        return (categoryMap[a].sortOrder || 0) - (categoryMap[b].sortOrder || 0)
+      })
+      .map((id) => ({ id, name: id === '__uncategorized' ? 'Autres' : categoryMap[id].name }))
+    return (
+      <SafeAreaView style={styles.safe}>
+        <Header
+          title={restaurant ? restaurant.name : 'Menu'}
+          onBack={() => setScreen('restaurants')}
+          right={
+            <TouchableOpacity onPress={() => setScreen('cart')}>
+              <Text style={styles.link}>Panier ({cartCount})</Text>
+            </TouchableOpacity>
+          }
+        />
+        <ScrollView contentContainerStyle={styles.content}>
+          {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
+          {categories.map((category) => (
+            <View key={category.id}>
+              <Text style={styles.sectionTitle}>{category.name}</Text>
+              {menu
+                .filter((item) => (item.categoryId && categoryMap[item.categoryId] ? item.categoryId : '__uncategorized') === category.id)
+                .map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.card}
+                    disabled={state.busy || !!pending || !state.restored}
+                    onPress={() => {
+                      setSelected({ item, selections: {} })
+                      setLocalError('')
+                    }}
+                  >
+                    <View style={styles.row}>
+                      <Text style={styles.cardTitle}>{item.name}</Text>
+                      <Text style={styles.price}>{money(item.priceXof)}</Text>
+                    </View>
+                    {item.description ? <Text style={styles.muted}>{item.description}</Text> : null}
+                  </TouchableOpacity>
+                ))}
+            </View>
+          ))}
+          {selected && (
+            <View style={styles.modalCard}>
+              <Text style={styles.sectionTitle}>{selected.item.name}</Text>
+              <Text style={styles.muted}>Prix de base : {money(selected.item.priceXof)}</Text>
+              {(selected.item.optionGroups || []).map((group) => (
+                <View key={group.id} style={styles.optionGroup}>
+                  <Text style={styles.label}>
+                    {group.name} {group.minSelections ? `(minimum ${group.minSelections})` : '(facultatif)'}
+                  </Text>
+                  {(group.options || [])
+                    .filter((option) => option.available !== false)
+                    .map((option) => {
+                      const checked = (selected.selections[group.id] || []).includes(option.id)
+                      return (
+                        <TouchableOpacity
+                          key={option.id}
+                          style={styles.optionRow}
+                          disabled={state.busy || !!pending || !state.restored}
+                          onPress={() => {
+                            const current = selected.selections[group.id] || []
+                            const next = checked ? current.filter((id) => id !== option.id) : current.length < (group.maxSelections || 99) ? current.concat(option.id) : current
+                            setSelected({ ...selected, selections: { ...selected.selections, [group.id]: next } })
+                          }}
+                        >
+                          <Text style={checked ? styles.checked : styles.checkbox}>{checked ? '✓' : '○'}</Text>
+                          <Text style={styles.optionName}>{option.name}</Text>
+                          <Text>{option.priceXof ? `+ ${money(option.priceXof)}` : 'Inclus'}</Text>
+                        </TouchableOpacity>
+                      )
+                    })}
+                </View>
+              ))}
+              <Button
+                title='Ajouter au panier'
+                onPress={async() => {
+                  try {
+                    const selections = Object.entries(selected.selections).map(([groupId, optionIds]) => ({ groupId, optionIds }))
+                    await controller.addItem(selected.item, selections)
+                    setSelected(null)
+                  } catch (e) {
+                    setLocalError(errorText(e))
+                  }
+                }}
+                disabled={state.busy || !!pending || !state.restored}
+              />
+              <Button title='Annuler' onPress={() => setSelected(null)} />
+            </View>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    )
+  }
+
+  if (screen === 'cart') {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <Header title='Votre panier' onBack={() => setScreen('menu')} />
+        <ScrollView contentContainerStyle={styles.content}>
+          <Text style={styles.subtitle}>Estimation du menu uniquement. Les frais affichés ci-dessous viennent du serveur.</Text>
+          {cart.items.length === 0
+            ? (
+            <Text style={styles.muted}>Votre panier est vide.</Text>
+              )
+            : (
+                cart.items.map((item, index) => {
+                  const menuItem = ((restaurant && restaurant.menu) || []).find((menuEntry) => String(menuEntry.id) === String(item.menuItemId))
+                  const quoted = quoteLine(state.quote, item)
+                  const labels = optionLabels(menuItem, item.selections)
+                  const amount = quoted && (quoted.total != null ? quoted.total : Number(quoted.unitPrice || 0) * item.quantity)
+                  return (
+                <View style={styles.card} key={`${item.menuItemId}-${index}`}>
+                  <View style={styles.row}>
+                    <Text style={styles.cardTitle}>{menuItem ? menuItem.name : 'Article du menu'}</Text>
+                    <Text style={styles.price}>{quoted ? money(amount) : 'Calcul serveur requis'}</Text>
+                  </View>
+                  {labels.length > 0 && <Text style={styles.muted}>Options sélectionnées : {labels.join(', ')}</Text>}
+                  <View style={styles.quantity}>
+                    <Button
+                      title='−'
+                      onPress={async() => {
+                        try {
+                          await controller.changeQuantity(index, -1)
+                        } catch (e) {
+                          setLocalError(errorText(e))
+                        }
+                      }}
+                      disabled={state.busy || !!pending || !state.restored}
+                    />
+                    <Text style={styles.quantityText}>{item.quantity}</Text>
+                    <Button
+                      title='+'
+                      onPress={async() => {
+                        try {
+                          await controller.changeQuantity(index, 1)
+                        } catch (e) {
+                          setLocalError(errorText(e))
+                        }
+                      }}
+                      disabled={state.busy || !!pending || !state.restored}
+                    />
+                  </View>
+                </View>
+                  )
+                })
+              )}
+          {state.quote && (
+            <View style={styles.totals}>
+              <Text>Sous-total : {money(state.quote.subtotal)}</Text>
+              <Text>Livraison : {money(state.quote.deliveryFee)}</Text>
+              <Text>Service : {money(state.quote.serviceFee)}</Text>
+              <Text>Taxes : {money(state.quote.tax)}</Text><Text>Réduction : {money(state.quote.discount)}</Text>
+              <Text style={styles.total}>Total serveur : {money(state.quote.total)}</Text>
+            </View>
+          )}
+          {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
+          {cart.items.length > 0 && (
+            <>
+              <Button title='Actualiser le total' onPress={async() => { setLocalError(''); try { await controller.refreshQuote() } catch (e) { setLocalError(errorText(e)) } }} disabled={state.busy || !!pending || !state.restored} /><Button title='Livrer à cette adresse' onPress={() => setScreen('address')} disabled={state.busy || !!pending || !state.restored || !state.quote} />
+              <Button
+                title='Vider le panier pour changer de restaurant'
+                color='#a33'
+                onPress={async() => {
+                  try {
+                    await controller.clearCart()
+                    setLocalError('Panier vidé. Vous pouvez choisir un autre restaurant.')
+                  } catch (e) {
+                    setLocalError(errorText(e))
+                  }
+                }}
+                disabled={state.busy || !!pending || !state.restored}
+              />
+            </>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    )
+  }
+
+  if (screen === 'address') {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <Header title='Adresse de livraison' onBack={() => setScreen('cart')} />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
+          <ScrollView contentContainerStyle={styles.content}>
+            <Text style={styles.subtitle}>Burkina Faso — vérifiez vos coordonnées avant d’envoyer.</Text>
+            {[
+              ['recipientName', 'Nom du destinataire'],
+              ['phone', 'Téléphone (+226)'],
+              ['city', 'Ville'],
+              ['neighborhood', 'Quartier'],
+              ['landmark', 'Repère'],
+              ['instructions', 'Instructions de livraison']
+            ].map(([key, placeholder]) => (
+              <TextInput editable={!state.busy && !pending} key={key} style={styles.input} placeholder={placeholder} value={address[key]} onChangeText={(value) => setAddress({ ...address, [key]: value })} keyboardType={key === 'phone' ? 'phone-pad' : 'default'} multiline={key === 'instructions'} />
+            ))}
+            {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
+            <Text style={styles.warning}>Démonstration locale : aucun paiement réel ni paiement à la livraison n’est disponible.</Text>
+            {state.quote && <Text style={styles.total}>Total serveur : {money(state.quote.total)}</Text>}<Button title={state.busy ? 'Envoi en cours…' : 'Envoyer la commande'} onPress={submit} disabled={state.busy || !!pending || !state.restored || !cart.items.length || !state.quote} />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    )
+  }
+
+  const order = state.order || lastOrder
+  return (
+    <SafeAreaView style={styles.safe}>
+      <Header
+        title='Suivi de commande'
+        onBack={() => setScreen('restaurants')}
+        right={
+          <TouchableOpacity onPress={trackLast} disabled={state.busy}>
+            <Text style={styles.link}>Actualiser</Text>
+          </TouchableOpacity>
+        }
+      />
+      <ScrollView contentContainerStyle={styles.content}>
+        {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
+        {order
+          ? (
+          <>
+            <Text style={styles.sectionTitle}>Référence : {order.id}</Text>
+            <Text style={styles.cardTitle}>
+              {order.status || 'En attente'} — {order.paymentStatus || 'PENDING'}
+            </Text>
+            {order.checkout && <Text style={styles.total}>Total serveur : {money(order.checkout.total)}</Text>}
+            <Text style={styles.sectionTitle}>Historique</Text>
+            {(order.history || []).map((entry, index) => (
+              <Text style={styles.history} key={`${entry.at}-${index}`}>
+                {entry.status} — {entry.at} {entry.actorRole ? `(${entry.actorRole})` : ''}
+              </Text>
+            ))}
+            <Text style={styles.muted}>Le jeton de suivi est conservé de façon sécurisée et n’est pas affiché.</Text>
+          </>
+            )
+          : (
+          <Text style={styles.muted}>Aucune commande restaurée.</Text>
+            )}
+        <Button title='Retour aux restaurants' onPress={() => setScreen('restaurants')} />
+      </ScrollView>
+    </SafeAreaView>
+  )
+}
+
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: '#f7f8f6' },
+  flex: { flex: 1 },
+  content: { padding: 18, paddingBottom: 40 },
+  header: { minHeight: 58, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#e1e5df', backgroundColor: '#fff' },
+  back: { width: 82 },
+  backText: { color: '#1f6f5b', fontWeight: '600' },
+  headerTitle: { flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '700', color: '#18231e' },
+  headerRight: { width: 82, alignItems: 'flex-end' },
+  link: { color: '#1f6f5b', fontWeight: '700' },
+  title: { fontSize: 30, fontWeight: '800', color: '#18231e', marginBottom: 4 },
+  subtitle: { color: '#63716a', marginBottom: 16 },
+  sectionTitle: { fontSize: 20, fontWeight: '800', color: '#18231e', marginTop: 18, marginBottom: 10 },
+  card: { padding: 15, backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: '#e1e5df', marginBottom: 10 },
+  cardClosed: { opacity: 0.55 },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  cardTitle: { fontSize: 16, fontWeight: '700', color: '#18231e', flex: 1 },
+  price: { fontWeight: '700', color: '#1f6f5b' },
+  muted: { color: '#63716a', marginTop: 6 },
+  open: { color: '#1f6f5b', fontWeight: '700' },
+  closed: { color: '#a33', fontWeight: '700' },
+  loader: { margin: 12 },
+  error: { color: '#a33', backgroundColor: '#fff0ef', padding: 10, borderRadius: 6, marginBottom: 12 },
+  notice: { padding: 13, backgroundColor: '#eef6f1', borderRadius: 8, marginBottom: 14 },
+  noticeTitle: { fontWeight: '800', marginBottom: 4 },
+  outlineButton: { borderWidth: 1, borderColor: '#1f6f5b', padding: 12, borderRadius: 6, alignItems: 'center', marginTop: 8 },
+  outlineText: { color: '#1f6f5b', fontWeight: '700' },
+  modalCard: { padding: 16, backgroundColor: '#fff', borderRadius: 10, borderWidth: 2, borderColor: '#1f6f5b', marginTop: 8 },
+  optionGroup: { marginBottom: 10 },
+  label: { fontWeight: '700', marginBottom: 5 },
+  optionRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, gap: 8 },
+  checkbox: { fontSize: 20, color: '#68756e' },
+  checked: { fontSize: 20, color: '#1f6f5b', fontWeight: '800' },
+  optionName: { flex: 1 },
+  quantity: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', marginTop: 8 },
+  quantityText: { minWidth: 30, textAlign: 'center', fontWeight: '700' },
+  totals: { backgroundColor: '#fff', padding: 14, borderRadius: 8, marginVertical: 12, gap: 5 },
+  total: { fontSize: 17, fontWeight: '800', color: '#18231e', marginTop: 4 },
+  input: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#d8dfd9', borderRadius: 7, padding: 12, marginBottom: 10, minHeight: 46 },
+  warning: { color: '#765b18', backgroundColor: '#fff8dd', padding: 12, borderRadius: 7, marginBottom: 16 },
+  history: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#e1e5df' }
+})
+
+export default App

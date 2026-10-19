@@ -1,8 +1,22 @@
 # Delifast Multivendor — démonstration autonome locale
 
-Le site local permet de consulter deux restaurants fictifs, composer un panier mono-restaurant, calculer le total côté serveur en XOF, enregistrer une commande et suivre son historique. Un espace opérations distinct permet au personnel de tester l’acceptation restaurant, la préparation, l’affectation manuelle et la livraison simulée.
+Le site local et le nouveau parcours mobile client permettent de consulter deux restaurants fictifs, composer un panier mono-restaurant, calculer le total côté serveur en XOF, enregistrer une commande et suivre son historique. Un espace opérations distinct permet au personnel de tester l’acceptation restaurant, la préparation, l’affectation manuelle et la livraison simulée.
 
 **Aucun paiement ou remboursement réel, aucune livraison physique, aucun SMS ou push ne sont déclenchés.** Les comptes, restaurants, menus et frais sont des données d’essai. Le paiement à la livraison n’existe pas dans le contrat. Ne pas exposer cette démonstration sur Internet avec des données personnelles réelles.
+
+## Parcours client mobile
+
+L’application Expo `enatega-multivendor-app` démarre maintenant directement sur le parcours Delifast : restaurants, catégories, plats/options, panier mono-restaurant, total serveur, adresse fictive, création en attente de paiement et suivi. La reprise d’une tentative réseau incertaine utilise une clé d’idempotence et son payload exact conservés dans SecureStore. Le suivi est accessible après redémarrage avec la référence de la dernière commande ; il n’y a pas de compte client synchronisé entre appareils.
+
+Le [guide mobile](enatega-multivendor-app/src/delifast/README.md) détaille les commandes Expo, les URL émulateur/téléphone, les tests et les limites. Le point d’entrée local ne charge plus les prestataires ou les bascules historiques ; les sources historiques restent présentes mais ne sont pas une application migrée intégralement. Les identifiants natifs ne sont pas modifiés sans décision du propriétaire. Les exports JS Android/iOS ne constituent ni un APK/IPA signé, ni une recette sur téléphone, ni une publication.
+
+```bash
+npm run test:delifast --prefix enatega-multivendor-app
+node --test scripts/delifast-mobile-entry.test.mjs
+node scripts/delifast-mobile-contract.mjs
+# Avec l’API et MongoDB fictifs démarrés et le seed appliqué :
+node scripts/delifast-mobile-smoke.mjs
+```
 
 ## Démarrer avec Docker
 
@@ -172,3 +186,9 @@ Le seed ajoute le **Plat configurable — exemple fictif**, avec portion obligat
 Vérifications locales du lot : 57 tests API, 126 tests web, builds API/web, 21 documents GraphQL, 34 contrôles HTTP (14 client/API + 9 opérations + 5 catalogue + 6 catégories/options), redémarrage complet et sauvegarde/restauration MongoDB. Docker/Compose et clients mobiles historiques non exécutés ; ces résultats ne constituent pas une validation de production.
 
 Les tests API préparent le binaire MongoDB une seule fois dans `test/global-setup.ts`, avant les workers Vitest. Cela évite une course de téléchargement/renommage du même fichier `.tgz.downloading` sur un runner neuf installé avec `npm ci --ignore-scripts` ; les suites restent parallèles et chaque suite conserve son véritable moteur MongoDB isolé. Le nettoyage de la nouvelle suite reste sûr si son démarrage échoue.
+
+### Recette du lot client mobile
+
+Le lot mobile ajoute 44 tests (27 modèle/contrôleur, 10 transport/stockage, 7 rendu React), 3 tests d’entrée/configuration, 5 documents GraphQL mobiles validés et 7 contrôles contre le vrai backend/MongoDB. Les tests couvrent notamment choix obligatoires, configurations distinctes, limites du panier, devis obsolètes, verrouillage de soumission, double clic, validation corrigeable, stockage défaillant et réponse perdue après création suivie d’un redémarrage/rejeu sans doublon. Les 57 tests API et 126 tests web restent passants ; les builds API/web et les exports JS/Hermes Android/iOS passent aussi.
+
+La CI `delifast-local.yml` inclut désormais un job `mobile-local` (tests et exports sans publication) et ajoute la recette mobile au job de bout en bout. Les audits historiques de design et d’imports restent passants ; les constats de design préexistants ne sont pas présentés comme corrigés. La dépendance de test `react-test-renderer` est alignée sur React 19. Aucun build natif signé, essai sur appareil physique, encaissement, activation COD, fusion ou déploiement n’est inclus. Les résultats historiques de persistance/sauvegarde ci-dessus restent ceux de leur lot ; ils ne sont pas confondus avec une recette mobile sur téléphone.
