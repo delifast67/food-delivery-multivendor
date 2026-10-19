@@ -105,7 +105,7 @@ beforeEach(async () => {
 });
 afterAll(async () => {
   await (await import("../src/db.js")).closeDb();
-  await mongo.stop();
+  await mongo?.stop();
 });
 describe("catégories et options serveur", () => {
   it("crée, trie, masque l'archive au public et restaure sans retirer le plat", async () => {
