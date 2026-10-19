@@ -22,6 +22,10 @@ import {
   publicRestaurant,
   operationsRestaurants,
   menuFor,
+  categoriesFor,
+  createMenuCategory,
+  updateMenuCategory,
+  setMenuCategoryArchived,
   createMenuItem,
   updateMenuItem,
   setMenuItemArchived,
@@ -56,6 +60,8 @@ const knownCodes = new Set([
   "ORDER_NOT_FOUND",
   "RIDER_NOT_FOUND",
   "CONCURRENT_MODIFICATION",
+  "INVALID_OPTIONS",
+  "CATEGORY_NOT_FOUND",
 ]);
 function complexityRule(context: ValidationContext) {
   let depth = 0,
@@ -128,6 +134,16 @@ const resolvers: any = {
   },
   Restaurant: {
     menu: (r: any) => menuFor(getDb(), r),
+    categories: (r: any) => categoriesFor(getDb(), r),
+  },
+  CheckoutItem: {
+    baseUnitPrice: (x: any) => x.baseUnitPrice ?? x.unitPrice,
+    selectedOptions: (x: any) =>
+      Array.isArray(x.selectedOptions) ? x.selectedOptions : [],
+  },
+  MenuItem: {
+    optionGroups: (x: any) =>
+      Array.isArray(x.optionGroups) ? x.optionGroups : [],
   },
   Mutation: {
     placeOrder: (_: any, { input }: any) =>
@@ -200,6 +216,37 @@ const resolvers: any = {
         id,
         expectedVersion,
         open,
+      ),
+    createMenuCategory: (_: any, { restaurantId, input }: any, ctx: any) =>
+      createMenuCategory(
+        getDb(),
+        requireRole(ctx, ["ADMIN", "RESTAURANT"]),
+        restaurantId,
+        input,
+      ),
+    updateMenuCategory: (
+      _: any,
+      { id, expectedVersion, input }: any,
+      ctx: any,
+    ) =>
+      updateMenuCategory(
+        getDb(),
+        requireRole(ctx, ["ADMIN", "RESTAURANT"]),
+        id,
+        expectedVersion,
+        input,
+      ),
+    setMenuCategoryArchived: (
+      _: any,
+      { id, expectedVersion, archived }: any,
+      ctx: any,
+    ) =>
+      setMenuCategoryArchived(
+        getDb(),
+        requireRole(ctx, ["ADMIN", "RESTAURANT"]),
+        id,
+        expectedVersion,
+        archived,
       ),
   },
 };

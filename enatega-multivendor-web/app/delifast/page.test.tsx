@@ -350,3 +350,144 @@ describe("Delifast suivi opérationnel", () => {
     ).toBe(order.accessToken);
   });
 });
+
+describe("Delifast options and menu grouping", () => {
+  const richRestaurants = [
+    {
+      id: "rx",
+      name: "Chez Options",
+      description: "",
+      open: true,
+      categories: [
+        {
+          id: "active",
+          name: "Plats",
+          sortOrder: 1,
+          archived: false,
+          version: 1,
+        },
+      ],
+      menu: [
+        {
+          id: "mx",
+          name: "Bowl",
+          description: "",
+          priceXof: 2000,
+          available: true,
+          categoryId: "missing",
+          optionGroups: [
+            {
+              id: "g",
+              name: "Taille",
+              minSelections: 1,
+              maxSelections: 1,
+              options: [
+                { id: "small", name: "Petit", priceXof: 0, available: true },
+                { id: "large", name: "Grand", priceXof: 500, available: true },
+                {
+                  id: "sold",
+                  name: "Indisponible",
+                  priceXof: 100,
+                  available: false,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+  beforeEach(() => {
+    vi.mocked(delifastApi.restaurants).mockResolvedValue(richRestaurants);
+  });
+  it("bloque l'ajout tant qu'un groupe requis n'est pas choisi", async () => {
+    render(<DelifastPage />);
+    await screen.findByText("Chez Options");
+    fireEvent.click(screen.getByRole("button", { name: "Configurer Bowl" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ajouter au panier" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("options requises");
+    expect(
+      screen.getByText("Votre panier").parentElement,
+    ).not.toHaveTextContent("Bowl");
+  });
+  it("envoie les sélections dans le payload serveur", async () => {
+    const place = vi.spyOn(delifastApi, "placeOrder").mockResolvedValue(order);
+    render(<DelifastPage />);
+    await screen.findByText("Chez Options");
+    fireEvent.click(screen.getByRole("button", { name: "Configurer Bowl" }));
+    fireEvent.click(screen.getByLabelText(/Grand/));
+    fireEvent.click(screen.getByRole("button", { name: "Ajouter au panier" }));
+    await waitFor(() => expect(screen.getByText(/Grand/)).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("Nom du destinataire"), {
+      target: { value: "A" },
+    });
+    fireEvent.change(screen.getByLabelText("Téléphone"), {
+      target: { value: "+22670123456" },
+    });
+    fireEvent.change(screen.getByLabelText("Quartier"), {
+      target: { value: "Koulouba" },
+    });
+    fireEvent.change(screen.getByLabelText("Repère"), {
+      target: { value: "Mairie" },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Enregistrer la commande" }),
+      ).not.toBeDisabled(),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Enregistrer la commande" }),
+    );
+    await waitFor(() => expect(place).toHaveBeenCalled());
+    expect(place.mock.calls[0][0].items[0].selections).toEqual([
+      { groupId: "g", optionIds: ["large"] },
+    ]);
+  });
+  it("garde deux configurations distinctes et ajuste chaque clé", async () => {
+    render(<DelifastPage />);
+    await screen.findByText("Chez Options");
+    for (const option of [/Petit/, /Grand/]) {
+      fireEvent.click(screen.getByRole("button", { name: "Configurer Bowl" }));
+      fireEvent.click(screen.getByLabelText(option));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Ajouter au panier" }),
+      );
+    }
+    expect(screen.getAllByText("Bowl").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/Petit/)).toBeInTheDocument();
+    expect(screen.getByText(/Grand/)).toBeInTheDocument();
+  });
+  it("désactive une option indisponible", async () => {
+    render(<DelifastPage />);
+    await screen.findByText("Chez Options");
+    fireEvent.click(screen.getByRole("button", { name: "Configurer Bowl" }));
+    expect(screen.getByLabelText(/Indisponible/)).toBeDisabled();
+  });
+  it("affiche le fallback sans catégorie pour une catégorie inconnue", async () => {
+    render(<DelifastPage />);
+    await screen.findByText("Chez Options");
+    expect(
+      screen.getByRole("heading", { name: "Sans catégorie" }),
+    ).toBeInTheDocument();
+  });
+  it("permet de désélectionner un choix facultatif limité à un", async () => {
+    const optional = structuredClone(richRestaurants);
+    optional[0].menu[0].optionGroups[0].minSelections = 0;
+    vi.mocked(delifastApi.restaurants).mockResolvedValue(optional);
+    render(<DelifastPage />);
+    await screen.findByText("Chez Options");
+    fireEvent.click(screen.getByRole("button", { name: "Configurer Bowl" }));
+    const option = screen.getByRole("checkbox", { name: /Grand/ });
+    fireEvent.click(option);
+    expect(option).toBeChecked();
+    fireEvent.click(option);
+    expect(option).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Ajouter au panier" }));
+    await waitFor(() =>
+      expect(delifastApi.checkout).toHaveBeenCalledWith({
+        restaurantId: "rx",
+        items: [{ menuItemId: "mx", quantity: 1 }],
+      }),
+    );
+  });
+});

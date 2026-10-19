@@ -19,14 +19,25 @@ type Mutation {
   updateMenuItem(id: ID!, expectedVersion: Int!, input: MenuItemInput!): MenuItem!
   setMenuItemArchived(id: ID!, expectedVersion: Int!, archived: Boolean!): MenuItem!
   setRestaurantOpen(id: ID!, expectedVersion: Int!, open: Boolean!): Restaurant!
+  createMenuCategory(restaurantId: ID!, input: MenuCategoryInput!): MenuCategory!
+  updateMenuCategory(id: ID!, expectedVersion: Int!, input: MenuCategoryInput!): MenuCategory!
+  setMenuCategoryArchived(id: ID!, expectedVersion: Int!, archived: Boolean!): MenuCategory!
 }
-type Restaurant { id: ID!, name: String!, description: String!, open: Boolean!, version: Int!, menu: [MenuItem!]! }
-type MenuItem { id: ID!, name: String!, description: String!, priceXof: Int!, available: Boolean!, version: Int!, archived: Boolean! }
-input MenuItemInput { name: String!, description: String!, priceXof: Int!, available: Boolean! }
+type Restaurant { id: ID!, name: String!, description: String!, open: Boolean!, version: Int!, categories: [MenuCategory!]!, menu: [MenuItem!]! }
+type MenuCategory { id: ID!, name: String!, sortOrder: Int!, archived: Boolean!, version: Int! }
+type MenuItem { id: ID!, name: String!, description: String!, priceXof: Int!, available: Boolean!, version: Int!, archived: Boolean!, categoryId: ID, optionGroups: [MenuOptionGroup!]! }
+input MenuCategoryInput { name: String!, sortOrder: Int! }
+type MenuOptionGroup { id: ID!, name: String!, minSelections: Int!, maxSelections: Int!, options: [MenuOption!]! }
+type MenuOption { id: ID!, name: String!, priceXof: Int!, available: Boolean! }
+input MenuOptionGroupInput { id: ID!, name: String!, minSelections: Int!, maxSelections: Int!, options: [MenuOptionInput!]! }
+input MenuOptionInput { id: ID!, name: String!, priceXof: Int!, available: Boolean! }
+input MenuItemInput { name: String!, description: String!, priceXof: Int!, available: Boolean!, categoryId: ID, optionGroups: [MenuOptionGroupInput!] }
 input CartInput { restaurantId: ID!, items: [CartItemInput!]! }
-input CartItemInput { menuItemId: ID!, quantity: Int! }
+input CartItemInput { menuItemId: ID!, quantity: Int!, selections: [OptionSelectionInput!] }
+input OptionSelectionInput { groupId: ID!, optionIds: [ID!]! }
 type Checkout { currency: String!, subtotal: Int!, deliveryFee: Int!, serviceFee: Int!, tax: Int!, discount: Int!, total: Int!, items: [CheckoutItem!]! }
-type CheckoutItem { menuItemId: ID!, name: String!, quantity: Int!, unitPrice: Int!, total: Int! }
+type CheckoutItem { menuItemId: ID!, name: String!, quantity: Int!, unitPrice: Int!, baseUnitPrice: Int!, selectedOptions: [SelectedMenuOption!]!, total: Int! }
+type SelectedMenuOption { groupId: ID!, groupName: String!, optionId: ID!, name: String!, priceXof: Int! }
 input PlaceOrderInput { restaurantId: ID!, items: [CartItemInput!]!, idempotencyKey: String!, deliveryAddress: DeliveryAddressInput! }
 input DeliveryAddressInput { recipientName: String!, phone: String!, city: String!, neighborhood: String!, landmark: String!, instructions: String }
 type DeliveryAddress { recipientName: String!, phone: String!, city: String!, neighborhood: String!, landmark: String!, instructions: String! }

@@ -65,7 +65,19 @@ On peut créer et modifier un plat (nom, description, prix XOF entier, disponibi
 
 Chaque modification transmet la version affichée. Si deux personnes modifient le même élément, une seule mise à jour gagne ; l’autre doit actualiser et vérifier les valeurs avant de réessayer. Le serveur conserve un historique technique limité aux 100 dernières modifications par document, sans l’exposer aux clients. Ce n’est pas un journal comptable exhaustif. Le seed ajoute les restaurants et plats manquants sans écraser les menus ou l’ouverture déjà modifiés.
 
-Le [contrat catalogue](delifast-api/CATALOG_CONTRACT.md) détaille les permissions et les limites. Les horaires automatiques, catégories, variantes, suppléments, photos, stocks quantifiés et zones géographiques ne sont pas fournis par ce lot. L’ouverture est un interrupteur manuel, pas une promesse de livraison réelle. Tous les prix restent fictifs.
+Le [contrat catalogue](delifast-api/CATALOG_CONTRACT.md) détaille les permissions et les limites. Les horaires automatiques, photos, stocks quantifiés et zones géographiques ne sont pas fournis par ce lot. L’ouverture est un interrupteur manuel, pas une promesse de livraison réelle. Tous les prix restent fictifs.
+
+## Catégories et options de plats
+
+Le catalogue permet de créer, renommer, ordonner, archiver et restaurer les catégories de chaque restaurant. Un plat peut être affecté à une catégorie ou rester sans catégorie. Archiver une catégorie ne retire pas ses plats : ils restent visibles dans la section sans catégorie et commandables. Seules les catégories actives sont publiques ; le personnel autorisé retrouve aussi les archives.
+
+Chaque plat peut proposer des groupes de choix (format, accompagnement, supplément), avec un minimum et un maximum de sélections et des options disponibles ou indisponibles. Une variante de format se représente par un groupe obligatoire à un choix. Les suppléments ont des prix entiers XOF, positifs ou nuls : aucun pourcentage, réduction implicite ni prix envoyé par le client. Les identifiants de groupes et d’options restent stables pendant les éditions. Les données du seed et les montants montrés restent entièrement fictifs.
+
+Côté client, choisir les options avant d’ajouter le plat. Deux configurations différentes d’un même plat occupent deux lignes distinctes ; ajouter la même configuration augmente sa quantité. Le serveur vérifie les groupes et options, les quantités, les choix obligatoires, les limites et la disponibilité, puis additionne le prix de base et les suppléments avant de multiplier par la quantité. L’estimation affichée dans le menu ne remplace pas ce calcul serveur.
+
+Les commandes enregistrées conservent les noms des groupes/options et les prix sélectionnés. Changer ensuite le catalogue ne modifie pas leur total ; rejouer la même commande avec les sélections réordonnées conserve son identité. Les anciens plats sans options, les anciens paniers et les anciennes commandes sans détail de suppléments restent lisibles. Les paniers non commandés utilisent le catalogue courant et peuvent être refusés si un choix est devenu obligatoire ou indisponible.
+
+Les modifications passent par les mêmes permissions et contrôles de version que les plats. Les options sont intégrées au document du plat et ne constituent pas un catalogue de suppléments partagés entre plusieurs plats. Ce lot n’introduit ni stock quantifié par option, ni photo, ni sélection négative, ni paiement réel.
 
 ## Démarrer sans Docker
 
@@ -110,13 +122,14 @@ DELIFAST_LOCAL_MODE=true npm run build --prefix enatega-multivendor-web
 node scripts/delifast-smoke.mjs
 node scripts/delifast-operations-smoke.mjs
 node scripts/delifast-catalog-smoke.mjs
+node scripts/delifast-options-smoke.mjs
 ```
 
-Les scripts HTTP créent uniquement des commandes fictives dans la base choisie. Le premier vérifie catalogue, montants, refus des prix client, mono-restaurant, quantités, absence de paiement à la livraison, concurrence/idempotence, jeton client et isolation web. Le second traverse le proxy web avec les rôles, teste les interdictions, la simulation concurrente, le restaurant, le dispatch, le livreur, le suivi client, l’annulation et la révocation de session. Le troisième teste les droits catalogue, création, validation, éditions concurrentes, prix figés d’une commande, disponibilité, archivage/restauration et fermeture/réouverture. Il exige le restaurant fictif initialement ouvert, archive son plat d’essai et rétablit l’ouverture sans écraser une éventuelle modification concurrente. Ne pas l’exécuter sur des données réelles.
+Les scripts HTTP créent uniquement des commandes fictives dans la base choisie. Le premier vérifie catalogue, montants, refus des prix client, mono-restaurant, quantités, absence de paiement à la livraison, concurrence/idempotence, jeton client et isolation web. Le second traverse le proxy web avec les rôles, teste les interdictions, la simulation concurrente, le restaurant, le dispatch, le livreur, le suivi client, l’annulation et la révocation de session. Le troisième teste les droits catalogue, création, validation, éditions concurrentes, prix figés d’une commande, disponibilité, archivage/restauration et fermeture/réouverture. Il exige le restaurant fictif initialement ouvert, archive son plat d’essai et rétablit l’ouverture sans écraser une éventuelle modification concurrente. Le quatrième crée une catégorie et un plat fictifs, contrôle les permissions, les éditions concurrentes, les sélections obligatoires et indisponibles, deux configurations d’un même plat, les snapshots et le rejeu idempotent ; il archive ses éléments d’essai en fin d’exécution. Ne pas les exécuter sur des données réelles.
 
-Pour enchaîner les trois scripts sans pause, lancer l’API de recette avec `RATE_LIMIT_MAX=1000` en plus de `DELIFAST_DEMO_PAYMENTS=true`, comme en CI. La limite habituelle reste de 100 requêtes par minute ; cette valeur plus élevée est réservée à la base fictive de test.
+Pour enchaîner les quatre scripts sans pause, lancer l’API de recette avec `RATE_LIMIT_MAX=1000` en plus de `DELIFAST_DEMO_PAYMENTS=true`, comme en CI. La limite habituelle reste de 100 requêtes par minute ; cette valeur plus élevée est réservée à la base fictive de test.
 
-Le test de persistance utilise une base temporaire, arrête complètement MongoDB et l’API, rejoue migrations et seed, puis vérifie commande, rejeu, prix/disponibilité, archivage, ouverture et versions du catalogue. Il ne touche pas la base de travail et utilise par défaut le port API 4105 (`DELIFAST_PERSISTENCE_PORT` pour le changer). La CI ciblée est `.github/workflows/delifast-local.yml`.
+Le test de persistance utilise une base temporaire, arrête complètement MongoDB et l’API, rejoue migrations et seed, puis vérifie commande, rejeu, catégories, groupes/options, snapshots, prix/disponibilité, archivage, ouverture et versions du catalogue. Il ne touche pas la base de travail et utilise par défaut le port API 4105 (`DELIFAST_PERSISTENCE_PORT` pour le changer). La CI ciblée est `.github/workflows/delifast-local.yml`.
 
 ## Sauvegarde et restauration locales
 
@@ -144,8 +157,16 @@ Les montants sont relus dans le catalogue serveur puis figés dans la commande. 
 
 Les prix, taxes, zones et frais du seed ne sont **pas des décisions commerciales validées**. La ville de démonstration est Ouagadougou ; aucune livrabilité GPS, plage horaire réelle ou réserve de stock concurrentielle n’est revendiquée.
 
-Pour un pilote réel, Hilton doit valider le prestataire et ses accès marchands, les restaurants/menus, zones/frais/commissions et règles d’annulation. Il reste du développement indépendant de ces validations : migration complète des trois applications mobiles et de l’ancien admin, retrait des anciens paiements et chemins mono-restaurant restants, rebranding global, catégories/options/photos et gestion des horaires/zones, comptes clients, suivi GPS, notifications, support, finances/rapprochement, jobs et stockage objet. Ces décisions ne sont pas nécessaires pour continuer le développement local ; aucun accès marchand n’est demandé par le lot catalogue.
+Pour un pilote réel, Hilton doit valider le prestataire et ses accès marchands, les restaurants/menus, zones/frais/commissions et règles d’annulation. Il reste du développement indépendant de ces validations : migration complète des trois applications mobiles et de l’ancien admin, retrait des anciens paiements et chemins mono-restaurant restants, rebranding global, photos et gestion des horaires/zones, comptes clients, suivi GPS, notifications, support, finances/rapprochement, jobs et stockage objet. Ces décisions ne sont pas nécessaires pour continuer le développement local ; aucun accès marchand n’est demandé par le lot catalogue.
 
 Le module `enatega-singlevendor-admin` a été supprimé et les liens qui y menaient retirés. Cela ne signifie pas que tout le code mono-restaurant historique a disparu. Le back-office local des opérations ne remplace pas encore toutes les fonctionnalités administratives demandées. Les builds mobiles, la publication stores et le déploiement de préproduction ne sont pas exécutés dans ce lot. La PR n’est ni fusionnée ni déployée en production.
 
 Les dépendances historiques web conservent notamment des alertes Firebase/Firestore/gRPC. Un correctif automatique impliquant un changement majeur n’a pas été appliqué aveuglément. Le blocage explicite `NODE_ENV=production` côté API reste en place.
+
+### Recette du lot catégories/options
+
+`node scripts/delifast-options-smoke.mjs` complète les recettes client/opérations/catalogue. Il crée exclusivement des catégories et plats fictifs, contrôle périmètre et versions, choix requis/maximum/indisponibles, calcul des suppléments selon quantité, deux configurations d’un même plat, snapshot historique et rejeu idempotent ; les plats de recette sont archivés en fin de test. Les URL alternatives se règlent avec `DELIFAST_SMOKE_API_URL` et `DELIFAST_SMOKE_WEB_URL` comme pour les autres recettes.
+
+Le seed ajoute le **Plat configurable — exemple fictif**, avec portion obligatoire et suppléments facultatifs, dans une catégorie d’exemple. Il n’écrase jamais ses modifications ultérieures. Aucun montant de ces exemples ne constitue un tarif commercial. Dans le détail d’une commande de l’espace opérations, le restaurant voit les noms et suppléments figés au moment de la commande, sans dépendre du menu courant.
+
+Vérifications locales du lot : 57 tests API, 126 tests web, builds API/web, 21 documents GraphQL, 34 contrôles HTTP (14 client/API + 9 opérations + 5 catalogue + 6 catégories/options), redémarrage complet et sauvegarde/restauration MongoDB. Docker/Compose et clients mobiles historiques non exécutés ; ces résultats ne constituent pas une validation de production.

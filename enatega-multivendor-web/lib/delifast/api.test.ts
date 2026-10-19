@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { delifastApi, formatXof, sameAttempt, type OrderAttempt } from "./api";
+import {
+  canonicalCartLineKey,
+  delifastApi,
+  formatXof,
+  sameAttempt,
+  type OrderAttempt,
+} from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("Delifast helpers", () => {
@@ -28,6 +34,8 @@ describe("Delifast helpers", () => {
     ).toBe(false);
   });
   it.each([
+    "INVALID_OPTIONS",
+    "CATEGORY_NOT_FOUND",
     "INVALID_PHONE",
     "ITEM_UNAVAILABLE",
     "RESTAURANT_CLOSED",
@@ -118,5 +126,41 @@ describe("Delifast helpers", () => {
         delifastApi.operationsOrders("staff-token"),
       ).rejects.toMatchObject({ code });
     }
+  });
+});
+
+describe("identité de configuration panier", () => {
+  it("ignore ordre des groupes et options mais distingue les configurations", () => {
+    const first = {
+      menuItemId: "m",
+      selections: [
+        { groupId: "b", optionIds: ["y", "x"] },
+        { groupId: "a", optionIds: ["z"] },
+      ],
+    };
+    const reordered = {
+      menuItemId: "m",
+      selections: [
+        { groupId: "a", optionIds: ["z"] },
+        { groupId: "b", optionIds: ["x", "y"] },
+      ],
+    };
+    expect(canonicalCartLineKey(first)).toBe(canonicalCartLineKey(reordered));
+    expect(canonicalCartLineKey(first)).not.toBe(
+      canonicalCartLineKey({ menuItemId: "m" }),
+    );
+  });
+  it("évite les collisions d'identifiants contenant des séparateurs", () => {
+    expect(
+      canonicalCartLineKey({
+        menuItemId: "m",
+        selections: [{ groupId: "g", optionIds: ["x,y"] }],
+      }),
+    ).not.toBe(
+      canonicalCartLineKey({
+        menuItemId: "m",
+        selections: [{ groupId: "g", optionIds: ["x", "y"] }],
+      }),
+    );
   });
 });

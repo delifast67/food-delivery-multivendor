@@ -22,12 +22,14 @@ try {
   await source.collection('staff_users').insertOne({ id: 'test-admin', passwordHash: 'fictional-test-hash' });
   await source.collection('staff_sessions').insertOne({ tokenHash: 'should-not-survive', expiresAt: new Date() });
   await source.collection('restaurants').insertOne({ id: 'test-restaurant', open: false, version: 4, audit: [{ actor: { id: 'test-admin', role: 'ADMIN' }, action: 'RESTAURANT_CLOSED', version: 4, at: new Date().toISOString() }] });
-  await source.collection('menu_items').insertOne({ id: 'test-item', restaurantId: 'test-restaurant', name: 'Plat fictif', description: 'Test', priceXof: 2300, available: false, archived: true, version: 7, audit: [{ actor: { id: 'test-admin', role: 'ADMIN' }, action: 'MENU_ITEM_ARCHIVED', version: 7, at: new Date().toISOString() }] });
+  await source.collection('menu_items').insertOne({ id: 'test-item', restaurantId: 'test-restaurant', name: 'Plat fictif', description: 'Test', categoryId: 'test-category', optionGroups: [{id:'format',name:'Format fictif',minSelections:0,maxSelections:1,options:[{id:'grand',name:'Grand fictif',priceXof:100,available:true}]}], priceXof: 2300, available: false, archived: true, version: 7, audit: [{ actor: { id: 'test-admin', role: 'ADMIN' }, action: 'MENU_ITEM_ARCHIVED', version: 7, at: new Date().toISOString() }] });
+  await source.collection('menu_categories').createIndex({id:1},{unique:true});
+  await source.collection('menu_categories').insertOne({id:'test-category',restaurantId:'test-restaurant',name:'Catégorie fictive',sortOrder:2,archived:true,version:3});
   await source.createCollection('empty_collection');
   const sourceUri = mongo.getUri('delifast_backup_source');
   await assert.rejects(backup({ uri: sourceUri, file }), /--offline/);
   const saved = await backup({ uri: sourceUri, file, offline: true });
-  assert.deepEqual(saved, { collections: 5, documents: 4 });
+  assert.deepEqual(saved, { collections: 6, documents: 5 });
   assert.equal((await stat(file)).mode & 0o777, 0o600);
   assert.doesNotMatch(await readFile(file, 'utf8'), /should-not-survive/);
   await assert.rejects(backup({ uri: sourceUri, file, offline: true }), /EEXIST/);
@@ -40,7 +42,7 @@ try {
   assert.deepEqual(await target.collection('orders').findOne({ id: 'backup-order' }), await source.collection('orders').findOne({ id: 'backup-order' }));
   assert.equal(await target.collection('staff_users').countDocuments(), 1);
   assert.equal(await target.collection('staff_sessions').countDocuments(), 0);
-  for (const collection of ['restaurants', 'menu_items']) assert.deepEqual(await target.collection(collection).findOne({}), await source.collection(collection).findOne({}));
+  for (const collection of ['restaurants', 'menu_items', 'menu_categories']) assert.deepEqual(await target.collection(collection).findOne({}), await source.collection(collection).findOne({}));
   assert.equal((await target.listCollections({ name: 'empty_collection' }).toArray()).length, 1);
   await assert.rejects(target.collection('orders').insertOne({ id: 'backup-order' }), /duplicate key/);
   console.log('OK — restauration dans une base vierge : BSON, historique, catalogue, versions, audits et index unique préservés');

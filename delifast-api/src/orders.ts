@@ -18,9 +18,23 @@ const initialHistory = (order: any) =>
   ];
 
 /** Keep legacy documents readable while never returning a stored client token to staff operations. */
+function normalizeLegacyCheckout(checkout: any) {
+  if (!checkout || !Array.isArray(checkout.items)) return checkout;
+  return {
+    ...checkout,
+    items: checkout.items.map((x: any) => ({
+      ...x,
+      baseUnitPrice: x.baseUnitPrice ?? x.unitPrice,
+      selectedOptions: Array.isArray(x.selectedOptions)
+        ? x.selectedOptions
+        : [],
+    })),
+  };
+}
 function customerView(order: any, token = "") {
   return {
     ...order,
+    checkout: normalizeLegacyCheckout(order.checkout),
     accessToken: token,
     history: initialHistory(order),
     updatedAt: order.updatedAt ?? order.createdAt ?? now(),
@@ -47,10 +61,43 @@ export async function placeOrder(
     .createHash("sha256")
     .update(JSON.stringify({ ...cart, deliveryAddress: address }))
     .digest("hex");
+  // Legacy fingerprints omitted selections and preserved the original line order.
+  // Rebuild that order from the immutable snapshot; never discard nonempty choices.
+  const matchesLegacy = (order: any) => {
+    if (
+      cart.items.some((line) => line.selections?.length) ||
+      !Array.isArray(order?.checkout?.items) ||
+      order.checkout.items.length !== cart.items.length
+    )
+      return false;
+    const legacyItems = order.checkout.items.map((saved: any) => {
+      const line = cart.items.find((x) => x.menuItemId === saved.menuItemId);
+      return line
+        ? { menuItemId: line.menuItemId, quantity: line.quantity }
+        : null;
+    });
+    if (
+      legacyItems.some((line: any) => line === null) ||
+      new Set(legacyItems.map((line: any) => line.menuItemId)).size !==
+        legacyItems.length
+    )
+      return false;
+    const hash = crypto
+      .createHash("sha256")
+      .update(
+        JSON.stringify({
+          restaurantId: cart.restaurantId,
+          items: legacyItems,
+          deliveryAddress: address,
+        }),
+      )
+      .digest("hex");
+    return order.fingerprint === hash;
+  };
   const orders = db.collection<any>("orders");
   const old = await orders.findOne({ idempotencyKey });
   if (old) {
-    if (old.fingerprint !== fingerprint)
+    if (old.fingerprint !== fingerprint && !matchesLegacy(old))
       fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée avec un autre panier");
     return customerView(old, old.accessToken ?? "");
   }
@@ -80,7 +127,7 @@ export async function placeOrder(
   } catch (error: any) {
     if (error?.code !== 11000) throw error;
     const concurrent = await orders.findOne({ idempotencyKey });
-    if (concurrent?.fingerprint === fingerprint)
+    if (concurrent?.fingerprint === fingerprint || matchesLegacy(concurrent))
       return customerView(concurrent, concurrent.accessToken ?? "");
     fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée avec un autre panier");
   }

@@ -281,3 +281,187 @@ describe("Catalogue", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+const category = {
+  id: "cat1",
+  name: "Plats fictifs",
+  sortOrder: 2,
+  archived: false,
+  version: 3,
+};
+const optionGroups = [
+  {
+    id: "format",
+    name: "Format",
+    minSelections: 1,
+    maxSelections: 1,
+    options: [{ id: "grand", name: "Grand", priceXof: 200, available: true }],
+  },
+];
+describe("Catalogue catégories et options", () => {
+  it("crée une catégorie avec ordre puis l'archive et la restaure avec version", async () => {
+    vi.spyOn(delifastApi, "createMenuCategory").mockResolvedValue(category);
+    vi.spyOn(delifastApi, "setMenuCategoryArchived").mockImplementation(
+      async (_t, id, v, archived) => ({
+        ...category,
+        id,
+        version: v + 1,
+        archived,
+      }),
+    );
+    await renderCatalogue();
+    fireEvent.change(screen.getByLabelText("Nom de la catégorie"), {
+      target: { value: category.name },
+    });
+    fireEvent.change(screen.getByLabelText("Ordre"), {
+      target: { value: "2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Créer la catégorie" }));
+    await screen.findByText("Catégorie créée.");
+    expect(delifastApi.createMenuCategory).toHaveBeenCalledWith(token, "r1", {
+      name: category.name,
+      sortOrder: 2,
+    });
+    const row = screen
+      .getByText(category.name, { selector: "strong" })
+      .closest("article")!;
+    fireEvent.click(row.querySelector("button.df-danger")!);
+    await screen.findByText("Catégorie archivée.");
+    expect(delifastApi.setMenuCategoryArchived).toHaveBeenLastCalledWith(
+      token,
+      "cat1",
+      3,
+      true,
+    );
+    fireEvent.click(row.querySelector("button.df-primary")!);
+    await screen.findByText("Catégorie restaurée.");
+    expect(delifastApi.setMenuCategoryArchived).toHaveBeenLastCalledWith(
+      token,
+      "cat1",
+      4,
+      false,
+    );
+  });
+  it("crée des groupes et options avec identifiants stables, prix et disponibilité", async () => {
+    restaurants.mockResolvedValue([makeRestaurant({ categories: [category] })]);
+    await renderCatalogue();
+    fill();
+    fireEvent.change(screen.getByLabelText("Catégorie du plat"), {
+      target: { value: "cat1" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ajouter un groupe d'options" }),
+    );
+    fireEvent.change(screen.getByLabelText("Nom du groupe 1"), {
+      target: { value: "Format fictif" },
+    });
+    fireEvent.change(
+      screen.getByLabelText("Option 1-1", { selector: "input" }),
+      { target: { value: "Standard fictif" } },
+    );
+    fireEvent.change(screen.getByLabelText("Prix option 1-1"), {
+      target: { value: "100" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ajouter option au groupe 1" }),
+    );
+    fireEvent.change(
+      screen.getByLabelText("Option 1-2", { selector: "input" }),
+      { target: { value: "Grand fictif" } },
+    );
+    fireEvent.click(screen.getByLabelText("Disponible option 1-2"));
+    fireEvent.click(screen.getByRole("button", { name: "Créer le plat" }));
+    await screen.findByText("Plat créé.");
+    const input = vi.mocked(delifastApi.createMenuItem).mock.calls[0][2];
+    expect(input.categoryId).toBe("cat1");
+    expect(input.optionGroups?.[0].id).toBeTruthy();
+    expect(input.optionGroups?.[0].options.map((o) => o.id)).toEqual([
+      expect.any(String),
+      expect.any(String),
+    ]);
+    expect(input.optionGroups?.[0].options[0]).toMatchObject({
+      name: "Standard fictif",
+      priceXof: 100,
+      available: true,
+    });
+    expect(input.optionGroups?.[0].options[1].available).toBe(false);
+  });
+  it("supprime explicitement le dernier groupe existant au lieu de le préserver", async () => {
+    restaurants.mockResolvedValue([
+      makeRestaurant({ menu: [{ ...item, optionGroups }] }),
+    ]);
+    await renderCatalogue();
+    fireEvent.click(screen.getByRole("button", { name: "Modifier" }));
+    fireEvent.click(screen.getByRole("button", { name: "Supprimer groupe 1" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Enregistrer (version 4)" }),
+    );
+    await screen.findByText("Plat modifié.");
+    expect(
+      vi.mocked(delifastApi.updateMenuItem).mock.calls[0][3].optionGroups,
+    ).toEqual([]);
+  });
+  it("réinitialise groupes et brouillon de catégorie après changement de restaurant", async () => {
+    restaurants.mockResolvedValue([
+      makeRestaurant({
+        categories: [category],
+        menu: [{ ...item, optionGroups }],
+      }),
+      makeRestaurant({ id: "r2", name: "Chez B", menu: [] }),
+    ]);
+    await renderCatalogue(adminUser);
+    fireEvent.click(
+      screen.getByText("Riz").closest("article")!.querySelector("button")!,
+    );
+    fireEvent.change(screen.getByLabelText("Nom de la catégorie"), {
+      target: { value: "Brouillon" },
+    });
+    fireEvent.change(screen.getByLabelText("Choisir un restaurant"), {
+      target: { value: "r2" },
+    });
+    expect(screen.queryByLabelText("Nom du groupe 1")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Nom de la catégorie")).toHaveValue("");
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: "Créer le plat" }));
+    await screen.findByText("Plat créé.");
+    expect(
+      vi.mocked(delifastApi.createMenuItem).mock.calls[0][2].optionGroups,
+    ).toBeUndefined();
+  });
+  it("recharge un conflit de catégorie sans rejouer la mutation et efface le brouillon périmé", async () => {
+    restaurants.mockResolvedValue([makeRestaurant({ categories: [category] })]);
+    vi.spyOn(delifastApi, "updateMenuCategory").mockRejectedValue(
+      new DelifastApiError(
+        "conflit",
+        "unknown",
+        200,
+        "CONCURRENT_MODIFICATION",
+      ),
+    );
+    await renderCatalogue();
+    fireEvent.click(
+      screen
+        .getByText(category.name, { selector: "strong" })
+        .closest("article")!
+        .querySelector("button")!,
+    );
+    fireEvent.change(screen.getByLabelText("Nom de la catégorie"), {
+      target: { value: "Nom modifié" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Enregistrer la catégorie" }),
+    );
+    await screen.findByRole("alert");
+    expect(delifastApi.updateMenuCategory).toHaveBeenCalledWith(
+      token,
+      "cat1",
+      3,
+      { name: "Nom modifié", sortOrder: 2 },
+    );
+    expect(delifastApi.updateMenuCategory).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole("button", { name: "Créer la catégorie" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Nom de la catégorie")).toHaveValue("");
+  });
+});

@@ -299,3 +299,42 @@ describe("actualisation et polling", () => {
     vi.useRealTimers();
   });
 });
+
+describe("détail de préparation avec options", () => {
+  it("montre les noms et prix figés des choix sans relire le catalogue", async () => {
+    vi.mocked(delifastApi.operationsOrders).mockResolvedValue([
+      {
+        ...order,
+        checkout: {
+          ...order.checkout,
+          items: [
+            {
+              menuItemId: "x",
+              name: "Plat fictif commandé",
+              quantity: 2,
+              unitPrice: 1250,
+              baseUnitPrice: 1000,
+              total: 2500,
+              selectedOptions: [
+                {
+                  groupId: "g",
+                  groupName: "Format historique",
+                  optionId: "o",
+                  name: "Grand historique",
+                  priceXof: 250,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    await openOrder();
+    expect(
+      screen.getByRole("region", { name: "Plats et options commandés" }),
+    ).toHaveTextContent(
+      "Format historique : Grand historique (+250 XOF / unité)",
+    );
+    expect(screen.getByText(/2 × Plat fictif commandé/)).toBeInTheDocument();
+  });
+});

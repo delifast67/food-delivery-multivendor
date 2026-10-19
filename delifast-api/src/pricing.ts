@@ -1,12 +1,20 @@
-import { Db } from "mongodb";
+import type { Db } from "mongodb";
 import { config } from "./config.js";
 import { assertIntAmount, Cart, fail } from "./validation.js";
-
+export type SelectedMenuOption = {
+  groupId: string;
+  groupName: string;
+  optionId: string;
+  name: string;
+  priceXof: number;
+};
 export type CheckoutItem = {
   menuItemId: string;
   name: string;
   quantity: number;
   unitPrice: number;
+  baseUnitPrice: number;
+  selectedOptions: SelectedMenuOption[];
   total: number;
 };
 export type Checkout = {
@@ -19,7 +27,6 @@ export type Checkout = {
   total: number;
   items: CheckoutItem[];
 };
-
 export async function calculateCheckout(db: Db, cart: Cart): Promise<Checkout> {
   const restaurant = await db
     .collection("restaurants")
@@ -27,39 +34,84 @@ export async function calculateCheckout(db: Db, cart: Cart): Promise<Checkout> {
   if (!restaurant) fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
   if (restaurant.open === false) fail("RESTAURANT_CLOSED", "Restaurant fermé");
   const menu = await db
-    .collection("menu_items")
+    .collection<any>("menu_items")
     .find({ id: { $in: cart.items.map((x) => x.menuItemId) } })
     .toArray();
-  if (menu.length !== cart.items.length)
+  if (menu.length !== new Set(cart.items.map((x) => x.menuItemId)).size)
     fail("ITEM_NOT_FOUND", "Plat introuvable");
   const items: CheckoutItem[] = [];
   for (const line of cart.items) {
     const item = menu.find((x) => x.id === line.menuItemId);
     if (!item || item.restaurantId !== cart.restaurantId)
       fail("ITEM_RESTAURANT_MISMATCH", "Plat hors restaurant");
-    if (item.archived === true || item.available !== true) fail("ITEM_UNAVAILABLE", "Plat indisponible");
+    if (item.archived === true || item.available !== true)
+      fail("ITEM_UNAVAILABLE", "Plat indisponible");
     if (
       !Number.isSafeInteger(item.priceXof) ||
       item.priceXof < 0 ||
-      item.priceXof > 2_147_483_647
+      item.priceXof > 2147483647
     )
       fail("INVALID_PRICE", "Prix invalide");
-    const total = assertIntAmount(item.priceXof * line.quantity);
+    const groups = Array.isArray(item.optionGroups) ? item.optionGroups : [],
+      selected: SelectedMenuOption[] = [];
+    if (line.selections.length) {
+      const known = new Set<string>();
+      for (const sel of line.selections) {
+        if (known.has(sel.groupId)) fail("INVALID_OPTIONS", "Groupe dupliqué");
+        known.add(sel.groupId);
+        const g = groups.find((x: any) => x.id === sel.groupId);
+        if (!g) fail("INVALID_OPTIONS", "Groupe étranger");
+        if (
+          sel.optionIds.length < g.minSelections ||
+          sel.optionIds.length > g.maxSelections
+        )
+          fail("INVALID_OPTIONS", "Nombre de sélections invalide");
+        const seen = new Set<string>();
+        for (const oid of sel.optionIds) {
+          if (seen.has(oid)) fail("INVALID_OPTIONS", "Option dupliquée");
+          seen.add(oid);
+          const o = g.options?.find((x: any) => x.id === oid);
+          if (!o) fail("INVALID_OPTIONS", "Option étrangère");
+          if (o.available !== true)
+            fail("INVALID_OPTIONS", "Option indisponible");
+          selected.push({
+            groupId: g.id,
+            groupName: String(g.name),
+            optionId: o.id,
+            name: String(o.name),
+            priceXof: assertIntAmount(o.priceXof, "INVALID_OPTIONS"),
+          });
+        }
+      }
+    }
+    for (const g of groups) {
+      if (
+        g.minSelections > 0 &&
+        !line.selections.some((s) => s.groupId === g.id)
+      )
+        fail("INVALID_OPTIONS", "Sélection requise");
+    }
+    const optionUnit = selected.reduce(
+        (n, o) => assertIntAmount(n + o.priceXof, "AMOUNT_OVERFLOW"),
+        0,
+      ),
+      unit = assertIntAmount(item.priceXof + optionUnit),
+      total = assertIntAmount(unit * line.quantity);
     items.push({
       menuItemId: item.id,
       name: String(item.name),
       quantity: line.quantity,
-      unitPrice: item.priceXof,
+      unitPrice: unit,
+      baseUnitPrice: item.priceXof,
+      selectedOptions: selected,
       total,
     });
   }
   const subtotal = assertIntAmount(
-    items.reduce((sum, item) => assertIntAmount(sum + item.total), 0),
-  );
-  const fees = assertIntAmount(
-    config.deliveryFee + config.serviceFee + config.tax,
-  );
-  const total = assertIntAmount(subtotal + fees);
+      items.reduce((n, x) => assertIntAmount(n + x.total), 0),
+    ),
+    fees = assertIntAmount(config.deliveryFee + config.serviceFee + config.tax),
+    total = assertIntAmount(subtotal + fees);
   return {
     currency: "XOF",
     subtotal,

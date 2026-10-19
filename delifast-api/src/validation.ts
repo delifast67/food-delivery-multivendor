@@ -1,7 +1,11 @@
 import { GraphQLError } from "graphql";
 import { config, INT_MAX_VALUE } from "./config.js";
-
-export type CartItem = { menuItemId: string; quantity: number };
+export type OptionSelection = { groupId: string; optionIds: string[] };
+export type CartItem = {
+  menuItemId: string;
+  quantity: number;
+  selections: OptionSelection[];
+};
 export type Cart = { restaurantId: string; items: CartItem[] };
 export type Address = {
   recipientName: string;
@@ -11,27 +15,28 @@ export type Address = {
   landmark: string;
   instructions: string;
 };
-
 export function fail(code: string, message: string): never {
   throw new GraphQLError(message, { extensions: { code } });
 }
-function text(value: unknown, field: string, max: number): string {
-  if (typeof value !== "string" || !value.trim() || value.length > max)
-    fail("INVALID_INPUT", `${field} invalide`);
-  return value.trim();
+function text(v: unknown, f: string, max: number) {
+  if (typeof v !== "string" || !v.trim() || v.length > max)
+    fail("INVALID_INPUT", `${f} invalide`);
+  return v.trim();
 }
-function optionalText(value: unknown, field: string, max: number): string {
-  if (value == null) return "";
-  if (typeof value !== "string" || value.length > max)
-    fail("INVALID_INPUT", `${field} invalide`);
-  return value.trim();
+function optionalText(v: unknown, f: string, max: number) {
+  if (v == null) return "";
+  if (typeof v !== "string" || v.length > max)
+    fail("INVALID_INPUT", `${f} invalide`);
+  return v.trim();
 }
-function id(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.length < 1 || value.length > 128)
-    fail("INVALID_INPUT", `${field} invalide`);
-  return value;
+function id(v: unknown, f: string) {
+  if (typeof v !== "string" || !v.trim() || v.length > 128)
+    fail("INVALID_INPUT", `${f} invalide`);
+  return v.trim();
 }
-
+function selectionsKey(s: OptionSelection[]) {
+  return JSON.stringify(s.map((x) => [x.groupId, [...x.optionIds].sort()]));
+}
 export function normalizeCart(input: any): Cart {
   if (
     !input ||
@@ -40,28 +45,55 @@ export function normalizeCart(input: any): Cart {
     input.items.length > config.maxLines
   )
     fail("INVALID_CART", "Panier invalide");
-  const restaurantId = id(input.restaurantId, "restaurantId");
-  const merged = new Map<string, number>();
-  for (const item of input.items) {
-    const menuItemId = id(item?.menuItemId, "menuItemId");
+  const restaurantId = id(input.restaurantId, "restaurantId"),
+    merged = new Map<string, CartItem>();
+  for (const raw of input.items) {
+    const menuItemId = id(raw?.menuItemId, "menuItemId");
     if (
-      !Number.isInteger(item?.quantity) ||
-      item.quantity < 1 ||
-      item.quantity > 99
+      !Number.isInteger(raw?.quantity) ||
+      raw.quantity < 1 ||
+      raw.quantity > 99
     )
       fail("INVALID_QUANTITY", "Quantité invalide (1 à 99)");
-    const quantity = (merged.get(menuItemId) || 0) + item.quantity;
-    if (quantity > 99) fail("INVALID_QUANTITY", "Quantité cumulée invalide");
-    merged.set(menuItemId, quantity);
+    const rawSel = raw.selections;
+    if (rawSel != null && (!Array.isArray(rawSel) || rawSel.length > 20))
+      fail("INVALID_OPTIONS", "Sélections invalides");
+    const seen = new Set<string>();
+    const selections = (rawSel ?? [])
+      .map((x: any) => {
+        const groupId = id(x?.groupId, "groupId");
+        if (seen.has(groupId)) fail("INVALID_OPTIONS", "Groupe dupliqué");
+        seen.add(groupId);
+        if (
+          !Array.isArray(x?.optionIds) ||
+          x.optionIds.length < 1 ||
+          x.optionIds.length > 30
+        )
+          fail("INVALID_OPTIONS", "Options invalides");
+        const ids = x.optionIds.map((o: any) => id(o, "optionId"));
+        if (new Set(ids).size !== ids.length)
+          fail("INVALID_OPTIONS", "Option dupliquée");
+        ids.sort();
+        return { groupId, optionIds: ids };
+      })
+      .sort((a: OptionSelection, b: OptionSelection) =>
+        a.groupId.localeCompare(b.groupId),
+      );
+    const key = JSON.stringify([menuItemId, selectionsKey(selections)]),
+      old = merged.get(key);
+    if (old) {
+      old.quantity += raw.quantity;
+      if (old.quantity > 99)
+        fail("INVALID_QUANTITY", "Quantité cumulée invalide");
+    } else merged.set(key, { menuItemId, quantity: raw.quantity, selections });
   }
-  const items = [...merged.entries()].map(([menuItemId, quantity]) => ({
-    menuItemId,
-    quantity,
-  }));
-  items.sort((a, b) => a.menuItemId.localeCompare(b.menuItemId));
+  const items = [...merged.values()].sort(
+    (a, b) =>
+      a.menuItemId.localeCompare(b.menuItemId) ||
+      selectionsKey(a.selections).localeCompare(selectionsKey(b.selections)),
+  );
   return { restaurantId, items };
 }
-
 export function normalizeAddress(input: any): Address {
   if (!input || typeof input !== "object")
     fail("INVALID_ADDRESS", "Adresse invalide");
@@ -80,11 +112,7 @@ export function normalizeAddress(input: any): Address {
     instructions: optionalText(input.instructions, "instructions", 1000),
   };
 }
-
-export function assertIntAmount(
-  value: number,
-  code = "AMOUNT_OVERFLOW",
-): number {
+export function assertIntAmount(value: number, code = "AMOUNT_OVERFLOW") {
   if (!Number.isSafeInteger(value) || value < 0 || value > INT_MAX_VALUE)
     fail(code, "Montant trop élevé");
   return value;

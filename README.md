@@ -16,7 +16,7 @@ Ouvrir [le site client](http://localhost:3000/delifast) et [l’espace opératio
 
 Le parcours autonome couvre le catalogue, le panier mono-restaurant, le calcul serveur, la commande persistée, les connexions du personnel et le cycle restaurant → affectation manuelle → livraison simulée avec historique et permissions. Un paiement réel n’est pas disponible : sans activation explicite du simulateur, la commande reste en attente de paiement.
 
-L’onglet **Catalogue** permet désormais à l’administration et au restaurant autorisé de créer ou modifier les plats, changer les prix et disponibilités, archiver/restaurer et ouvrir/fermer manuellement le restaurant. Les versions protègent contre les écrasements concurrents, le seed ne réinitialise plus les menus et les commandes existantes gardent leurs montants figés. Voir le [contrat catalogue](delifast-api/CATALOG_CONTRACT.md). Les catégories, options, photos, horaires automatiques et zones GPS restent à développer.
+L’onglet **Catalogue** permet désormais à l’administration et au restaurant autorisé de créer ou modifier les plats, changer les prix et disponibilités, archiver/restaurer et ouvrir/fermer manuellement le restaurant. Les versions protègent contre les écrasements concurrents, le seed ne réinitialise plus les menus et les commandes existantes gardent leurs montants figés. Voir le [contrat catalogue](delifast-api/CATALOG_CONTRACT.md). Les catégories et groupes d’options sont gérables dans le même espace : choix obligatoires ou facultatifs, suppléments XOF, disponibilité par option, panier à configurations distinctes et snapshots de prix dans les commandes. Les photos, horaires automatiques et zones GPS restent à développer.
 
 ## Organisation
 
@@ -24,7 +24,7 @@ L’onglet **Catalogue** permet désormais à l’administration et au restauran
 | --- | --- |
 | `delifast-api` | API GraphQL autonome, MongoDB, migrations, seed, authentification locale et opérations |
 | `enatega-multivendor-web/app/delifast` | Parcours client et espace opérations autonomes, indépendants du backend historique |
-| `scripts/delifast-*.mjs` | Contrat GraphQL, parcours HTTP client/opérations/catalogue, persistance et sauvegarde/restauration |
+| `scripts/delifast-*.mjs` | Contrat GraphQL, parcours HTTP client/opérations/catalogue/options, persistance et sauvegarde/restauration |
 | `enatega-multivendor-admin` | Ancien back-office multivendeur, non raccordé intégralement à la nouvelle API |
 | `enatega-multivendor-app`, `enatega-multivendor-store`, `enatega-multivendor-rider` | Applications mobiles historiques restant à migrer et à tester sur appareils |
 | `docs/historique` | Documentation héritée, non contractuelle pour Delifast |

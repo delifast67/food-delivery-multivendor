@@ -38,7 +38,7 @@ jobs:
       DELIFAST_API_URL: http://127.0.0.1:4000/graphql
       # Simulation réservée à cette base de test, jamais un paiement réel.
       DELIFAST_DEMO_PAYMENTS: 'true'
-      # Les trois recettes dépassent 100 requêtes/minute ; limite normale inchangée.
+      # Les recettes dépassent 100 requêtes/minute ; limite normale inchangée.
       RATE_LIMIT_MAX: '1000'
       NEXT_TELEMETRY_DISABLED: '1'
     steps:
@@ -88,6 +88,7 @@ jobs:
           node scripts/delifast-smoke.mjs
           node scripts/delifast-operations-smoke.mjs
           node scripts/delifast-catalog-smoke.mjs
+          node scripts/delifast-options-smoke.mjs
       - name: Afficher les journaux en cas d’échec
         if: failure()
         run: cat /tmp/delifast-api.log /tmp/delifast-web.log 2>/dev/null || true

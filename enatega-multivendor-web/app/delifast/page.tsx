@@ -7,7 +7,11 @@ import {
   DelifastApiError,
   formatXof,
   makeIdempotencyKey,
+  canonicalCartLineKey,
   type CartLine,
+  type MenuItem,
+  type MenuOptionGroup,
+  type OptionSelection,
   type DeliveryAddress,
   type Order,
   type OrderAttempt,
@@ -39,6 +43,32 @@ const statusLabel: Record<string, string> = {
   DELIVERED: "Livrée",
   CANCELLED: "Annulée",
 };
+function selectionsValid(item: MenuItem, selections: OptionSelection[]) {
+  return (item.optionGroups ?? []).every((group) => {
+    const ids = selections.find((s) => s.groupId === group.id)?.optionIds ?? [];
+    return (
+      ids.length >= group.minSelections && ids.length <= group.maxSelections
+    );
+  });
+}
+function estimatedPrice(item: MenuItem, selections: OptionSelection[]) {
+  return (
+    item.priceXof +
+    selections.reduce(
+      (sum, selection) =>
+        sum +
+        selection.optionIds.reduce(
+          (n, id) =>
+            n +
+            ((item.optionGroups ?? [])
+              .flatMap((g) => g.options)
+              .find((o) => o.id === id)?.priceXof ?? 0),
+          0,
+        ),
+      0,
+    )
+  );
+}
 const statusTitle: Record<string, string> = {
   PAYMENT_PENDING: "Votre commande est en attente de paiement.",
   CONFIRMED: "Votre commande est confirmée (démo).",
@@ -64,6 +94,11 @@ export default function DelifastPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [trackingLoading, setTrackingLoading] = useState(false);
+  const [configuring, setConfiguring] = useState<{
+    restaurant: Restaurant;
+    item: MenuItem;
+  } | null>(null);
+  const [draftSelections, setDraftSelections] = useState<OptionSelection[]>([]);
   const submittingRef = useRef(false);
   const locked = !!attempt && !order;
 
@@ -173,38 +208,108 @@ export default function DelifastPage() {
     () => cart.reduce((sum, line) => sum + line.quantity, 0),
     [cart],
   );
-  const add = (restaurant: Restaurant, itemId: string) => {
-    if (locked) return;
+  const openConfigurator = (restaurant: Restaurant, item: MenuItem) => {
+    if (locked || !item.available) return;
     if (selected && selected.id !== restaurant.id) {
       setNotice(
         "Votre panier est mono-restaurant. Videz-le avant de choisir un autre restaurant.",
       );
       return;
     }
-    const item = restaurant.menu.find((entry) => entry.id === itemId);
-    if (!item?.available) return;
+    if (!item.optionGroups?.length) {
+      setSelected(restaurant);
+      setCart((current) => {
+        const key = canonicalCartLineKey({ menuItemId: item.id });
+        const found = current.find(
+          (line) => canonicalCartLineKey(line) === key,
+        );
+        return found
+          ? current.map((line) =>
+              canonicalCartLineKey(line) === key
+                ? { ...line, quantity: Math.min(line.quantity + 1, 99) }
+                : line,
+            )
+          : [...current, { menuItemId: item.id, quantity: 1 }];
+      });
+      setNotice("");
+      return;
+    }
+    setConfiguring({ restaurant, item });
+    setDraftSelections(
+      (item.optionGroups ?? []).map((group) => ({
+        groupId: group.id,
+        optionIds: [],
+      })),
+    );
+    setError("");
+  };
+  const toggleOption = (group: MenuOptionGroup, optionId: string) => {
+    setDraftSelections((current) =>
+      current.map((selection) => {
+        if (selection.groupId !== group.id) return selection;
+        if (group.maxSelections === 1 && group.minSelections === 1)
+          return { ...selection, optionIds: [optionId] };
+        const has = selection.optionIds.includes(optionId);
+        return {
+          ...selection,
+          optionIds: has
+            ? selection.optionIds.filter((id) => id !== optionId)
+            : selection.optionIds.length < group.maxSelections
+              ? [...selection.optionIds, optionId]
+              : selection.optionIds,
+        };
+      }),
+    );
+  };
+  const addConfigured = () => {
+    if (!configuring || !selectionsValid(configuring.item, draftSelections)) {
+      setError("Choisissez les options requises avant d'ajouter le plat.");
+      return;
+    }
+    const { restaurant, item } = configuring;
     setSelected(restaurant);
     setCheckout(null);
+    setConfiguring(null);
+    setNotice("");
     setCart((current) => {
-      const found = current.find((line) => line.menuItemId === itemId);
+      const selections = draftSelections.filter(
+        (selection) => selection.optionIds.length,
+      );
+      const key = canonicalCartLineKey({ menuItemId: item.id, selections });
+      const found = current.find((line) => canonicalCartLineKey(line) === key);
       return found
         ? current.map((line) =>
-            line.menuItemId === itemId
+            canonicalCartLineKey(line) === key
               ? { ...line, quantity: Math.min(line.quantity + 1, 99) }
               : line,
           )
-        : [...current, { menuItemId: itemId, quantity: 1 }];
+        : [
+            ...current,
+            {
+              menuItemId: item.id,
+              quantity: 1,
+              ...(selections.length ? { selections } : {}),
+            },
+          ];
     });
-    setNotice("");
   };
-  const changeQuantity = (id: string, quantity: number) => {
+  const changeQuantity = (
+    id: string,
+    quantity: number,
+    selections: CartLine["selections"] = [],
+  ) => {
     if (locked) return;
     setCheckout(null);
     const next =
       quantity <= 0
-        ? cart.filter((line) => line.menuItemId !== id)
+        ? cart.filter(
+            (line) =>
+              canonicalCartLineKey(line) !==
+              canonicalCartLineKey({ menuItemId: id, selections }),
+          )
         : cart.map((line) =>
-            line.menuItemId === id
+            canonicalCartLineKey(line) ===
+            canonicalCartLineKey({ menuItemId: id, selections })
               ? { ...line, quantity: Math.min(quantity, 99) }
               : line,
           );
@@ -352,6 +457,24 @@ export default function DelifastPage() {
           <div className="df-total">
             <span>Total serveur</span>
             <strong>{formatXof(order.checkout.total)}</strong>
+            {!!order.checkout.items?.length && (
+              <div className="df-order-snapshot">
+                {order.checkout.items.map((entry, i) => (
+                  <div key={`${entry.menuItemId}-${i}`}>
+                    <span>
+                      {entry.quantity} × {entry.name}
+                    </span>
+                    {entry.selectedOptions?.length ? (
+                      <small>
+                        {entry.selectedOptions
+                          .map((option) => option.name)
+                          .join(", ")}
+                      </small>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <button className="df-secondary" onClick={resetForNewOrder}>
             Retour aux restaurants
@@ -419,28 +542,81 @@ export default function DelifastPage() {
                   <div>
                     <h3>{restaurant.name}</h3>
                     <p>{restaurant.description}</p>
-                    {restaurant.open === false && <strong className="df-closed">Fermé actuellement · commandes désactivées</strong>}
+                    {restaurant.open === false && (
+                      <strong className="df-closed">
+                        Fermé actuellement · commandes désactivées
+                      </strong>
+                    )}
                   </div>
                   <div className="df-menu">
-                    {restaurant.menu.filter((item) => !item.archived).map((item) => (
-                      <div
-                        className={`df-item ${!item.available ? "unavailable" : ""}`}
-                        key={item.id}
-                      >
-                        <div>
-                          <strong>{item.name}</strong>
-                          <small>{item.description}</small>
-                          <span>{formatXof(item.priceXof)}</span>
-                        </div>
-                        <button
-                          aria-label={`Ajouter ${item.name}`}
-                          disabled={!item.available || restaurant.open === false || locked}
-                          onClick={() => add(restaurant, item.id)}
-                        >
-                          {restaurant.open === false ? "Fermé" : item.available ? "+" : "Indisponible"}
-                        </button>
-                      </div>
-                    ))}
+                    {(() => {
+                      const groups = new Map<
+                        string,
+                        { name: string; sort: number; items: MenuItem[] }
+                      >();
+                      restaurant.menu
+                        .filter((item) => !item.archived)
+                        .forEach((item) => {
+                          const category = restaurant.categories?.find(
+                            (c) => c.id === item.categoryId && !c.archived,
+                          );
+                          const key = category?.id ?? "__none";
+                          const group = groups.get(key) ?? {
+                            name: category?.name ?? "Sans catégorie",
+                            sort: category?.sortOrder ?? 999999,
+                            items: [],
+                          };
+                          group.items.push(item);
+                          groups.set(key, group);
+                        });
+                      return [...groups.values()]
+                        .sort((a, b) => a.sort - b.sort)
+                        .map((group) => (
+                          <div className="df-category" key={group.name}>
+                            <h4>{group.name}</h4>
+                            {group.items.map((item) => (
+                              <div
+                                className={`df-item ${!item.available ? "unavailable" : ""}`}
+                                key={item.id}
+                              >
+                                <div>
+                                  <strong>{item.name}</strong>
+                                  <small>{item.description}</small>
+                                  <span>
+                                    {formatXof(item.priceXof)}
+                                    {item.optionGroups?.length
+                                      ? " · options"
+                                      : ""}
+                                  </span>
+                                </div>
+                                <button
+                                  aria-label={
+                                    item.optionGroups?.length
+                                      ? `Configurer ${item.name}`
+                                      : `Ajouter ${item.name}`
+                                  }
+                                  disabled={
+                                    !item.available ||
+                                    restaurant.open === false ||
+                                    locked
+                                  }
+                                  onClick={() =>
+                                    openConfigurator(restaurant, item)
+                                  }
+                                >
+                                  {restaurant.open === false
+                                    ? "Fermé"
+                                    : item.available
+                                      ? item.optionGroups?.length
+                                        ? "Configurer"
+                                        : "+"
+                                      : "Indisponible"}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ));
+                    })()}
                   </div>
                 </article>
               ))}
@@ -488,17 +664,47 @@ export default function DelifastPage() {
                     (entry) => entry.id === line.menuItemId,
                   );
                   return item ? (
-                    <div className="df-cart-line" key={line.menuItemId}>
+                    <div
+                      className="df-cart-line"
+                      key={canonicalCartLineKey(line)}
+                    >
                       <div>
                         <strong>{item.name}</strong>
-                        <small>{formatXof(item.priceXof)} / unité</small>
+                        <small>
+                          Base : {formatXof(item.priceXof)} / unité (hors
+                          options)
+                        </small>
+                        {!!line.selections?.length && (
+                          <small>
+                            Options :{" "}
+                            {line.selections
+                              .flatMap((selection) =>
+                                selection.optionIds.map(
+                                  (id) =>
+                                    item.optionGroups
+                                      ?.find(
+                                        (group) =>
+                                          group.id === selection.groupId,
+                                      )
+                                      ?.options.find(
+                                        (option) => option.id === id,
+                                      )?.name ?? id,
+                                ),
+                              )
+                              .join(", ")}
+                          </small>
+                        )}
                       </div>
                       <div className="df-qty">
                         <button
                           aria-label={`Diminuer ${item.name}`}
                           disabled={locked}
                           onClick={() =>
-                            changeQuantity(item.id, line.quantity - 1)
+                            changeQuantity(
+                              item.id,
+                              line.quantity - 1,
+                              line.selections,
+                            )
                           }
                         >
                           −
@@ -508,7 +714,11 @@ export default function DelifastPage() {
                           aria-label={`Augmenter ${item.name}`}
                           disabled={locked}
                           onClick={() =>
-                            changeQuantity(item.id, line.quantity + 1)
+                            changeQuantity(
+                              item.id,
+                              line.quantity + 1,
+                              line.selections,
+                            )
                           }
                         >
                           +
@@ -616,7 +826,10 @@ export default function DelifastPage() {
                 className="df-primary"
                 disabled={
                   loading === "order" ||
-                  (!locked && (loading === "checkout" || !checkout || selected?.open === false))
+                  (!locked &&
+                    (loading === "checkout" ||
+                      !checkout ||
+                      selected?.open === false))
                 }
                 onClick={place}
               >
@@ -634,6 +847,73 @@ export default function DelifastPage() {
           )}
         </aside>
       </section>
+      {configuring && (
+        <div className="df-modal-backdrop">
+          <section
+            className="df-option-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="option-title"
+          >
+            <h2 id="option-title">Configurer {configuring.item.name}</h2>
+            <p>
+              Prix estimatif :{" "}
+              <strong>
+                {formatXof(estimatedPrice(configuring.item, draftSelections))}
+              </strong>
+            </p>
+            {configuring.item.optionGroups?.map((group) => (
+              <fieldset key={group.id}>
+                <legend>
+                  {group.name}{" "}
+                  <small>
+                    ({group.minSelections}–{group.maxSelections})
+                  </small>
+                </legend>
+                {group.options.map((option) => {
+                  const checked =
+                    draftSelections
+                      .find((selection) => selection.groupId === group.id)
+                      ?.optionIds.includes(option.id) ?? false;
+                  return (
+                    <label className="df-option" key={option.id}>
+                      <input
+                        type={
+                          group.maxSelections === 1 && group.minSelections === 1
+                            ? "radio"
+                            : "checkbox"
+                        }
+                        name={`option-${group.id}`}
+                        checked={checked}
+                        disabled={!option.available}
+                        onChange={() => toggleOption(group, option.id)}
+                      />
+                      <span>
+                        {option.name} · {formatXof(option.priceXof)}
+                        {!option.available ? " (indisponible)" : ""}
+                      </span>
+                    </label>
+                  );
+                })}
+                <small>
+                  Minimum {group.minSelections}, maximum {group.maxSelections}
+                </small>
+              </fieldset>
+            ))}
+            <div className="df-dialog-actions">
+              <button
+                className="df-secondary"
+                onClick={() => setConfiguring(null)}
+              >
+                Annuler
+              </button>
+              <button className="df-primary" onClick={addConfigured}>
+                Ajouter au panier
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

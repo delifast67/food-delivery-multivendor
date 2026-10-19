@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { delifastApi, type Order, type StaffUser } from "@/lib/delifast/api";
+import {
+  delifastApi,
+  formatXof,
+  type Order,
+  type StaffUser,
+} from "@/lib/delifast/api";
 import "../delifast.css";
 import Catalogue from "./Catalogue";
 
@@ -378,6 +383,33 @@ function OrderDetails({
           </p>
         </div>
       )}
+      <section
+        className="df-order-snapshot"
+        aria-label="Plats et options commandés"
+      >
+        <h3>Plats et options commandés</h3>
+        {(order.checkout.items || []).map((line, index) => (
+          <div key={`${line.menuItemId}-${index}`}>
+            <strong>
+              {line.quantity} × {line.name} · {formatXof(line.total)}
+            </strong>
+            <p>Prix unitaire figé : {formatXof(line.unitPrice)}</p>
+            {!!line.selectedOptions?.length && (
+              <ul>
+                {line.selectedOptions.map((option) => (
+                  <li key={JSON.stringify([option.groupId, option.optionId])}>
+                    {option.groupName} : {option.name} (+
+                    {formatXof(option.priceXof)} / unité)
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ))}
+        <p>
+          Total serveur : <strong>{formatXof(order.checkout.total)}</strong>
+        </p>
+      </section>
       <div className="df-history">
         <strong>Historique</strong>
         {(order.history || []).map((event, i) => (

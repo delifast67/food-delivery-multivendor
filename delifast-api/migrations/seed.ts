@@ -71,22 +71,96 @@ export async function seedCatalog(db: any) {
         { upsert: true },
       );
     for (const m of menu)
-      await db
-        .collection("menu_items")
-        .updateOne(
-          { id: m.id },
-          {
-            $setOnInsert: {
-              ...m,
-              restaurantId: r.id,
-              version: 0,
-              archived: false,
-              audit: [],
-            },
+      await db.collection("menu_items").updateOne(
+        { id: m.id },
+        {
+          $setOnInsert: {
+            ...m,
+            restaurantId: r.id,
+            version: 0,
+            archived: false,
+            audit: [],
           },
-          { upsert: true },
-        );
+        },
+        { upsert: true },
+      );
   }
+  const examples = [
+    {
+      id: "cat-demo-principal",
+      restaurantId: "rest-koudougou",
+      name: "Plats",
+      sortOrder: 0,
+    },
+  ];
+  for (const c of examples)
+    await db
+      .collection("menu_categories")
+      .updateOne(
+        { id: c.id },
+        { $setOnInsert: { ...c, archived: false, version: 0, audit: [] } },
+        { upsert: true },
+      );
+  await db.collection("menu_items").updateOne(
+    { id: "plat-options-demo" },
+    {
+      $setOnInsert: {
+        id: "plat-options-demo",
+        restaurantId: "rest-koudougou",
+        categoryId: "cat-demo-principal",
+        name: "Plat configurable — exemple fictif",
+        description: "Donnée de démonstration uniquement, ne pas préparer.",
+        priceXof: 1000,
+        available: true,
+        archived: false,
+        version: 0,
+        audit: [],
+        optionGroups: [
+          {
+            id: "portion",
+            name: "Portion fictive",
+            minSelections: 1,
+            maxSelections: 1,
+            options: [
+              {
+                id: "normale",
+                name: "Normale fictive",
+                priceXof: 0,
+                available: true,
+              },
+              {
+                id: "grande",
+                name: "Grande fictive",
+                priceXof: 200,
+                available: true,
+              },
+            ],
+          },
+          {
+            id: "extras",
+            name: "Suppléments fictifs",
+            minSelections: 0,
+            maxSelections: 2,
+            options: [
+              {
+                id: "sauce",
+                name: "Sauce fictive",
+                priceXof: 50,
+                available: true,
+              },
+              {
+                id: "epuise",
+                name: "Option indisponible fictive",
+                priceXof: 100,
+                available: false,
+              },
+            ],
+          },
+        ],
+      },
+    },
+    { upsert: true },
+  );
 }
 export async function seedAll(db: any) {
   await seedCatalog(db);
@@ -126,15 +200,13 @@ export async function seedAll(db: any) {
   ];
   for (const s of staff) {
     const { password, ...user } = s;
-    await db
-      .collection("staff_users")
-      .updateOne(
-        { id: s.id },
-        {
-          $set: { ...user, passwordHash: passwordHash(password), active: true },
-        },
-        { upsert: true },
-      );
+    await db.collection("staff_users").updateOne(
+      { id: s.id },
+      {
+        $set: { ...user, passwordHash: passwordHash(password), active: true },
+      },
+      { upsert: true },
+    );
   }
 }
 if (import.meta.url === `file://${process.argv[1]}`) {
