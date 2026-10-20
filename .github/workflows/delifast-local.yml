@@ -156,6 +156,7 @@ jobs:
       - name: Tester le restaurant et son contrat
         run: |
           node --test scripts/delifast-store-entry.test.mjs
+          node --test --test-name-pattern=enatega-multivendor-store scripts/delifast-mobile-tsconfig.test.mjs
           npm run test:delifast --prefix enatega-multivendor-store
           node scripts/delifast-store-contract.mjs
           npm run build --prefix delifast-api
@@ -187,6 +188,7 @@ jobs:
       - name: Tester le livreur et son contrat
         run: |
           node --test scripts/delifast-rider-entry.test.mjs
+          node --test --test-name-pattern=enatega-multivendor-rider scripts/delifast-mobile-tsconfig.test.mjs
           npm run test:delifast --prefix enatega-multivendor-rider
           node scripts/delifast-rider-contract.mjs
           npm run build --prefix delifast-api

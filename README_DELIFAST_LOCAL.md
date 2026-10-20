@@ -400,3 +400,21 @@ Le nouveau scénario API utilise deux comptes restaurant fictifs, un admin et de
 La vérification TypeScript globale des sources mobiles historiques restaurant/livreur reste bloquée par `TS5095` (configuration module/moduleResolution incompatible) ; les contrôles avec options compatibles signalent aussi des erreurs préexistantes ailleurs. Les tests ciblés ne constituent pas une validation complète de ces sources. Aucun nouvel export mobile, build natif signé, essai sur téléphone, parcours navigateur ou build web n’est revendiqué pour ce lot ; les recettes visuelles précédentes restent des résultats historiques.
 
 Les notices, licences, anciennes routes, documents Apollo et scripts de diagnostic sont conservés sans suppression générale. Les fichiers de déploiement et de configuration externe ne sont pas changés. Aucun achat, SMS Orange, paiement réel, publication Git, fusion, préproduction ou production n’est effectué. Le produit complet n’est toujours pas terminé : les fonctions métier encore absentes et les validations réelles restent décrites plus haut.
+
+## TypeScript restaurant/livreur — configuration débloquée
+
+Le défaut `TS5095` est reproduit dans les deux applications : leur surcharge `module: commonjs` contredit `moduleResolution: bundler` hérité d’Expo. Le correctif supprime seulement cette surcharge dans les deux `tsconfig.json`, ce qui rétablit `module: preserve` fourni par les versions Expo installées. La résolution `bundler`, les conditions React Native, `strict`, `noEmit` et le périmètre des sources, archives comprises, sont conservés. Aucun type n’est supprimé, aucune erreur n’est ignorée et aucune dépendance n’est mise à jour. La transpilation reste confiée à Babel/Metro, dont les configurations ne sont pas modifiées.
+
+**Le typecheck est désormais exécutable, mais ne passe pas globalement.** Les commandes habituelles, sans option de contournement, produisent **22 diagnostics restaurant dans 11 fichiers** et **22 diagnostics livreur dans 12 fichiers**, identiques à ceux obtenus avant le correctif avec `--module preserve` ou `--module ESNext`. Tous les fichiers signalés étaient déjà inchangés par le commit multivendeur `2f31c39`. Les erreurs concernent notamment les références React et les valeurs optionnelles, les interfaces Apollo/commandes, un import de type absent, les événements audio, les thèmes et l’impression. Leur résolution nécessite un chantier distinct de code et de compatibilité de bibliothèques ; elle n’est pas entreprise dans ce lot limité à une cause de configuration démontrée.
+
+Validations exécutées : **2 nouveaux tests de configuration** (options effectives Expo et témoin négatif reproduisant `TS5095` avec CommonJS), **6 gardes d’entrée restaurant/livreur**, **43 tests restaurant**, **60 tests livreur**, **7 tests Jest restaurant dans 4 suites**, **5 documents GraphQL restaurant et 5 livreur**, ainsi que `git diff --check`. Le garde-fou de configuration est ajouté aux deux jobs CI mobiles existants avec filtrage par application ; aucun workflow distant n’est déclenché. Ce test de configuration ne prétend pas vérifier les types des sources historiques.
+
+Commandes de reproduction locale :
+
+```sh
+node --test scripts/delifast-mobile-tsconfig.test.mjs
+(cd enatega-multivendor-store && ./node_modules/.bin/tsc --noEmit --pretty false)
+(cd enatega-multivendor-rider && ./node_modules/.bin/tsc --noEmit --pretty false)
+```
+
+Les deux dernières commandes terminent volontairement avec un code d’échec tant que les diagnostics de code subsistent. Aucun nouveau build, export natif, essai sur téléphone ou parcours HTTP/navigateur n’est revendiqué dans ce lot. Aucun push, fusion, déploiement, achat, SMS, paiement réel ni changement Orange n’a été effectué. Le produit complet reste non terminé.
