@@ -105,14 +105,12 @@ try {
     .findOne({ id: "staff-rider" });
   assert.ok(seeded);
   const { _id, ...second } = seeded;
-  await db
-    .collection("staff_users")
-    .insertOne({
-      ...second,
-      id: "staff-rider-other",
-      email: "rider-other@delifast.local",
-      name: "Autre livreur fictif",
-    });
+  await db.collection("staff_users").insertOne({
+    ...second,
+    id: "staff-rider-other",
+    email: "rider-other@delifast.local",
+    name: "Autre livreur fictif",
+  });
   server = spawn(process.execPath, ["dist/src/server.js"], {
     cwd,
     env,
@@ -337,6 +335,15 @@ try {
     await recovery.transition(uncertain.id, "PICKED_UP");
   } catch {}
   assert.equal(calls, 1);
+  assert.equal(recovery.getState().pending.length, 1);
+  assert.equal(
+    recovery.getState().orders.find((entry) => entry.id === uncertain.id)
+      .status,
+    "READY",
+  );
+  await recovery.refresh();
+  assert.equal(calls, 1);
+  assert.equal(recovery.getState().pending.length, 0);
   assert.equal(
     recovery.getState().orders.find((entry) => entry.id === uncertain.id)
       .status,
@@ -346,6 +353,15 @@ try {
     await recovery.transition(uncertain.id, "DELIVERED");
   } catch {}
   assert.equal(calls, 2);
+  assert.equal(recovery.getState().pending.length, 1);
+  assert.equal(
+    recovery.getState().orders.find((entry) => entry.id === uncertain.id)
+      .status,
+    "PICKED_UP",
+  );
+  await recovery.refresh();
+  assert.equal(calls, 2);
+  assert.equal(recovery.getState().pending.length, 0);
   assert.equal(
     recovery.getState().orders.find((entry) => entry.id === uncertain.id)
       .status,

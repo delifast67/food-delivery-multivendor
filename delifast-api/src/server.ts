@@ -186,7 +186,7 @@ const resolvers: any = {
       simulatePayment(getDb(), requireRole(ctx, ["ADMIN"]), orderId),
     transitionOrder: (
       _: any,
-      { orderId, status, expectedStatus }: any,
+      { orderId, status, expectedStatus, expectedUpdatedAt }: any,
       ctx: any,
     ) =>
       transition(
@@ -195,6 +195,7 @@ const resolvers: any = {
         orderId,
         status,
         expectedStatus,
+        expectedUpdatedAt,
       ),
     assignRider: (
       _: any,

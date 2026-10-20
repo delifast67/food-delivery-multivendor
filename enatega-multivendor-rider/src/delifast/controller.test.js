@@ -8,6 +8,7 @@ const order = (status = "READY", riderId = "r1") => ({
   status,
   riderId,
   paymentStatus: "PAID",
+  updatedAt: "2025-01-01T00:00:00.000Z",
 });
 function harness(overrides = {}) {
   const map = new Map();
@@ -21,8 +22,8 @@ function harness(overrides = {}) {
     login: async () => ({ token: "tok", user }),
     me: async () => user,
     orders: async () => [order(), order("READY", "other")],
-    transition: async (_t, id, status, expectedStatus) => {
-      calls.push([id, status, expectedStatus]);
+    transition: async (_t, id, status, expectedStatus, expectedUpdatedAt) => {
+      calls.push([id, status, expectedStatus, expectedUpdatedAt]);
       return order(status);
     },
     logout: async (t) => {
@@ -43,11 +44,13 @@ test("initial state has no token and actionsFor enforces paid delivery cycle", (
   assert.deepEqual(h.controller.getState(), {
     user: null,
     orders: [],
+    pending: [],
     busy: false,
     restoring: false,
     error: null,
     notice: null,
     locked: false,
+    offline: false,
   });
   assert.deepEqual(actionsFor(order("READY")), ["PICKED_UP"]);
   assert.deepEqual(actionsFor(order("PICKED_UP")), ["DELIVERED"]);
@@ -82,7 +85,7 @@ test("transition sends snapshot expectedStatus and blocks invalid status", async
   await h.controller.transition("o1", "PICKED_UP");
   assert.deepEqual(
     h.calls.find((c) => c[0] === "o1"),
-    ["o1", "PICKED_UP", "READY"],
+    ["o1", "PICKED_UP", "READY", "2025-01-01T00:00:00.000Z"],
   );
   await assert.rejects(
     h.controller.transition("o1", "READY"),
@@ -104,6 +107,7 @@ test("double click shares inflight work and conflicts reload without retry", asy
   await h.controller.login("a", "b");
   const a = h.controller.transition("o1", "PICKED_UP");
   const b = h.controller.transition("o1", "PICKED_UP");
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(transitionCalls, 1);
   resolve();
   await assert.rejects(a, /conflict/);
@@ -260,8 +264,13 @@ test("late mutation response cannot repopulate private details after logout", as
   const h = harness();
   await h.controller.login("a", "b");
   const pending = deferred();
-  h.api.transition = () => pending.promise;
+  const started = deferred();
+  h.api.transition = () => {
+    started.resolve();
+    return pending.promise;
+  };
   const mutation = h.controller.transition("o1", "PICKED_UP");
+  await started.promise;
   await h.controller.logout();
   pending.resolve(order("PICKED_UP"));
   await mutation;
@@ -281,11 +290,11 @@ test("uncertain mutation and failed read clears stale orders and requires refres
   };
   await assert.rejects(h.controller.transition("o1", "PICKED_UP"));
   assert.equal(writes, 1);
-  assert.deepEqual(h.controller.getState().orders, []);
-  assert.match(h.controller.getState().notice, /relecture impossible/);
+  assert.equal(h.controller.getState().pending.length, 1);
+  assert.match(h.controller.getState().notice, /attente|incertain/i);
   await assert.rejects(
     h.controller.transition("o1", "PICKED_UP"),
-    (error) => error.code === "REFRESH_REQUIRED",
+    (error) => error.code === "ACTION_PENDING",
   );
   assert.equal(writes, 1);
   h.api.orders = async () => [order("PICKED_UP")];
@@ -306,8 +315,8 @@ test("lost response after confirmed write reloads canonical status without retry
   await h.controller.login("a", "b");
   await assert.rejects(h.controller.transition("o1", "PICKED_UP"));
   assert.equal(writes, 1);
-  assert.equal(h.controller.getState().orders[0].status, "PICKED_UP");
-  assert.match(h.controller.getState().notice, /Aucune mutation rejouée/);
+  assert.equal(h.controller.getState().orders[0].status, "READY");
+  assert.equal(h.controller.getState().pending.length, 1);
 });
 test("changing authenticated livreur during session invalidates scope", async () => {
   const h = harness();
@@ -346,8 +355,13 @@ test("late rejected mutation after logout is ignored by state and callers", asyn
   const h = harness();
   await h.controller.login("a", "b");
   const pending = deferred();
-  h.api.transition = () => pending.promise;
+  const started = deferred();
+  h.api.transition = () => {
+    started.resolve();
+    return pending.promise;
+  };
   const mutation = h.controller.transition("o1", "PICKED_UP");
+  await started.promise;
   await h.controller.logout();
   pending.reject(new Error("private old-session failure"));
   await mutation;
@@ -431,7 +445,7 @@ test("delivery lost after write accepts only server reread without replay", asyn
   await h.controller.login("a", "b");
   await assert.rejects(h.controller.transition("o1", "DELIVERED"));
   assert.equal(calls, 1);
-  assert.equal(h.controller.getState().orders[0].status, "DELIVERED");
+  assert.equal(h.controller.getState().orders[0].status, "PICKED_UP");
   await assert.rejects(h.controller.transition("o1", "DELIVERED"));
   assert.equal(calls, 1);
 });
@@ -447,14 +461,15 @@ test("uncertain delivery cannot be repeated until server read succeeds", async (
     throw new Error("offline");
   };
   await assert.rejects(h.controller.transition("o1", "DELIVERED"));
-  assert.equal(h.controller.getState().locked, true);
-  assert.deepEqual(h.controller.getState().orders, []);
+  assert.equal(h.controller.getState().locked, false);
+  assert.equal(h.controller.getState().pending.length, 1);
   await assert.rejects(
     h.controller.transition("o1", "DELIVERED"),
-    (e) => e.code === "REFRESH_REQUIRED",
+    (e) => e.code === "ACTION_PENDING",
   );
   assert.equal(calls, 1);
   h.api.orders = async () => [order("PICKED_UP")];
+  h.api.transition = async () => order("DELIVERED");
   await h.controller.refresh();
   assert.equal(h.controller.getState().locked, false);
 });

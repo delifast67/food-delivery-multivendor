@@ -295,3 +295,30 @@ test("login never sends a stale authorization header", async () => {
   await api.login("r@test", "secret");
   assert.equal(options.headers.authorization, undefined);
 });
+
+test("transition différée transmet la révision exacte sans la recalculer", async () => {
+  let variables;
+  const api = createClient({
+    fetchImpl: async (_url, request) => {
+      variables = JSON.parse(request.body).variables;
+      return response({
+        data: {
+          transitionOrder: order({ status: "DELIVERED", riderId: "rider" }),
+        },
+      });
+    },
+  });
+  await api.transition(
+    "session",
+    "o1",
+    "DELIVERED",
+    "PICKED_UP",
+    order().updatedAt,
+  );
+  assert.deepEqual(variables, {
+    orderId: "o1",
+    status: "DELIVERED",
+    expectedStatus: "PICKED_UP",
+    expectedUpdatedAt: order().updatedAt,
+  });
+});

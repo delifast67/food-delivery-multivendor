@@ -64,7 +64,7 @@ describe("cycle de vie local des commandes", () => {
     }
   });
 
-  it("rejette un statut attendu périmé et un rejeu de transition sans doubler l’historique", async () => {
+  it("rejette un statut attendu périmé et un rejeu de transition sans doubler l'historique", async () => {
     await seed("PREPARING");
     const before = await db.collection("orders").findOne({ id: "order" });
     await expect(transition(db, restaurant, "order", "PREPARING", "ACCEPTED")).rejects.toMatchObject(rejection("CONCURRENT_MODIFICATION"));
@@ -73,6 +73,40 @@ describe("cycle de vie local des commandes", () => {
     const ready = await db.collection("orders").findOne({ id: "order" });
     await expect(transition(db, restaurant, "order", "READY", "PREPARING")).rejects.toMatchObject(rejection("CONCURRENT_MODIFICATION"));
     expect(await db.collection("orders").findOne({ id: "order" })).toEqual(ready);
+  });
+
+  it("exige le snapshot updatedAt exact et ne crée aucun événement au rejeu", async () => {
+    await seed("READY");
+    const snapshot = await db.collection("orders").findOne({ id: "order" });
+    const updated = await transition(db, rider, "order", "PICKED_UP", "READY", snapshot!.updatedAt);
+    expect(updated.updatedAt).not.toBe(snapshot!.updatedAt);
+    expect(Date.parse(updated.updatedAt)).toBeGreaterThan(Date.parse(snapshot!.updatedAt));
+    await expect(
+      transition(db, rider, "order", "PICKED_UP", "READY", snapshot!.updatedAt),
+    ).rejects.toMatchObject(rejection("CONCURRENT_MODIFICATION"));
+    expect((await db.collection("orders").findOne({ id: "order" }))?.history).toHaveLength(2);
+  });
+
+  it("garde des révisions strictement croissantes malgré une horloge derrière le snapshot", async () => {
+    const future = new Date(Date.now() + 60000).toISOString();
+    await seed("READY", { updatedAt: future });
+    const picked = await transition(db, rider, "order", "PICKED_UP", "READY", future);
+    const delivered = await transition(db, rider, "order", "DELIVERED", "PICKED_UP", picked.updatedAt);
+    expect(Date.parse(picked.updatedAt) - Date.parse(future)).toBe(1);
+    expect(Date.parse(delivered.updatedAt) - Date.parse(picked.updatedAt)).toBe(1);
+    expect(delivered.history).toHaveLength(3);
+  });
+
+  it("ne laisse pas un rider révoqué réconcilier un snapshot", async () => {
+    await seed("READY");
+    const snapshot = await db.collection("orders").findOne({ id: "order" });
+    await db.collection("orders").updateOne(
+      { id: "order" },
+      { $set: { riderId: "other-rider", updatedAt: new Date(Date.parse(timestamp) + 1).toISOString() } },
+    );
+    await expect(
+      transition(db, rider, "order", "PICKED_UP", "READY", snapshot!.updatedAt),
+    ).rejects.toMatchObject(rejection("ORDER_NOT_FOUND"));
   });
 
   it("arbitre atomiquement une annulation concurrente avec la préparation", async () => {

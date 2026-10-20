@@ -39,7 +39,7 @@ const documents = {
   staffLogin: `mutation StaffLogin($email: String!, $password: String!) { staffLogin(email: $email, password: $password) { token user { ${userFields} } } }`,
   me: `query Me { me { ${userFields} } }`,
   operationsOrders: `query OperationsOrders { operationsOrders { ${orderFields} } }`,
-  transitionOrder: `mutation TransitionOrder($orderId: ID!, $status: String!, $expectedStatus: String!) { transitionOrder(orderId: $orderId, status: $status, expectedStatus: $expectedStatus) { ${orderFields} } }`,
+  transitionOrder: `mutation TransitionOrder($orderId: ID!, $status: String!, $expectedStatus: String!, $expectedUpdatedAt: String) { transitionOrder(orderId: $orderId, status: $status, expectedStatus: $expectedStatus, expectedUpdatedAt: $expectedUpdatedAt) { ${orderFields} } }`,
   staffLogout: "mutation StaffLogout { staffLogout }",
 };
 
@@ -260,8 +260,17 @@ function createClient({
     login: (email, password) => field("staffLogin", { email, password }),
     me: (token) => field("me", {}, token),
     orders: (token) => field("operationsOrders", {}, token),
-    transition: (token, id, status, expectedStatus) =>
-      field("transitionOrder", { orderId: id, status, expectedStatus }, token),
+    transition: (token, id, status, expectedStatus, expectedUpdatedAt) =>
+      field(
+        "transitionOrder",
+        {
+          orderId: id,
+          status,
+          expectedStatus,
+          ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}),
+        },
+        token,
+      ),
     logout: (token) => field("staffLogout", {}, token),
   };
 }

@@ -8,6 +8,13 @@ import { getPaymentProvider } from "./payment.js";
 const tokenHash = (value: string) =>
   crypto.createHash("sha256").update(value).digest("hex");
 const now = () => new Date().toISOString();
+const nextUpdatedAt = (previous?: unknown) => {
+  const current = Date.now();
+  const previousMs = typeof previous === "string" ? Date.parse(previous) : NaN;
+  return new Date(
+    Math.max(current, Number.isFinite(previousMs) ? previousMs + 1 : 0),
+  ).toISOString();
+};
 const initialHistory = (order: any) =>
   order.history ?? [
     {
@@ -202,6 +209,7 @@ export async function transition(
   id: string,
   status: string,
   expected: string,
+  expectedUpdatedAt?: string,
 ) {
   const orders = db.collection<any>("orders");
   const current = await orders.findOne({ id, ...scope(user) });
@@ -212,12 +220,15 @@ export async function transition(
     fail("INVALID_TRANSITION", "Transition interdite");
   if (current.paymentStatus !== "PAID")
     fail("PAYMENT_REQUIRED", "Paiement confirmé requis");
-  const at = now();
+  if (expectedUpdatedAt !== undefined && current.updatedAt !== expectedUpdatedAt)
+    fail("CONCURRENT_MODIFICATION", "État modifié, rechargez la commande");
+  const at = nextUpdatedAt(current.updatedAt);
   const filter: Record<string, unknown> = {
     id,
     status: expected,
     paymentStatus: "PAID",
   };
+  if (expectedUpdatedAt !== undefined) filter.updatedAt = expectedUpdatedAt;
   if (user.role === "RIDER") filter.riderId = user.id;
   else if (user.role === "RESTAURANT") filter.restaurantId = user.restaurantId;
   const paymentChange =
@@ -280,7 +291,8 @@ export async function assign(
     .findOne({ id: riderId, role: "RIDER", active: true });
   if (!rider) fail("RIDER_NOT_FOUND", "Livreur introuvable");
   const orders = db.collection<any>("orders");
-  const at = now();
+  const snapshot = await orders.findOne({ id });
+  const at = nextUpdatedAt(snapshot?.updatedAt);
   const result = await orders.findOneAndUpdate(
     {
       id,
@@ -289,6 +301,9 @@ export async function assign(
       // Only the first assignment writes. Replays below return the existing
       // document without changing updatedAt or racing a second assignment.
       riderId: { $exists: false },
+      ...(typeof snapshot?.updatedAt === "string"
+        ? { updatedAt: snapshot.updatedAt }
+        : {}),
     },
     { $set: { riderId, updatedAt: at } },
     { returnDocument: "after" },

@@ -10,11 +10,14 @@ const {
   ActivityIndicator,
   StyleSheet,
   Alert,
+  AppState,
 } = require("react-native");
 const SecureStore = require("expo-secure-store");
+const Network = require("expo-network");
 const { createClient } = require("./api");
 const { createController, actionsFor } = require("./controller");
 const { createStorage } = require("./storage");
+const { watchConnectivity } = require("./connectivity");
 const h = React.createElement;
 const statusLabels = {
   READY: "À récupérer",
@@ -50,7 +53,15 @@ function App({ api, storage, controller: injected } = {}) {
   React.useEffect(() => {
     const off = controller.subscribe(setState);
     controller.restore().catch(() => {});
-    return off;
+    const stop = watchConnectivity({
+      controller,
+      network: Network,
+      appState: AppState,
+    });
+    return () => {
+      stop();
+      off();
+    };
   }, [controller]);
   const run = (fn) => async () => {
     setActionError(null);
@@ -88,6 +99,12 @@ function App({ api, storage, controller: injected } = {}) {
       },
       h(Text, { style: styles.title }, "Delifast · Livreur"),
       h(Text, null, "Missions affectées uniquement · données serveur"),
+      state.offline &&
+        h(
+          Text,
+          { style: styles.notice, accessibilityRole: "alert" },
+          "Hors ligne · derniers statuts serveur, pas de confirmation locale.",
+        ),
       (state.busy || state.restoring) &&
         h(ActivityIndicator, { accessibilityLabel: "Chargement" }),
       state.error &&
@@ -103,6 +120,18 @@ function App({ api, storage, controller: injected } = {}) {
           actionError,
         ),
       state.notice && h(Text, { style: styles.notice }, state.notice),
+      state.user &&
+        (state.pending || []).map((pending) =>
+          h(
+            Text,
+            {
+              key: pending.orderId,
+              style: styles.notice,
+              accessibilityRole: "alert",
+            },
+            `Mission ${pending.orderId} · ${pending.status === "DELIVERED" ? "Livraison" : "Récupération"} en attente de confirmation API. Ne constitue pas un statut confirmé.`,
+          ),
+        ),
       !state.user
         ? h(
             View,
@@ -128,6 +157,11 @@ function App({ api, storage, controller: injected } = {}) {
               title: "Se connecter",
               disabled: state.busy || state.restoring,
               onPress: submitLogin,
+            }),
+            h(Button, {
+              title: "Réessayer la restauration",
+              disabled: state.busy || state.restoring,
+              onPress: run(() => controller.restore()),
             }),
           )
         : h(
@@ -222,12 +256,16 @@ function App({ api, storage, controller: injected } = {}) {
                       h(Button, {
                         key: action,
                         title: `Marquer ${label(action).toLowerCase()}`,
-                        disabled: actionDisabled,
+                        disabled:
+                          actionDisabled ||
+                          (state.pending || []).some(
+                            (pending) => pending.orderId === item.id,
+                          ),
                         onPress: () =>
                           action === "DELIVERED"
                             ? Alert.alert(
                                 "Confirmer la livraison",
-                                "La commande est-elle remise au client ?",
+                                "La commande est-elle remise au client ? Hors réseau, l’action restera en attente jusqu’à acceptation de l’API.",
                                 [
                                   { text: "Annuler", style: "cancel" },
                                   {

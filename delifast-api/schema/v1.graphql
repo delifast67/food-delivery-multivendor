@@ -23,7 +23,7 @@ type Mutation {
   staffLogin(email: String!, password: String!): StaffSession!
   staffLogout: Boolean!
   simulateDemoPayment(orderId: ID!): Order!
-  transitionOrder(orderId: ID!, status: String!, expectedStatus: String!): Order!
+  transitionOrder(orderId: ID!, status: String!, expectedStatus: String!, expectedUpdatedAt: String): Order!
   assignRider(orderId: ID!, riderId: ID!, expectedStatus: String!): Order!
   createMenuItem(restaurantId: ID!, input: MenuItemInput!): MenuItem!
   updateMenuItem(id: ID!, expectedVersion: Int!, input: MenuItemInput!): MenuItem!

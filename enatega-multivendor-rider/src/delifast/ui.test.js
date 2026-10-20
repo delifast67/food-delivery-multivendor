@@ -23,6 +23,11 @@ const originalLoad = Module._load;
 Module._load = function (request, parent, isMain) {
   if (request === "react-native") return native;
   if (request === "expo-secure-store") return {};
+  if (request === "expo-network")
+    return {
+      getNetworkStateAsync: async () => ({}),
+      addNetworkStateListener: () => ({ remove() {} }),
+    };
   return originalLoad.call(this, request, parent, isMain);
 };
 const App = require("./App");
@@ -229,4 +234,40 @@ test("déconnexion reste accessible pendant busy et réinitialise la sélection"
     button(tree, "Se déconnecter").props.onPress(),
   );
   assert.equal(called, true);
+});
+
+test("livraison en attente ne remplace pas le dernier statut serveur et bloque le double clic", async () => {
+  const tree = await mount(
+    controller({
+      getState: () => ({
+        user,
+        orders: [order],
+        offline: true,
+        pending: [{ orderId: order.id, status: "DELIVERED" }],
+      }),
+    }),
+  );
+  await renderer.act(async () =>
+    button(tree, "Voir le détail").props.onPress(),
+  );
+  const view = content(tree);
+  assert.match(view, /Hors ligne/);
+  assert.match(view, /Livraison en attente de confirmation API/);
+  assert.match(view, /Statut : Récupérée/);
+  assert.doesNotMatch(view, /Statut : Livrée/);
+  assert.equal(button(tree, "Marquer livrée").props.disabled, true);
+});
+
+test("les actions d'une ancienne identité ne s'affichent pas sur la connexion", async () => {
+  const tree = await mount(
+    controller({
+      getState: () => ({
+        user: null,
+        orders: [],
+        pending: [{ orderId: "private-old-order", status: "DELIVERED" }],
+      }),
+    }),
+  );
+  assert.doesNotMatch(content(tree), /private-old-order/);
+  assert.ok(button(tree, "Réessayer la restauration"));
 });
