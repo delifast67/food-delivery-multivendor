@@ -74,6 +74,7 @@ jobs:
           node --test scripts/delifast-client-multivendor.test.mjs
           node --test scripts/delifast-web-config.test.mjs
           node --test scripts/delifast-proxy-boundary.test.mjs
+          node --test scripts/delifast-bounded-catalogues.test.mjs
           node scripts/delifast-contract.mjs
           npm test --prefix enatega-multivendor-web
           npm run build --prefix enatega-multivendor-web

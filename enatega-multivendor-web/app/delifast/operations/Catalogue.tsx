@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   delifastApi,
   formatXof,
@@ -10,6 +10,7 @@ import {
   type MenuItemInput,
   type MenuOptionGroupInput,
   type Restaurant,
+  type RestaurantSummary,
   type StaffUser,
 } from "@/lib/delifast/api";
 type Props = { token: string; user: StaffUser };
@@ -27,9 +28,30 @@ const empty: MenuItemInput = {
 };
 const versionOf = (v?: number) => v ?? 0;
 const emptyCategory: MenuCategoryInput = { name: "", sortOrder: 0 };
-export default function Catalogue({ token, user }: Props) {
+export default function Catalogue(props: Props) {
+  // Un nouveau contexte ne doit jamais hériter des détails ou formulaires précédents.
+  return (
+    <CatalogueSession
+      key={JSON.stringify([
+        props.token,
+        props.user.id,
+        props.user.role,
+        props.user.restaurantId,
+      ])}
+      {...props}
+    />
+  );
+}
+function CatalogueSession({ token, user }: Props) {
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]),
+    [summaries, setSummaries] = useState<RestaurantSummary[]>([]),
     [selectedId, setSelectedId] = useState(""),
+    [detail, setDetail] = useState<Restaurant | null>(null),
+    [nextCursor, setNextCursor] = useState<string | null>(null),
+    [currentAfter, setCurrentAfter] = useState<string | null>(null),
+    [previousCursors, setPreviousCursors] = useState<Array<string | null>>([]),
+    [filterId, setFilterId] = useState(""),
+    [appliedFilter, setAppliedFilter] = useState(""),
     [draft, setDraft] = useState<MenuItemInput>(empty),
     [editing, setEditing] = useState<MenuItem | null>(null),
     [categoryDraft, setCategoryDraft] = useState(emptyCategory),
@@ -39,29 +61,74 @@ export default function Catalogue({ token, user }: Props) {
     [error, setError] = useState(""),
     [notice, setNotice] = useState("");
   const loadVersion = useRef(0);
-  const role = user.role.toLowerCase(),
-    isAdmin = role === "admin";
+  const selectedRef = useRef("");
+  const role = user.role.toUpperCase(),
+    isAdmin = role === "ADMIN",
+    isRestaurant = role === "RESTAURANT";
+  const allowed = isAdmin || isRestaurant;
+  const clearDrafts = useCallback(() => {
+    setEditing(null);
+    setDraft(empty);
+    setGroups([]);
+    setEditingCategory(null);
+    setCategoryDraft(emptyCategory);
+  }, []);
   const load = useCallback(
-    async (clear = true) => {
+    async (clear = true, after: string | null = null, exactId = "") => {
       const request = ++loadVersion.current;
       const isCurrent = () => request === loadVersion.current;
+      if (!allowed) return false;
       setBusy("load");
       if (clear) setError("");
+      setNotice("");
+      clearDrafts();
+      setDetail(null);
+      setRestaurants([]);
+      setSummaries([]);
+      setNextCursor(null);
+      setCurrentAfter(after);
       try {
-        const values = await delifastApi.operationsRestaurants(token);
-        if (!isCurrent()) return false;
-        setRestaurants(values);
-        setSelectedId((c) => c || user.restaurantId || values[0]?.id || "");
+        if (isRestaurant) {
+          const values = await delifastApi.operationsRestaurants(token);
+          if (!isCurrent()) return false;
+          // Le serveur filtre déjà ; le client n'accepte pas un restaurant étranger.
+          const own = values.filter((r) => r.id === user.restaurantId);
+          setRestaurants(own);
+          setSelectedId(own[0]?.id || "");
+          selectedRef.current = own[0]?.id || "";
+        } else {
+          const page = await delifastApi.operationsRestaurantSummaries(
+            token,
+            after,
+            exactId || null,
+          );
+          if (!isCurrent()) return false;
+          setSummaries(page.items);
+          setNextCursor(page.nextCursor);
+          const id = page.items.some((x) => x.id === selectedRef.current)
+            ? selectedRef.current
+            : page.items[0]?.id || "";
+          selectedRef.current = id;
+          setSelectedId(id);
+          if (id) {
+            const value = await delifastApi.operationsRestaurant(token, id);
+            if (!isCurrent()) return false;
+            if (!value || value.id !== id)
+              throw new Error(
+                "Le détail du restaurant est introuvable ou incohérent.",
+              );
+            setDetail(value);
+          }
+        }
         return true;
       } catch (e) {
-        if (!isCurrent()) return false;
-        setError(errorText(e));
+        if (isCurrent()) setError(errorText(e));
         return false;
       } finally {
         if (isCurrent()) setBusy("");
       }
     },
-    [token, user.restaurantId],
+    [token, user.restaurantId, isRestaurant, allowed, clearDrafts],
   );
   useEffect(() => {
     void load();
@@ -69,10 +136,36 @@ export default function Catalogue({ token, user }: Props) {
       loadVersion.current += 1;
     };
   }, [load]);
-  const restaurant = useMemo(
-    () => restaurants.find((r) => r.id === selectedId) || restaurants[0],
-    [restaurants, selectedId],
-  );
+  const selectRestaurant = async (id: string) => {
+    const request = ++loadVersion.current;
+    const isCurrent = () => request === loadVersion.current;
+    selectedRef.current = id;
+    setSelectedId(id);
+    setDetail(null);
+    clearDrafts();
+    setError("");
+    setNotice("");
+    if (!isAdmin || !summaries.some((s) => s.id === id)) return;
+    setBusy("detail");
+    try {
+      const value = await delifastApi.operationsRestaurant(token, id);
+      if (!isCurrent()) return;
+      if (!value || value.id !== id)
+        throw new Error(
+          "Le détail du restaurant est introuvable ou incohérent.",
+        );
+      setDetail(value);
+    } catch (e) {
+      if (isCurrent()) setError(errorText(e));
+    } finally {
+      if (isCurrent()) setBusy("");
+    }
+  };
+  const restaurant = !allowed
+    ? undefined
+    : isAdmin
+      ? detail
+      : restaurants.find((r) => r.id === selectedId);
   const categories = restaurant?.categories || [];
   const active = restaurant?.menu.filter((i) => !i.archived) || [];
   const archived = restaurant?.menu.filter((i) => i.archived) || [];
@@ -81,33 +174,45 @@ export default function Catalogue({ token, user }: Props) {
       setError(errorText(e));
       return;
     }
-    const ok = await load(false);
-    setEditing(null);
-    setDraft(empty);
-    setGroups([]);
-    setEditingCategory(null);
-    setCategoryDraft(emptyCategory);
+    const ok = await load(false, currentAfter, appliedFilter);
+    clearDrafts();
     setError(
       ok
         ? "Ce catalogue a été modifié ailleurs. Les données ont été rechargées."
         : "Le rechargement a échoué : actualisez avant toute nouvelle modification.",
     );
   };
-  const patchRestaurant = (id: string, fn: (r: Restaurant) => Restaurant) =>
+  const patchRestaurant = (id: string, fn: (r: Restaurant) => Restaurant) => {
+    setDetail((r) => (r && r.id === id ? fn(r) : r));
     setRestaurants((all) => all.map((r) => (r.id === id ? fn(r) : r)));
+  };
+  const mutate = async (
+    label: string,
+    action: (current: () => boolean) => Promise<void>,
+  ) => {
+    if (!restaurant || busy) return;
+    const request = ++loadVersion.current;
+    const current = () => request === loadVersion.current;
+    setBusy(label);
+    setError("");
+    setNotice("");
+    try {
+      await action(current);
+    } catch (e) {
+      if (current()) await conflict(e);
+    } finally {
+      if (current()) setBusy("");
+    }
+  };
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!restaurant) return;
-    setBusy("save");
-    setError("");
-    try {
+    await mutate("save", async (current) => {
       const input: MenuItemInput = {
         ...draft,
-        ...(groups.length
+        ...(groups.length || (editing && editing.optionGroups)
           ? { optionGroups: groups }
-          : editing && editing.optionGroups
-            ? { optionGroups: groups }
-            : {}),
+          : {}),
       };
       const item = editing
         ? await delifastApi.updateMenuItem(
@@ -117,48 +222,38 @@ export default function Catalogue({ token, user }: Props) {
             input,
           )
         : await delifastApi.createMenuItem(token, restaurant.id, input);
+      if (!current()) return;
       patchRestaurant(restaurant.id, (r) => ({
         ...r,
         menu: editing
           ? r.menu.map((m) => (m.id === item.id ? item : m))
           : [...r.menu, item],
       }));
-      setDraft(empty);
-      setGroups([]);
-      setEditing(null);
+      clearDrafts();
       setNotice(editing ? "Plat modifié." : "Plat créé.");
-    } catch (e) {
-      await conflict(e);
-    } finally {
-      setBusy("");
-    }
+    });
   };
   const archive = async (item: MenuItem, value: boolean) => {
-    setBusy(item.id);
-    setError("");
-    try {
+    if (!restaurant) return;
+    await mutate(item.id, async (current) => {
       const updated = await delifastApi.setMenuItemArchived(
         token,
         item.id,
         versionOf(item.version),
         value,
       );
-      patchRestaurant(restaurant!.id, (r) => ({
+      if (!current()) return;
+      patchRestaurant(restaurant.id, (r) => ({
         ...r,
         menu: r.menu.map((m) => (m.id === updated.id ? updated : m)),
       }));
       setNotice(value ? "Plat archivé." : "Plat restauré.");
-    } catch (e) {
-      await conflict(e);
-    } finally {
-      setBusy("");
-    }
+    });
   };
   const saveCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!restaurant) return;
-    setBusy("category");
-    try {
+    await mutate("category", async (current) => {
       const c = editingCategory
         ? await delifastApi.updateMenuCategory(
             token,
@@ -171,6 +266,7 @@ export default function Catalogue({ token, user }: Props) {
             restaurant.id,
             categoryDraft,
           );
+      if (!current()) return;
       patchRestaurant(restaurant.id, (r) => ({
         ...r,
         categories: editingCategory
@@ -180,22 +276,19 @@ export default function Catalogue({ token, user }: Props) {
       setCategoryDraft(emptyCategory);
       setEditingCategory(null);
       setNotice(editingCategory ? "Catégorie modifiée." : "Catégorie créée.");
-    } catch (e) {
-      await conflict(e);
-    } finally {
-      setBusy("");
-    }
+    });
   };
   const archiveCategory = async (c: MenuCategory) => {
-    setBusy(`cat-${c.id}`);
-    try {
+    if (!restaurant) return;
+    await mutate(`cat-${c.id}`, async (current) => {
       const updated = await delifastApi.setMenuCategoryArchived(
         token,
         c.id,
         versionOf(c.version),
         !c.archived,
       );
-      patchRestaurant(restaurant!.id, (r) => ({
+      if (!current()) return;
+      patchRestaurant(restaurant.id, (r) => ({
         ...r,
         categories: (r.categories || []).map((x) =>
           x.id === updated.id ? updated : x,
@@ -204,33 +297,25 @@ export default function Catalogue({ token, user }: Props) {
       setNotice(
         updated.archived ? "Catégorie archivée." : "Catégorie restaurée.",
       );
-    } catch (e) {
-      await conflict(e);
-    } finally {
-      setBusy("");
-    }
+    });
   };
   const toggleOpen = async () => {
     if (!restaurant) return;
-    setBusy("open");
-    try {
+    await mutate("open", async (current) => {
       const u = await delifastApi.setRestaurantOpen(
         token,
         restaurant.id,
         versionOf(restaurant.version),
         !(restaurant.open ?? true),
       );
+      if (!current()) return;
       patchRestaurant(restaurant.id, (r) => ({
         ...r,
         open: u.open,
         version: u.version,
       }));
       setNotice(u.open === false ? "Restaurant fermé." : "Restaurant ouvert.");
-    } catch (e) {
-      await conflict(e);
-    } finally {
-      setBusy("");
-    }
+    });
   };
   return (
     <section aria-labelledby="catalogue-title" className="df-catalogue">
@@ -245,8 +330,8 @@ export default function Catalogue({ token, user }: Props) {
         </div>
         <button
           className="df-secondary"
-          onClick={() => void load()}
-          disabled={busy === "load"}
+          onClick={() => void load(true, currentAfter, appliedFilter)}
+          disabled={busy !== ""}
         >
           {busy === "load" ? "Actualisation…" : "Actualiser"}
         </button>
@@ -262,30 +347,92 @@ export default function Catalogue({ token, user }: Props) {
         </div>
       )}
       {isAdmin && (
-        <label className="df-assign">
-          Restaurant
-          <select
-            aria-label="Choisir un restaurant"
-            value={restaurant?.id || ""}
-            disabled={busy !== ""}
-            onChange={(e) => {
-              setSelectedId(e.target.value);
-              setEditing(null);
-              setDraft(empty);
-              setGroups([]);
-              setEditingCategory(null);
-              setCategoryDraft(emptyCategory);
-              setError("");
-              setNotice("");
+        <>
+          <form
+            className="df-assign"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setAppliedFilter(filterId.trim());
+              setPreviousCursors([]);
+              setCurrentAfter(null);
+              setSelectedId("");
+              selectedRef.current = "";
+              void load(true, null, filterId.trim());
             }}
           >
-            {restaurants.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            <label>
+              ID restaurant exact
+              <input
+                aria-label="ID restaurant exact"
+                value={filterId}
+                onChange={(e) => setFilterId(e.target.value)}
+              />
+            </label>
+            <button
+              className="df-secondary"
+              type="submit"
+              disabled={busy !== ""}
+            >
+              Rechercher le restaurant
+            </button>
+            <button
+              className="df-clear"
+              type="button"
+              disabled={busy !== ""}
+              onClick={() => {
+                setFilterId("");
+                setAppliedFilter("");
+                setPreviousCursors([]);
+                setCurrentAfter(null);
+                setSelectedId("");
+                selectedRef.current = "";
+                void load(true, null, "");
+              }}
+            >
+              Réinitialiser les restaurants
+            </button>
+          </form>
+          <label className="df-assign">
+            Restaurant
+            <select
+              aria-label="Choisir un restaurant"
+              value={selectedId}
+              disabled={busy !== ""}
+              onChange={(e) => void selectRestaurant(e.target.value)}
+            >
+              {(isAdmin ? summaries : restaurants).map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="df-catalogue-actions">
+            <button
+              className="df-secondary"
+              disabled={!previousCursors.length || busy !== ""}
+              onClick={() => {
+                const p = previousCursors[previousCursors.length - 1] ?? null;
+                setPreviousCursors(previousCursors.slice(0, -1));
+                void load(true, p, appliedFilter);
+              }}
+            >
+              Restaurants précédents
+            </button>
+            <button
+              className="df-secondary"
+              disabled={!nextCursor || busy !== ""}
+              onClick={() => {
+                if (nextCursor) {
+                  setPreviousCursors([...previousCursors, currentAfter]);
+                  void load(true, nextCursor, appliedFilter);
+                }
+              }}
+            >
+              Restaurants suivants
+            </button>
+          </div>
+        </>
       )}
       {!restaurant ? (
         <p className="df-muted">Aucun restaurant accessible.</p>

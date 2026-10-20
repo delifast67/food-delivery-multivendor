@@ -5,6 +5,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Catalogue from "./Catalogue";
@@ -12,6 +13,7 @@ import {
   DelifastApiError,
   delifastApi,
   type Restaurant,
+  type RestaurantSummary,
   type StaffUser,
 } from "@/lib/delifast/api";
 
@@ -51,12 +53,29 @@ const makeRestaurant = (overrides: Partial<Restaurant> = {}): Restaurant => ({
   ...overrides,
 });
 let restaurants: any;
+let summaries: any;
+let details: any;
+const summary = (r: Restaurant): RestaurantSummary => ({
+  id: r.id,
+  name: r.name,
+  open: r.open ?? false,
+  version: r.version ?? 0,
+});
 
 beforeEach(() => {
   vi.restoreAllMocks();
   restaurants = vi
     .spyOn(delifastApi, "operationsRestaurants")
     .mockResolvedValue([makeRestaurant()]);
+  const adminRestaurant = makeRestaurant();
+  summaries = vi
+    .spyOn(delifastApi, "operationsRestaurantSummaries")
+    .mockResolvedValue({ items: [summary(adminRestaurant)], nextCursor: null });
+  details = vi
+    .spyOn(delifastApi, "operationsRestaurant")
+    .mockImplementation(async (_token, id) =>
+      id === "r1" ? makeRestaurant() : null,
+    );
   vi.spyOn(delifastApi, "createMenuItem").mockResolvedValue({
     ...item,
     id: "m3",
@@ -84,7 +103,20 @@ afterEach(() => cleanup());
 
 async function renderCatalogue(user: StaffUser = restaurantUser) {
   render(<Catalogue token={token} user={user} />);
-  await screen.findByRole("button", { name: "Fermer le restaurant" });
+  if (user.role === "ADMIN") {
+    await waitFor(() =>
+      expect(screen.getByLabelText("Choisir un restaurant")).toBeEnabled(),
+    );
+  } else {
+    await screen.findByRole("button", { name: "Fermer le restaurant" });
+  }
+}
+function configureAdmin(values: Restaurant[]) {
+  summaries.mockResolvedValue({ items: values.map(summary), nextCursor: null });
+  details.mockImplementation(
+    async (_token: string, id: string) =>
+      values.find((r) => r.id === id) ?? null,
+  );
 }
 function fill(name = "Poulet", description = "Poulet braisé", price = "2500") {
   fireEvent.change(screen.getByLabelText("Nom"), { target: { value: name } });
@@ -105,13 +137,16 @@ describe("Catalogue", () => {
     const { rerender } = render(
       <Catalogue token={token} user={restaurantUser} />,
     );
+    restaurants.mockResolvedValue([
+      makeRestaurant({ id: "r2", name: "Chez B" }),
+    ]);
     rerender(
       <Catalogue
         token={token}
         user={{ ...restaurantUser, restaurantId: "r2" }}
       />,
     );
-    await screen.findByText("Chez A");
+    await screen.findByText("Chez B");
     await act(async () => {
       resolveOld([
         makeRestaurant({
@@ -121,7 +156,7 @@ describe("Catalogue", () => {
       ]);
     });
     expect(screen.queryByText("Plat périmé")).not.toBeInTheDocument();
-    expect(screen.getByText("Chez A")).toBeInTheDocument();
+    expect(screen.getByText("Chez B")).toBeInTheDocument();
     expect(restaurants).toHaveBeenCalledTimes(2);
   });
 
@@ -130,12 +165,20 @@ describe("Catalogue", () => {
     restaurants.mockImplementationOnce(
       () => new Promise((_resolve, reject) => (rejectOld = reject)),
     );
-    const { rerender } = render(<Catalogue token={token} user={restaurantUser} />);
+    const { rerender } = render(
+      <Catalogue token={token} user={restaurantUser} />,
+    );
     rerender(<Catalogue token="new-session" user={restaurantUser} />);
     await screen.findByText("Chez A");
-    await act(async () => { rejectOld(new Error("Ancienne session indisponible")); });
-    expect(screen.queryByText(/Ancienne session indisponible/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Fermer le restaurant" })).toBeEnabled();
+    await act(async () => {
+      rejectOld(new Error("Ancienne session indisponible"));
+    });
+    expect(
+      screen.queryByText(/Ancienne session indisponible/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Fermer le restaurant" }),
+    ).toBeEnabled();
   });
 
   it("crée un plat en soumettant tous les champs", async () => {
@@ -184,7 +227,13 @@ describe("Catalogue", () => {
       name: "Chez B",
       menu: [{ ...item, id: "m9", name: "Thiéboudiène" }],
     });
-    restaurants.mockResolvedValue([makeRestaurant(), second]);
+    summaries.mockResolvedValue({
+      items: [summary(makeRestaurant()), summary(second)],
+      nextCursor: null,
+    });
+    details.mockImplementation(async (_token, id) =>
+      id === "r1" ? makeRestaurant() : second,
+    );
     await renderCatalogue(adminUser);
     fireEvent.click(screen.getByRole("button", { name: "Modifier" }));
     expect(
@@ -193,9 +242,11 @@ describe("Catalogue", () => {
     fireEvent.change(screen.getByLabelText("Choisir un restaurant"), {
       target: { value: "r2" },
     });
-    expect(
-      screen.getByRole("button", { name: "Créer le plat" }),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Créer le plat" }),
+      ).toBeInTheDocument(),
+    );
     fill("Nouveau plat", "Description", "900");
     fireEvent.click(screen.getByRole("button", { name: "Créer le plat" }));
     await screen.findByText("Plat créé.");
@@ -310,13 +361,17 @@ describe("Catalogue", () => {
     expect(screen.getByLabelText("Choisir un restaurant")).toBeInTheDocument();
     unmount();
     // The page-level permission is asserted through the rendered catalogue's role contract: riders cannot select restaurants.
+    const before = restaurants.mock.calls.length;
     render(
       <Catalogue
         token={token}
         user={{ id: "d1", name: "Rider", role: "RIDER" }}
       />,
     );
-    await screen.findByText("Chez A");
+    expect(
+      screen.queryByText("Aucun restaurant accessible."),
+    ).toBeInTheDocument();
+    expect(restaurants.mock.calls.length).toBe(before);
     expect(
       screen.queryByLabelText("Choisir un restaurant"),
     ).not.toBeInTheDocument();
@@ -443,7 +498,7 @@ describe("Catalogue catégories et options", () => {
     ).toEqual([]);
   });
   it("réinitialise groupes et brouillon de catégorie après changement de restaurant", async () => {
-    restaurants.mockResolvedValue([
+    configureAdmin([
       makeRestaurant({
         categories: [category],
         menu: [{ ...item, optionGroups }],
@@ -451,6 +506,7 @@ describe("Catalogue catégories et options", () => {
       makeRestaurant({ id: "r2", name: "Chez B", menu: [] }),
     ]);
     await renderCatalogue(adminUser);
+    await screen.findByText("Riz");
     fireEvent.click(
       screen.getByText("Riz").closest("article")!.querySelector("button")!,
     );
@@ -460,6 +516,11 @@ describe("Catalogue catégories et options", () => {
     fireEvent.change(screen.getByLabelText("Choisir un restaurant"), {
       target: { value: "r2" },
     });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Créer le plat" }),
+      ).toBeInTheDocument(),
+    );
     expect(screen.queryByLabelText("Nom du groupe 1")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Nom de la catégorie")).toHaveValue("");
     fill();
@@ -470,7 +531,7 @@ describe("Catalogue catégories et options", () => {
     ).toBeUndefined();
   });
   it("recharge un conflit de catégorie sans rejouer la mutation et efface le brouillon périmé", async () => {
-    restaurants.mockResolvedValue([makeRestaurant({ categories: [category] })]);
+    configureAdmin([makeRestaurant({ categories: [category] })]);
     vi.spyOn(delifastApi, "updateMenuCategory").mockRejectedValue(
       new DelifastApiError(
         "conflit",
@@ -479,7 +540,7 @@ describe("Catalogue catégories et options", () => {
         "CONCURRENT_MODIFICATION",
       ),
     );
-    await renderCatalogue();
+    await renderCatalogue(adminUser);
     fireEvent.click(
       screen
         .getByText(category.name, { selector: "strong" })

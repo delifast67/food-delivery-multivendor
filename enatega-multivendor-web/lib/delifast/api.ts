@@ -45,6 +45,13 @@ export type MenuItem = {
   optionGroups?: MenuOptionGroup[];
 };
 
+export type RestaurantSummary = {
+  id: string;
+  name: string;
+  open: boolean;
+  version: number;
+};
+
 export type Restaurant = {
   id: string;
   name: string;
@@ -263,6 +270,8 @@ const ORDER_OPERATIONS_FIELDS = `id accessToken status paymentStatus createdAt u
 const STAFF_LOGIN = `mutation StaffLogin($email: String!, $password: String!) { staffLogin(email: $email, password: $password) { token user { id name role restaurantId } } }`;
 const OPERATIONS_ORDERS = `query OperationsOrders { operationsOrders { ${ORDER_OPERATIONS_FIELDS} } }`;
 const OPERATIONS_RESTAURANTS = `query OperationsRestaurants { operationsRestaurants { ${RESTAURANT_FIELDS} } }`;
+const OPERATIONS_RESTAURANT_SUMMARIES = `query OperationsRestaurantSummaries($after: ID, $restaurantId: ID) { operationsRestaurantSummaries(limit: 20, after: $after, restaurantId: $restaurantId) { items { id name open version } nextCursor } }`;
+const OPERATIONS_RESTAURANT = `query OperationsRestaurant($id: ID!) { operationsRestaurant(id: $id) { ${RESTAURANT_FIELDS} } }`;
 const MENU_ITEM_FIELDS = `id name description priceXof available archived version categoryId optionGroups { ${GROUP_FIELDS} }`;
 const CREATE_MENU_ITEM = `mutation CreateMenuItem($restaurantId: ID!, $input: MenuItemInput!) { createMenuItem(restaurantId: $restaurantId, input: $input) { ${MENU_ITEM_FIELDS} } }`;
 const UPDATE_MENU_ITEM = `mutation UpdateMenuItem($id: ID!, $expectedVersion: Int!, $input: MenuItemInput!) { updateMenuItem(id: $id, expectedVersion: $expectedVersion, input: $input) { ${MENU_ITEM_FIELDS} } }`;
@@ -573,6 +582,31 @@ export const delifastApi = {
       undefined,
       token,
     ).then((data) => data.operationsOrders),
+  operationsRestaurantSummaries: (
+    token: string,
+    after: string | null = null,
+    restaurantId: string | null = null,
+  ) =>
+    request<{
+      operationsRestaurantSummaries: {
+        items: RestaurantSummary[];
+        nextCursor: string | null;
+      };
+    }>(OPERATIONS_RESTAURANT_SUMMARIES, { after, restaurantId }, token).then(
+      (data) => data.operationsRestaurantSummaries,
+    ),
+  operationsRestaurant: (token: string, id: string) =>
+    request<{ operationsRestaurant: Restaurant | null }>(
+      OPERATIONS_RESTAURANT,
+      { id },
+      token,
+    ).then((data) => {
+      const restaurant = data.operationsRestaurant;
+      if (restaurant && restaurant.id !== id) {
+        throw new DelifastApiError("Réponse restaurant incohérente", "unknown");
+      }
+      return restaurant;
+    }),
   operationsRestaurants: (token: string) =>
     request<{ operationsRestaurants: Restaurant[] }>(
       OPERATIONS_RESTAURANTS,
