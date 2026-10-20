@@ -469,3 +469,37 @@ Ces décisions ne bloquent pas les travaux purement locaux. Aucun accès supplé
 Les contrôles TypeScript web et admin local passent ; la compilation web passe également après déplacement des scripts. Le total web et les gardes ont été relancés après ce dernier changement. `git diff --check` passe. La CI existante référence maintenant le nouveau test de proxy, uniquement dans les fichiers locaux : aucune exécution distante n’est revendiquée.
 
 Pas de nouvelle recette navigateur, d’inspection de workers déjà installés, d’export mobile, de build natif, de validation de clés/projets Firebase ou de contrôle de console. Les diagnostics TypeScript historiques restaurant/livreur restent ceux documentés précédemment. Aucun appel externe, SMS, achat, paiement, push GitHub, merge ou déploiement n’a été effectué ; les configurations privées et les accès enregistrés n’ont pas été utilisés.
+
+## Recette d’acceptation navigateur multivendeur hermétique
+
+Les tests précédents couvrent séparément les opérations API, les contrôleurs et la persistance. La commande suivante ajoute un scénario unique sur les véritables écrans web, leur proxy Next et l’API GraphQL, sans mock des réponses métier :
+
+```bash
+npm run test:acceptance --prefix enatega-multivendor-web
+```
+
+Prérequis déjà installés avant cette commande : Linux avec espaces de noms utilisateur/réseau autorisés, `unshare` (util-linux avec `--keep-caps`), `ip` (iproute2), Git, Node 24.19, dépendances API/web, Python avec la version Playwright fixée dans `scripts/acceptance/requirements.txt`, Chromium compatible et binaire MongoDB en cache. `DELIFAST_TEST_PYTHON` permet de choisir un interpréteur, `DELIFAST_TEST_CHROMIUM` un exécutable Chromium local ; sinon Playwright utilise son navigateur préinstallé. `MONGOMS_SYSTEM_BINARY` permet de choisir un MongoDB déjà installé. Aucune installation ni aucun téléchargement ne sont effectués par la recette ; l’absence d’un prérequis est un échec, jamais un basculement vers un service distant.
+
+Si les modules natifs refusent les propriétaires de fichiers remappés par un espace utilisateur, utiliser `DELIFAST_TEST_NETNS=system npm run test:acceptance --prefix enatega-multivendor-web`. Cette variante exige `sudo -n` autorisé pour créer uniquement l’espace réseau système ; le lanceur abandonne groupes et privilèges et retrouve l’UID/GID appelant **avant** tout chargement de dépendance, compilation, démarrage MongoDB/API/web ou Chromium. Elle ne relâche pas l’isolation réseau. Aucun mot de passe sudo n’est demandé et aucune solution non isolée n’est tentée en cas d’échec.
+
+Le lanceur crée son propre espace réseau avec uniquement la boucle locale, une base MongoDB jetable et des ports éphémères. Il compile l’API et copie uniquement les sources web suivies dans un répertoire temporaire pour une compilation propre, sans `.env` ni cache de travail. Les variables privées, URL de travail et paramètres fournisseurs ne sont pas transmis. Les contextes Chromium sont distincts pour les deux clients, les deux restaurants, l’admin, le livreur affecté et un autre livreur.
+
+Le scénario valide :
+
+- une connexion client par OTP réellement généré/haché/vérifié côté serveur, avec refus d’un code erroné ;
+- deux commandes saisies sur les écrans client, une par restaurant, et le total serveur ;
+- la confirmation via le bouton admin **Simuler le paiement démo**, puis l’acceptation et la préparation par chaque restaurant ;
+- l’affectation par admin, la récupération et la livraison fictive par le livreur ;
+- les listes isolées, le refus d’une mutation inter-restaurant, l’absence d’accès de l’autre livreur et l’impossibilité de remplacer un jeton de suivi par celui d’une autre commande ou une session staff ;
+- un véritable rechargement des pages restaurant et du suivi client, avec statut livré et historique exact relus depuis MongoDB ;
+- les documents persistés, deux commandes seulement et l’absence d’appel à un fournisseur de paiement.
+
+Le transport SMS est injecté exclusivement par `scripts/delifast-acceptance.mjs`, avec un unique destinataire fictif et un seul envoi autorisé. Il transmet le code au test par un fichier privé temporaire, pas par un endpoint HTTP ni une réponse GraphQL. Aucun code fixe, bouton de contournement, variable d’activation OTP de test ou faux succès n’est ajouté à l’UX/application. Le fournisseur de paiement injecté refuse toute utilisation ; seul le simulateur local existant est exercé. Les tentatives de requêtes navigateur hors origine et les erreurs JavaScript font échouer le scénario. Tous les processus/services possédés et les fichiers/base temporaires sont fermés/supprimés en fin de recette, y compris après échec d’une assertion.
+
+Cette preuve porte sur les écrans web et des fournisseurs locaux au test. Elle ne prouve ni réception SMS, ni paiement, livraison physique, exécution native mobile ou déploiement. La commande doit être lancée explicitement ; elle n’est pas incluse dans les tests unitaires rapides.
+
+### Résultats du lot d’acceptation
+
+La recette Chromium complète a réussi **deux fois consécutives**, chaque fois après compilation propre API/web et sur une nouvelle base MongoDB jetable. La variante `DELIFAST_TEST_NETNS=system` a été utilisée avec Python/Chromium déjà installés : les modules natifs SWC locaux refusaient le remappage des propriétaires du mode espace utilisateur. Aucun module natif, permission de fichier ou paramètre de sécurité n’a été altéré pour contourner ce refus. Le jeton de suivi des réponses staff est bien masqué par `""` selon le contrat existant ; l’assertion initiale qui attendait `null` a été corrigée dans le test uniquement.
+
+Les **663 tests existants** ont également réussi hors réseau : 284 API, 139 web, 76 client mobile, 43 restaurant, 60 livreur, 18 admin et 43 gardes transversaux. Les vérifications TypeScript API/web, les syntaxes JavaScript/Python et `git diff --check` passent. Le refus du lanceur dans le réseau de travail et son échec sans fallback lorsqu’un interpréteur manque ont été vérifiés séparément. Les répertoires temporaires des exécutions terminées ont été supprimés. Aucune exécution de CI distante n’est revendiquée, aucun accès enregistré ni configuration privée n’a été utilisé.

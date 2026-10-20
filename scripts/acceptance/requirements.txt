@@ -1,0 +1,2 @@
+# Installation préalable uniquement ; la recette elle-même ne télécharge rien.
+playwright==1.62.0

@@ -17,6 +17,7 @@
     "cy:open": "cypress open",
     "cy:run": "cypress run",
     "test": "vitest run",
+    "test:acceptance": "node ../scripts/delifast-acceptance.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {
