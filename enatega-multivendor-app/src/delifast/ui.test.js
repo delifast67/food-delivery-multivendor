@@ -747,3 +747,18 @@ test('menu : changer de restaurant réinitialise la recherche dédiée', async (
   assert.equal(tree.root.findByProps({ accessibilityLabel: 'Rechercher un plat' }).props.value, '')
   await unmount(tree)
 })
+
+
+test('menu et panier possèdent des conteneurs distincts pour ne pas hériter du défilement', async () => {
+  const tree = await mount()
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  const menu = tree.root.findAllByType('ScrollView').find(node => node.props.stickyHeaderIndices)
+  const menuElement = React.Children.toArray(menu.parent.props.children).find(element => element.props?.stickyHeaderIndices)
+  assert.match(menuElement.key, /menu/)
+  await selectTab(tree, 'Panier')
+  const cart = tree.root.findByType('ScrollView')
+  const cartElement = React.Children.toArray(cart.parent.props.children).find(element => element.type === 'ScrollView')
+  assert.match(cartElement.key, /cart/)
+  assert.notEqual(menuElement.key, cartElement.key)
+  await unmount(tree)
+})

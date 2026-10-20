@@ -432,7 +432,7 @@ function App({ api, storage }) {
           onBack={() => setScreen('restaurants')}
           right={<TouchableOpacity accessibilityRole='button' accessibilityLabel={menuSearchOpen ? 'Fermer la recherche du menu' : 'Rechercher dans le menu'} style={styles.back} onPress={() => { setMenuSearchOpen(!menuSearchOpen); setMenuSearch('') }}><Icon name={menuSearchOpen ? 'close-outline' : 'search-outline'} /></TouchableOpacity>}
         />
-        <ScrollView style={styles.flex} stickyHeaderIndices={[1]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.menuContent}>
+        <ScrollView key='menu' style={styles.flex} stickyHeaderIndices={[1]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.menuContent}>
           <View style={styles.restaurantHero}>
             <View style={styles.restaurantIdentity}><RestaurantMark name={restaurant?.name} /><View style={styles.flex}><Text style={styles.eyebrow}>DELIFAST · RESTAURANT</Text><Text style={styles.restaurantName}>{restaurant?.name}</Text></View></View>
             {!!restaurant?.description && <Text style={styles.heroDescription}>{restaurant.description}</Text>}
@@ -520,7 +520,7 @@ function App({ api, storage }) {
     return (
       <SafeAreaView style={styles.safe}>
         <Header title='Votre panier' onBack={() => setScreen(restaurant ? 'menu' : 'restaurants')} />
-        <ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
+        <ScrollView key='cart' style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
           {!!cart.items.length && <View style={styles.cartRestaurant}><Icon name='restaurant-outline' /><Text style={styles.cardTitle}>{restaurant?.name || 'Votre sélection'}</Text></View>}
           <Text style={styles.subtitle}>Estimation du menu uniquement. Les frais affichés ci-dessous viennent du serveur.</Text>
           {cart.items.length === 0
