@@ -18,7 +18,7 @@ const source = babel.transformSync(fs.readFileSync(path.join(__dirname, 'App.js'
   plugins: [require.resolve('@babel/plugin-transform-react-jsx'), require.resolve('@babel/plugin-transform-modules-commonjs')]
 }).code
 const moduleMock = { exports: {} }
-const requireMock = name => name === 'react-native' ? native : name === 'expo-secure-store' ? {} : name === 'expo-crypto' ? { randomUUID: () => require('node:crypto').randomUUID() } : require(name)
+const requireMock = name => name === 'react-native' ? native : name === 'expo-secure-store' ? {} : name === 'expo-crypto' ? { randomUUID: () => require('node:crypto').randomUUID(), CryptoDigestAlgorithm: { SHA256: 'sha256' }, digestStringAsync: async (algorithm, value) => require('node:crypto').createHash(algorithm).update(value).digest('hex') } : require(name)
 new Function('require', 'module', 'exports', source)(requireMock, moduleMock, moduleMock.exports)
 const App = moduleMock.exports.default
 const text = node => typeof node === 'string' ? node : node?.children?.map(text).join(' ') || ''

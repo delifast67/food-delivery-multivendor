@@ -13,7 +13,7 @@ const { MongoClient } = require('mongodb');
 const { passwordHash } = require('../delifast-api/dist/src/auth.js');
 const appRequire = createRequire(new URL('../enatega-multivendor-app/package.json', import.meta.url));
 const { createClient } = appRequire('./src/delifast/api.js');
-const { createController } = appRequire('./src/delifast/controller.js');
+const { createController, SUPPORT_ATTEMPT_KEY } = appRequire('./src/delifast/controller.js');
 const { createSecureStorage } = appRequire('./src/delifast/secure-storage.js');
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -91,7 +91,7 @@ try {
     deleteItemAsync: async key => { memory.delete(key); },
   }, () => `${Date.now()}-${randomUUID()}`);
   const api = createClient({ endpoint });
-  const controller = createController({ api, storage, random: () => randomUUID() });
+  const controller = createController({ api, storage, fingerprintSession: sha, random: () => randomUUID() });
   await controller.restoreAttempt();
   await storage.setItem('delifast-customer-token', tokenA);
   assert.equal((await controller.restoreCustomer()).id, 'customer-a');
@@ -141,18 +141,64 @@ try {
   ok('transitions admin sécurisées, contrôle de version et historique relu par le client');
 
   const flakyApi = { ...api, createSupportTicket: async input => { const saved = await api.createSupportTicket(input); throw Object.assign(new Error('Réponse réseau perdue après écriture'), { saved }); } };
-  const flaky = createController({ api: flakyApi, storage, random: () => randomUUID() });
+  const flaky = createController({ api: flakyApi, storage, fingerprintSession: sha, random: () => randomUUID() });
   await flaky.restoreAttempt();
   await flaky.restoreCustomer();
-  await assert.rejects(flaky.createSupportTicket({ subject: 'Reprise', description: 'Réponse perdue puis reprise' }), /perdue/);
+  let lostError;
+  try { await flaky.createSupportTicket({ subject: 'Reprise', description: 'Réponse perdue puis reprise' }); } catch (error) { lostError = error; }
+  assert.match(lostError?.message || '', /perdue/);
   assert.ok(flaky.getState().supportPending);
-  const restarted = createController({ api, storage });
+  assert.ok(lostError.saved?.id);
+  const movedLost = await gql(endpoint, 'mutation($id:ID!,$v:Int!,$s:SupportStatus!,$n:String!){transitionSupportTicket(id:$id,expectedVersion:$v,status:$s,note:$n){id status version}}', { id: lostError.saved.id, v: 0, s: 'IN_PROGRESS', n: 'Pris en charge avant reprise' }, admin.token);
+  assert.equal(movedLost.transitionSupportTicket.id, lostError.saved.id);
+  const resolvedLost = await gql(endpoint, 'mutation($id:ID!,$v:Int!,$s:SupportStatus!,$n:String!){transitionSupportTicket(id:$id,expectedVersion:$v,status:$s,note:$n){id status version}}', { id: lostError.saved.id, v: 1, s: 'RESOLVED', n: 'Résolu avant reprise' }, admin.token);
+  assert.equal(resolvedLost.transitionSupportTicket.id, lostError.saved.id);
+  assert.equal(resolvedLost.transitionSupportTicket.status, 'RESOLVED');
+  const restarted = createController({ api, storage, fingerprintSession: sha });
   await restarted.restoreAttempt();
   await restarted.restoreCustomer();
   const recovered = await restarted.retrySupportTicket();
   assert.equal(recovered.subject, 'Reprise');
+  assert.equal(recovered.id, lostError.saved.id);
+  assert.equal(recovered.status, 'RESOLVED');
   assert.equal(await db.collection('support_tickets').countDocuments({ subject: 'Reprise', customerId: 'customer-a' }), 1);
-  ok('réponse perdue, relance du contrôleur et idempotence sans doublon');
+  assert.equal(memory.get(SUPPORT_ATTEMPT_KEY), undefined);
+  assert.ok(!String(memory.get(SUPPORT_ATTEMPT_KEY) ?? '').includes(tokenA));
+  ok('réponse perdue, résolution admin avant reprise, même ticket RESOLVED et fragments SecureStore purgés');
+
+  // Une nouvelle session du même compte, puis un autre compte, ne rejouent jamais
+  // le brouillon : la session supplémentaire est une fixture DB, sans SMS/UX.
+  const tokenA2 = 'customer-support-a-2-12345678901234567890';
+  await db.collection('customer_sessions').insertOne({
+    id: 'session-customer-a-2', customerId: 'customer-a', tokenHash: sha(tokenA2), challengeId: 'fixture-customer-a-2',
+    createdAt: new Date(), expiresAt: new Date(Date.now() + 3600000),
+  });
+  const staleAttempt = { version: 1, customerId: 'customer-a', sessionScope: sha(tokenA), idempotencyKey: 'stale-support-a-123456', payload: { subject: 'Ne pas rejouer', description: 'Fixture de reprise obsolète' } };
+  await storage.setItem(SUPPORT_ATTEMPT_KEY, JSON.stringify(staleAttempt));
+  await storage.setItem('delifast-customer-token', tokenA2);
+  const sameAccount = createController({ api, storage, fingerprintSession: sha });
+  await sameAccount.restoreAttempt();
+  await sameAccount.restoreCustomer();
+  await assert.rejects(sameAccount.loadSupportTickets(), /Ancienne session/);
+  assert.equal(memory.get(SUPPORT_ATTEMPT_KEY), undefined);
+  assert.equal(await db.collection('support_tickets').countDocuments({ subject: 'Ne pas rejouer' }), 0);
+
+  const otherAccountAttempt = { ...staleAttempt, customerId: 'customer-a', sessionScope: sha(tokenA2), idempotencyKey: 'stale-support-b-123456' };
+  await storage.setItem(SUPPORT_ATTEMPT_KEY, JSON.stringify(otherAccountAttempt));
+  await storage.setItem('delifast-customer-token', tokenB);
+  const otherAccount = createController({ api, storage, fingerprintSession: sha });
+  await otherAccount.restoreAttempt();
+  await otherAccount.restoreCustomer();
+  await assert.rejects(otherAccount.loadSupportTickets(), /Ancienne session/);
+  assert.equal(memory.get(SUPPORT_ATTEMPT_KEY), undefined);
+  assert.equal(await db.collection('support_tickets').countDocuments({ subject: 'Ne pas rejouer' }), 0);
+
+  await storage.setItem(SUPPORT_ATTEMPT_KEY, JSON.stringify({ ...otherAccountAttempt, customerId: 'customer-b', sessionScope: sha(tokenB), idempotencyKey: 'pending-before-logout-123456' }));
+  await otherAccount.logoutCustomer();
+  assert.equal(memory.get(SUPPORT_ATTEMPT_KEY), undefined);
+  assert.equal(memory.get('delifast-customer-token'), undefined);
+  assert.equal(await db.collection('support_tickets').countDocuments({ subject: 'Reprise', customerId: 'customer-a' }), 1);
+  ok('session même compte, autre compte et déconnexion purgent sans aucun rejeu ni duplication');
   console.log(`SUCCÈS — ${checks} contrôles support mobile/API/MongoDB isolés.`);
 } catch (error) {
   console.error(error?.stack || error);

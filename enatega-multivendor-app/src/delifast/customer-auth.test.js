@@ -269,9 +269,9 @@ test('un refus obsolète du carnet après logout ne purge pas une seconde fois l
   const rejected = assert.rejects(updating, /Session refusée/)
   await tick()
   await controller.logoutCustomer()
-  assert.equal(removals, 1)
+  assert.equal(removals, 2)
   wait.reject(Object.assign(new Error('Session refusée'), { kind: 'auth' }))
   await rejected
-  assert.equal(removals, 1)
+  assert.equal(removals, 2)
   assert.equal(controller.getState().customer, null)
 })

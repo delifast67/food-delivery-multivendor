@@ -9,7 +9,7 @@ const errorView = (error) => ({ message: error?.message || String(error), kind: 
 const validQuote = (quote) => quote && quote.currency === 'XOF' && Number.isSafeInteger(quote.total) && quote.total >= 0 && Array.isArray(quote.items)
 const validReference = (ref) => ref && typeof ref.id === 'string' && ref.id.length > 0 && typeof ref.accessToken === 'string' && ref.accessToken.length >= 16
 
-function createController({ api, storage = {}, random, onChange = () => {}, pollMs = 8000 }) {
+function createController({ api, storage = {}, random, fingerprintSession, onChange = () => {}, pollMs = 8000 }) {
   let state = {
     restaurants: [],
     restaurant: null,
@@ -25,6 +25,7 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
     order: null,
     lastOrder: null,
     customer: null,
+    customerSessionVersion: 0,
     addresses: [],
     authBusy: false,
     supportTickets: [],
@@ -41,6 +42,7 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
   let trackingRequest = 0
   let restaurantRequest = 0
   let discoveryRequest = 0
+  let customerSessionToken = null
   let authEpoch = 0
   let authInFlight = null
   let supportRequest = 0
@@ -58,12 +60,12 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
     return authInFlight
   }
   async function clearCustomerSession() {
-    const supportOwner = state.customer?.id
     ++supportRequest
     ++authEpoch
+    customerSessionToken = null
     if (api.setCustomerToken) api.setCustomerToken(null)
     set({ customer: null, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null })
-    try { if (storage.removeItem) { await storage.removeItem(CUSTOMER_TOKEN_KEY); await removeSupportAttempt(supportOwner) } } catch {}
+    try { if (storage.removeItem) { try { await storage.removeItem(CUSTOMER_TOKEN_KEY) } finally { await purgeSupportAttempt() } } } catch {}
   }
   const supportErrorView = error => ({ message: error?.message || String(error), kind: error?.kind || 'unknown', code: error?.code })
   const supportInput = input => {
@@ -197,23 +199,49 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
     supportStorageTail = result.catch(() => {})
     return result
   }
-  function checkSupportAttempt(attempt, owner) {
-    if (!attempt || attempt.customerId !== owner || !/^[a-zA-Z0-9_-]{8,128}$/.test(attempt.idempotencyKey)) throw new Error('Tentative support invalide ; vérification requise')
+  function checkSupportAttempt(attempt, owner, scope) {
+    if (!attempt || attempt.version !== 1 || attempt.sessionScope !== scope || attempt.customerId !== owner || !/^[a-zA-Z0-9_-]{8,128}$/.test(attempt.idempotencyKey)) throw new Error('Tentative support invalide ; vérification requise')
     const payload = supportInput(attempt.payload)
     if (payload.subject !== attempt.payload.subject || payload.description !== attempt.payload.description) throw new Error('Tentative support invalide ; vérification requise')
     return payload
   }
-  function removeSupportAttempt(owner, key) {
+  // L’empreinte SHA-256 lie la reprise au jeton validé, jamais au seul compte.
+  // Le jeton brut reste privé et n’est pas recopié dans le brouillon ou l’état.
+  async function supportScope() {
+    if (!customerSessionToken || typeof fingerprintSession !== 'function') throw new Error('Session support sécurisée indisponible')
+    const scope = await fingerprintSession(customerSessionToken)
+    if (typeof scope !== 'string' || !/^[a-f0-9]{64}$/.test(scope)) throw new Error('Empreinte de session invalide')
+    return scope
+  }
+  function purgeSupportAttempt() {
+    // Pas de parsing : même un brouillon endommagé doit pouvoir être purgé.
+    return supportIO(() => storage.removeItem(SUPPORT_ATTEMPT_KEY))
+  }
+  function readSupportAttempt(owner, scope, current) {
+    return supportIO(async() => {
+      if (!current()) return null
+      const stored = await readJSON(SUPPORT_ATTEMPT_KEY)
+      if (!current() || !stored) return null
+      if (stored.version !== 1 || stored.customerId !== owner || stored.sessionScope !== scope) {
+        await storage.removeItem(SUPPORT_ATTEMPT_KEY)
+        if (current()) set({ supportPending: null })
+        throw new Error('Ancienne session : brouillon effacé sans envoi. Vérifiez vos tickets avant une nouvelle demande.')
+      }
+      checkSupportAttempt(stored, owner, scope)
+      return stored
+    })
+  }
+  function removeSupportAttempt(owner, key, scope) {
     return supportIO(async() => {
       const stored = await readJSON(SUPPORT_ATTEMPT_KEY)
-      if (stored?.customerId === owner && (!key || stored.idempotencyKey === key)) await storage.removeItem(SUPPORT_ATTEMPT_KEY)
+      if (stored?.customerId === owner && stored.sessionScope === scope && stored.idempotencyKey === key) await storage.removeItem(SUPPORT_ATTEMPT_KEY)
     })
   }
   function supportExclusive(retry, input) {
     if (!state.customer || !api.createSupportTicket) return Promise.reject(new Error('Connexion client requise'))
     if (supportInFlight) return retry ? supportInFlight : Promise.reject(new Error('Une création support est en attente ; reprenez-la'))
     const epoch = authEpoch; const owner = state.customer.id
-    let attempt = null; let persisted = false; let sent = false
+    let attempt = null; let persisted = false; let sent = false; let scope
     set({ supportBusy: true, supportError: null })
     ++supportRequest
     set({ supportLoading: false })
@@ -222,11 +250,13 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
     const work = Promise.resolve().then(async() => {
       try {
         storageReady()
-        const stored = await supportIO(() => readJSON(SUPPORT_ATTEMPT_KEY))
+        scope = await supportScope()
+        if (!current()) return null
+        const stored = await readSupportAttempt(owner, scope, current)
         if (!current()) return null
         if (retry) {
           attempt = stored || state.supportPending
-          checkSupportAttempt(attempt, owner)
+          checkSupportAttempt(attempt, owner, scope)
           persisted = true
         } else {
           if (stored || state.supportPending) {
@@ -236,7 +266,7 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
           const payload = supportInput(input)
           const key = makeIdempotencyKey(random)
           if (!/^[a-zA-Z0-9_-]{8,128}$/.test(key)) throw new Error('Clé d’idempotence invalide')
-          attempt = { customerId: owner, idempotencyKey: key, payload }
+          attempt = { version: 1, customerId: owner, sessionScope: scope, idempotencyKey: key, payload }
           await supportIO(async() => {
             if (!current()) return
             await storage.setItem(SUPPORT_ATTEMPT_KEY, JSON.stringify(attempt))
@@ -244,15 +274,15 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
           })
         }
         if (!current()) {
-          if (persisted) await removeSupportAttempt(owner, attempt.idempotencyKey)
+          if (persisted) await removeSupportAttempt(owner, attempt.idempotencyKey, scope)
           return null
         }
         set({ supportPending: clone(attempt) })
         sent = true
-        const result = await api.createSupportTicket({ ...checkSupportAttempt(attempt, owner), idempotencyKey: attempt.idempotencyKey })
+        const result = await api.createSupportTicket({ ...checkSupportAttempt(attempt, owner, scope), idempotencyKey: attempt.idempotencyKey })
         if (!current()) return null
         if (!result || typeof result.id !== 'string' || !result.id) throw new Error('Réponse ticket incomplète')
-        await removeSupportAttempt(owner, attempt.idempotencyKey)
+        await removeSupportAttempt(owner, attempt.idempotencyKey, scope)
         if (!current()) return null
         ++supportRequest
         set({ supportPending: null, supportLoading: false, supportTickets: supportList([result, ...state.supportTickets]), supportError: null })
@@ -261,7 +291,7 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
         if (!current()) return null
         // Un refus de validation certain n’est pas une création ambiguë.
         if (persisted && sent && error?.kind === 'validation') {
-          try { await removeSupportAttempt(owner, attempt.idempotencyKey); persisted = false } catch {}
+          try { await removeSupportAttempt(owner, attempt.idempotencyKey, scope); persisted = false } catch {}
           if (!current()) return null
         }
         set({ supportError: supportErrorView(error), ...(attempt ? { supportPending: persisted ? clone(attempt) : null } : {}) })
@@ -400,17 +430,23 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
     },
     async restoreCustomer() {
       if (!api.customerMe || !api.setCustomerToken) return null
-      const epoch = authEpoch
+      if (authInFlight) throw new Error('Une opération du compte est déjà en cours.')
+      const epoch = ++authEpoch
+      ++supportRequest
+      customerSessionToken = null
+      api.setCustomerToken(null)
+      set({ customer: null, customerSessionVersion: epoch, addresses: [], supportTickets: [], supportPending: null, supportBusy: false, supportLoading: false, supportError: null })
       storageReady()
       const token = await storage.getItem(CUSTOMER_TOKEN_KEY)
       if (epoch !== authEpoch) return null
-      if (!token) return null
+      if (!token) { await purgeSupportAttempt(); return null }
       api.setCustomerToken(token)
       let customer
       try {
         customer = await api.customerMe()
         if (epoch !== authEpoch) return null
         if (!customer || typeof customer.id !== 'string' || typeof customer.phone !== 'string') throw new Error('Session client invalide')
+        customerSessionToken = token
         const addresses = api.customerAddresses ? await api.customerAddresses() : []
         if (epoch !== authEpoch) return null
         set({ customer: clone(customer), addresses: clone(addresses) || [] })
@@ -461,16 +497,28 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
       if (!otpChallenge || otpChallenge.id !== challengeId || Date.now() >= otpChallenge.deadline) throw new Error('Challenge OTP expiré')
       if (authInFlight) throw new Error('Une opération du compte est déjà en cours.')
       const epoch = ++authEpoch
+      customerSessionToken = null
+      api.setCustomerToken(null)
+      ++supportRequest
+      set({ customer: null, customerSessionVersion: epoch, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null })
       return authExclusive(async() => {
+        storageReady()
+        try { await storage.removeItem(CUSTOMER_TOKEN_KEY) } finally { await purgeSupportAttempt() }
+        if (epoch !== authEpoch) throw new Error('Connexion annulée')
         const session = await api.verifyCustomerOtp(challengeId, String(code))
         if (epoch !== authEpoch) throw new Error('Connexion annulée')
         if (!session || typeof session.token !== 'string' || !session.customer) throw new Error('Session client incomplète')
         storageReady(); await storage.setItem(CUSTOMER_TOKEN_KEY, session.token)
         if (epoch !== authEpoch) { await storage.removeItem(CUSTOMER_TOKEN_KEY); throw new Error('Connexion annulée') }
+        customerSessionToken = session.token
         api.setCustomerToken(session.token)
         ++supportRequest
-        set({ customer: clone(session.customer), addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null })
-        const addresses = api.customerAddresses ? await api.customerAddresses() : []
+        set({ customer: clone(session.customer), customerSessionVersion: epoch, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null })
+        let addresses
+        try { addresses = api.customerAddresses ? await api.customerAddresses() : [] } catch (error) {
+          if (epoch === authEpoch && error?.kind === 'auth') await clearCustomerSession()
+          throw error
+        }
         if (epoch !== authEpoch) { api.setCustomerToken(null); await storage.removeItem(CUSTOMER_TOKEN_KEY); throw new Error('Connexion annulée') }
         set({ customer: clone(session.customer), addresses: clone(addresses) || [] })
         otpChallenge = null
@@ -478,7 +526,7 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
       })
     },
     async logoutCustomer() {
-      const supportOwner = state.customer?.id
+      customerSessionToken = null
       ++authEpoch
       ++supportRequest
       otpChallenge = null
@@ -487,7 +535,7 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
       const revoked = (async() => { try { if (api.customerLogout) await api.customerLogout() } catch (error) { failure = error } })()
       if (api.setCustomerToken) api.setCustomerToken(null)
       set({ customer: null, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null })
-      try { if (storage.removeItem) { await storage.removeItem(CUSTOMER_TOKEN_KEY); await removeSupportAttempt(supportOwner) } } finally { await revoked }
+      try { if (storage.removeItem) { try { await storage.removeItem(CUSTOMER_TOKEN_KEY) } finally { await purgeSupportAttempt() } } } finally { await revoked }
       if (failure) throw failure
       return true
     },
@@ -542,10 +590,12 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
       const request = ++supportRequest; const epoch = authEpoch; const owner = state.customer.id
       set({ supportLoading: true, supportError: null })
       try {
-        const stored = await supportIO(() => readJSON(SUPPORT_ATTEMPT_KEY))
+        const scope = await supportScope()
+        if (epoch !== authEpoch || request !== supportRequest) return null
+        const stored = await readSupportAttempt(owner, scope, () => epoch === authEpoch && request === supportRequest)
         if (epoch !== authEpoch || request !== supportRequest) return null
         if (stored?.customerId === owner) {
-          checkSupportAttempt(stored, owner)
+          checkSupportAttempt(stored, owner, scope)
           set({ supportPending: clone(stored) })
         }
         const rows = await api.customerSupportTickets(20, offset)

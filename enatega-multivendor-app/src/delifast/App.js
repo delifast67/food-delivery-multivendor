@@ -61,7 +61,7 @@ function Header({ title, onBack, right }) {
 function App({ api, storage }) {
   const resolvedStorage = useMemo(() => storage || createSecureStorage(SecureStore), [storage])
   const [state, setState] = useState(null)
-  const controller = useMemo(() => createController({ api: api || createClient({ endpoint }), storage: resolvedStorage, random: Crypto.randomUUID, onChange: setState }), [api, resolvedStorage])
+  const controller = useMemo(() => createController({ api: api || createClient({ endpoint }), storage: resolvedStorage, random: Crypto.randomUUID, fingerprintSession: token => Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, token), onChange: setState }), [api, resolvedStorage])
   const [screen, setScreen] = useState('restaurants')
   const [address, setAddress] = useState(initialAddress)
   const [selected, setSelected] = useState(null)
@@ -83,7 +83,7 @@ function App({ api, storage }) {
     setSupportSubject('')
     setSupportDescription('')
     setExpandedTicket(null)
-  }, [customerId])
+  }, [customerId, state?.customerSessionVersion])
   useEffect(() => {
     if (!challenge) return undefined
     const timer = setInterval(() => setOtpNow(Date.now()), 250)
