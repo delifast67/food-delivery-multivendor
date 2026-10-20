@@ -57,12 +57,32 @@ try {
   const place = async (restaurantId, menuItemId, key) => (await gql('mutation($i:PlaceOrderInput!){placeOrder(input:$i){id checkout{total} status}}', { i: { restaurantId, items: [{ menuItemId, quantity: 1 }], idempotencyKey: key, deliveryAddress: { recipientName: `Fixture ${key}`, phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Recette', landmark: 'Aucun', instructions: 'Fixture uniquement', point: { latitude: 12.3714, longitude: -1.5197 } } } })).placeOrder;
   const orders = [await place('rest-koudougou', 'riz-gras', 'admin-acceptance-r1'), await place('rest-ouaga-centre', 'burger-faso', 'admin-acceptance-r2')];
   for (const order of orders) await db.collection('orders').updateOne({ id: order.id }, { $set: { status: 'CONFIRMED', paymentStatus: 'PAID' }, $push: { history: { status: 'CONFIRMED', at: new Date().toISOString(), actorRole: 'SYSTEM' } } });
+  // 48 old, paid orders exercise the server cursor (never a client-side slice).  They
+  // intentionally share one timestamp and carry a large synthetic history: the old
+  // unbounded operationsOrders response is several MB, while every new page is <=20.
+  const fixtureTime = '2020-01-01T00:00:00.000Z';
+  const template = await db.collection('orders').findOne({ id: orders[0].id }, { projection: { _id: 0 } });
+  const paged = Array.from({ length: 48 }, (_, i) => {
+    const id = `admin-acceptance-page-${String(i + 1).padStart(2, '0')}`;
+    const history = Array.from({ length: 80 }, () => ({
+      status: 'CONFIRMED', at: fixtureTime,
+      actorRole: `SYSTEM-${'x'.repeat(600)}`,
+    }));
+    return { ...template, id, idempotencyKey: `fixture-${id}`, accessToken: `fixture-token-${id}`, accessTokenHash: `fixture-hash-${id}`, createdAt: fixtureTime, updatedAt: fixtureTime,
+      deliveryAddress: { ...template.deliveryAddress, recipientName: `Historique synthétique ${i + 1}` },
+      history, status: 'CONFIRMED', paymentStatus: 'PAID', riderId: null };
+  });
+  await db.collection('orders').insertMany(paged);
+  const fullBytes = Buffer.byteLength(JSON.stringify(paged));
+  const pageBytes = Buffer.byteLength(JSON.stringify(paged.slice(0, 20)));
+  assert.ok(fullBytes > 2_000_000 && pageBytes < 1_500_000, `Fixture volume incorrect : ${fullBytes}/${pageBytes}`);
+  console.log(`Fixtures commandes : ${fullBytes} octets complets, ${pageBytes} par page de test`);
   // Support tickets are inserted as test documents, never through a production provider.
   const now = new Date().toISOString();
   await db.collection('support_tickets').insertMany(['admin-ticket-a', 'admin-ticket-b', ...Array.from({length: 20}, (_, i) => `page-ticket-${i}`)].map((id, i) => ({ id, idempotencyKey: `fixture-${id}`, fingerprint: `fixture-${id}`, customerId: null, creatorId: i ? 'staff-rider' : 'staff-rest-1', creatorRole: i ? 'RIDER' : 'RESTAURANT', restaurantId: i ? null : 'rest-koudougou', scopeTenant: i ? '' : 'rest-koudougou', subject: `Recette support ${i + 1}`, description: 'Ticket fixture admin uniquement', status: 'OPEN', version: 0, createdAt: new Date(Date.parse(now) + i).toISOString(), updatedAt: now, history: [{ status: 'OPEN', at: now, actorRole: i ? 'RIDER' : 'RESTAURANT', note: '' }] })));
   web = launch(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--hostname', '127.0.0.1', '--port', String(webPort)], join(root, 'enatega-multivendor-admin'), { NODE_ENV: 'production', DELIFAST_API_URL: `http://127.0.0.1:${apiPort}/graphql` });
   await ready(`http://127.0.0.1:${webPort}/delifast`, web);
-  const fixture = join(scratch, 'fixtures.json'); await writeFile(fixture, JSON.stringify({ orders: orders.map(x => x.id), support: ['admin-ticket-a', 'admin-ticket-b'], adminToken: admin.token, restaurantToken: restaurant.token, riderToken: rider.token }), { mode: 0o600 });
+  const fixture = join(scratch, 'fixtures.json'); await writeFile(fixture, JSON.stringify({ orders: orders.map(x => x.id), paged: paged.map(x => x.id), support: ['admin-ticket-a', 'admin-ticket-b'], adminToken: admin.token, restaurantToken: restaurant.token, riderToken: rider.token }), { mode: 0o600 });
   const py = process.env.DELIFAST_TEST_PYTHON || 'python3'; const script = join(root, 'scripts/acceptance/admin-operations.py');
   const child = spawn(py, [script, `http://127.0.0.1:${webPort}`, result, fixture, process.env.DELIFAST_TEST_CHROMIUM || ''], { cwd: root, env: { PATH: process.env.PATH, HOME: process.env.HOME, LANG: 'C.UTF-8' }, stdio: 'inherit' }); children.push(child); const [code] = await once(child, 'exit'); assert.equal(code, 0);
   console.log(`SUCCÈS — recette admin Chromium isolée; résultat ${result}`);

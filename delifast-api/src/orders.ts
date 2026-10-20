@@ -227,6 +227,77 @@ export async function operationsOrders(db: Db, user: Staff) {
       .toArray()
   ).map(operationView);
 }
+
+const OPERATION_STATUSES = new Set(["PAYMENT_PENDING", "CONFIRMED", "ACCEPTED", "PREPARING", "READY", "PICKED_UP", "DELIVERED", "CANCELLED"]);
+const OPERATION_PAYMENTS = new Set(["PENDING", "PAID", "FAILED", "REFUND_PENDING", "REFUNDED"]);
+function escapeRegex(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function operationFilters(status?: unknown, payment?: unknown, restaurantId?: unknown, search?: unknown) {
+  if (status != null && (typeof status !== "string" || !OPERATION_STATUSES.has(status))) fail("INVALID_INPUT", "Statut invalide");
+  if (payment != null && (typeof payment !== "string" || !OPERATION_PAYMENTS.has(payment))) fail("INVALID_INPUT", "Paiement invalide");
+  if (restaurantId != null && (typeof restaurantId !== "string" || !restaurantId.trim() || restaurantId.length > 128)) fail("INVALID_INPUT", "restaurantId invalide");
+  if (search != null && typeof search !== "string") fail("INVALID_INPUT", "Recherche invalide");
+  const normalizedSearch = typeof search === "string" ? search.trim() : "";
+  if (normalizedSearch.length > 100) fail("INVALID_INPUT", "Recherche invalide");
+  return { ...(status == null ? {} : { status }), ...(payment == null ? {} : { paymentStatus: payment }), ...(restaurantId == null ? {} : { restaurantId: restaurantId.trim() }), ...(normalizedSearch ? { search: normalizedSearch } : {}) };
+}
+type OperationFilters = ReturnType<typeof operationFilters>;
+function operationScope(user: Staff, filters: OperationFilters) {
+  const query: Record<string, any> = {};
+  if (user.role === "RIDER") query.riderId = user.id;
+  else if (user.role === "RESTAURANT") { query.restaurantId = user.restaurantId; query.paymentStatus = { $in: ["PAID", "REFUND_PENDING", "REFUNDED"] }; }
+  if (filters.status) query.status = filters.status;
+  if (filters.paymentStatus) {
+    if (query.paymentStatus?.$in) {
+      query.paymentStatus = { $in: query.paymentStatus.$in.includes(filters.paymentStatus) ? [filters.paymentStatus] : [] };
+    } else query.paymentStatus = filters.paymentStatus;
+  }
+  if (filters.restaurantId) {
+    if (query.restaurantId && query.restaurantId !== filters.restaurantId) query.$and = [{ restaurantId: query.restaurantId }, { restaurantId: filters.restaurantId }];
+    else query.restaurantId = filters.restaurantId;
+  }
+  if (filters.search) { const pattern = escapeRegex(filters.search); query.$or = [{ id: { $regex: pattern, $options: "i" } }, { "deliveryAddress.recipientName": { $regex: pattern, $options: "i" } }]; }
+  return query;
+}
+function operationCursor(user: Staff, filters: OperationFilters, order: any) {
+  const body = Buffer.from(JSON.stringify({ createdAt: order.createdAt, id: order.id, role: user.role, user: user.id, restaurant: user.restaurantId ?? null, filters })).toString("base64url");
+  const signature = crypto.createHmac("sha256", config.customerOrderCursorKey).update(body).digest("base64url");
+  return `${body}.${signature}`;
+}
+function decodeOperationCursor(cursor: unknown, user: Staff, filters: OperationFilters) {
+  try {
+    if (typeof cursor !== "string" || cursor.length === 0 || cursor.length > 2048) throw new Error();
+    const parts = cursor.split(".");
+    if (parts.length !== 2) throw new Error();
+    const [body, signature] = parts;
+    if (!body || !signature || !/^[A-Za-z0-9_-]+$/.test(body) || !/^[A-Za-z0-9_-]+$/.test(signature)) throw new Error();
+    const expected = crypto.createHmac("sha256", config.customerOrderCursorKey).update(body).digest("base64url");
+    const got = Buffer.from(signature), want = Buffer.from(expected);
+    if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) throw new Error();
+    const value = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 6 || value.role !== user.role || typeof value.user !== "string" || value.user.length > 128 || value.user !== user.id || (value.restaurant !== null && (typeof value.restaurant !== "string" || value.restaurant.length > 128)) || (value.restaurant ?? null) !== (user.restaurantId ?? null) || !value.filters || typeof value.filters !== "object" || Array.isArray(value.filters) || JSON.stringify(value.filters) !== JSON.stringify(filters) || typeof value.createdAt !== "string" || value.createdAt.length > 64 || !Number.isFinite(Date.parse(value.createdAt)) || typeof value.id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value.id)) throw new Error();
+    return { createdAt: value.createdAt, id: value.id };
+  } catch { fail("INVALID_CURSOR", "Curseur invalide"); }
+}
+export async function operationsOrdersPage(db: Db, user: Staff, limit = 20, after?: string | null, status?: string | null, payment?: string | null, restaurantId?: string | null, search?: string | null) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) fail("INVALID_INPUT", "La limite doit être comprise entre 1 et 50");
+  if (after != null && (typeof after !== "string" || !after)) fail("INVALID_CURSOR", "Curseur invalide");
+  const filters = operationFilters(status, payment, restaurantId, search);
+  if (filters.restaurantId && !(await db.collection("restaurants").findOne({ id: filters.restaurantId }))) fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
+  const query = operationScope(user, filters);
+  if (after) {
+    const cursor = decodeOperationCursor(after, user, filters);
+    const cursorClause = { $or: [{ createdAt: { $lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { $lt: cursor.id } }] };
+    query.$and = [...(Array.isArray(query.$and) ? query.$and : []), cursorClause];
+  }
+  const rows = await db.collection<any>("orders").find(query).sort({ createdAt: -1, id: -1 }).limit(limit + 1).toArray();
+  return { items: rows.slice(0, limit).map(operationView), nextCursor: rows.length > limit ? operationCursor(user, filters, rows[limit - 1]) : null };
+}
+export async function operationsOrder(db: Db, user: Staff, id: string) {
+  if (typeof id !== "string" || !id) return null;
+  const query = operationScope(user, {}); query.id = id;
+  const order = await db.collection<any>("orders").findOne(query);
+  return order ? operationView(order) : null;
+}
 export async function availableRiders(db: Db, user: Staff) {
   if (user.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants");
   return db

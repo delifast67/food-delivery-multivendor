@@ -18,7 +18,7 @@ Le mode local sélectionne exclusivement les entrées `*.local.ts(x)` et `tsconf
 
 ## Ce que l’on peut faire
 
-Se connecter avec un compte staff existant reconnu `ADMIN` par le serveur, consulter les commandes de tous les restaurants (y compris impayées), filtrer localement, lire l’adresse, les lignes et l’historique, ouvrir/fermer manuellement un restaurant avec contrôle de version, effectuer les transitions permises et affecter initialement un livreur actif existant. Une liste de livreurs actifs n’indique pas leur disponibilité géographique ou opérationnelle.
+Se connecter avec un compte staff existant reconnu `ADMIN` par le serveur, consulter les commandes de tous les restaurants (y compris impayées), rechercher et filtrer côté serveur sur des pages de 20 commandes, lire l’adresse, les lignes et l’historique, ouvrir/fermer manuellement un restaurant avec contrôle de version, effectuer les transitions permises et affecter initialement un livreur actif existant. Une liste de livreurs actifs n’indique pas leur disponibilité géographique ou opérationnelle.
 
 Les transitions nécessitent un paiement déjà confirmé et transmettent `expectedStatus` ainsi que la révision `expectedUpdatedAt` affichée lors de la confirmation. L’affectation est possible uniquement aux états `ACCEPTED`, `PREPARING`, `READY`, sans remplacer un livreur déjà affecté. L’ouverture transmet `expectedVersion`. En cas de conflit ou de réponse incertaine, relire l’état serveur avant toute nouvelle décision : aucune mutation n’est rejouée automatiquement.
 
@@ -36,9 +36,13 @@ La version est capturée au début de l’édition et partagée avec le profil, 
 
 Le jeton staff est conservé dans `sessionStorage`, jamais prérempli. Une connexion ou reprise de session est revalidée par `me` avant l’accès aux opérations, réservé au rôle `ADMIN`. Le serveur reste responsable des autorisations ; aucun jeton d’accès client aux commandes n’est demandé.
 
-La recherche par référence complète ou destinataire, le filtre paiement et les filtres statut/restaurant se combinent sur le snapshot chargé. Les commandes sont ouvertes par un vrai bouton utilisable au clavier ; le détail conserve la référence complète. Les changements de statut nécessitent une confirmation explicite, et l’affectation ne part plus au simple changement du sélecteur. Après échec, aucune action n’est rejouée automatiquement ; le détail doit être relu avant une nouvelle décision. Une actualisation échouée désactive les écritures sur les commandes et restaurants jusqu’à une relecture réussie.
+La recherche littérale par référence ou destinataire (100 caractères maximum), le filtre paiement et les filtres statut/restaurant se combinent côté serveur. Le bouton « Appliquer les filtres » repart de la première page. Les pages utilisent un curseur signé lié aux filtres et au périmètre staff, avec un tri stable date/référence décroissant. Aucun nombre total global n’est annoncé. Les commandes sont ouvertes par un vrai bouton utilisable au clavier ; le détail conserve la référence complète. Les changements de statut nécessitent une confirmation explicite, et l’affectation ne part plus au simple changement du sélecteur. Après échec, aucune action n’est rejouée automatiquement ; le détail doit être relu avant une nouvelle décision. Une actualisation échouée désactive les écritures sur les commandes et restaurants jusqu’à une relecture réussie.
 
-Le snapshot regroupe commandes, profils restaurant (avec leurs IDs de zones) et livreurs ; la liste complète des zones est relue séparément ; les filtres et détails n’effectuent pas de requête supplémentaire, et il n’y a pas de polling. Les listes serveur ne sont pas paginées : usage local avec peu de données seulement. Un snapshot n’est pas une vue temps réel.
+Le snapshot regroupe une page de résumés de commandes (sans historique, téléphone ni lignes de panier), les profils restaurant (avec leurs IDs de zones) et les livreurs. L’ouverture d’une commande relit son détail privé via `operationsOrder`, indépendamment des filtres et de la page. Après mutation, page et détail sont relus : une commande qui quitte le filtre reste consultable dans son détail. Après résultat incertain, le verrou n’est retiré que par une relecture explicite réussie du détail et de la page. Les réponses tardives après navigation ou déconnexion sont ignorées. Aucun polling, rejeu automatique ni succès optimiste.
+
+Le client refuse les réponses dépassant **2 000 000 octets**, même sans `Content-Length`, avant analyse JSON, et impose un délai réseau de 15 secondes (proxy : 10 secondes). Une réponse interrompue/incomplète reste un échec, jamais une liste vide ni une écriture réussie. Une lecture échouée garde les écritures verrouillées jusqu’à relecture réussie.
+
+**Limites :** les pages ne sont pas un snapshot transactionnel : une nouvelle commande ou un changement de filtre/statut concurrent peut modifier les résultats parcourus. La recherche par sous-chaîne n’est pas un moteur plein texte indexé et peut scanner les données ; des index de périmètre/tri sont ajoutés mais ne garantissent pas une recherche à grande échelle. Profils restaurant, livreurs et zones restent chargés en listes complètes ; un catalogue trop volumineux sera refusé par la borne client, sans pagination de ces ressources dans ce lot. L’ancienne requête `operationsOrders` reste disponible, non paginée, pour compatibilité des autres clients. Un historique individuel très volumineux peut encore dépasser la borne et exiger une évolution du contrat. Un snapshot n’est pas une vue temps réel ni une homologation de production.
 
 ## Vérifier
 
@@ -61,7 +65,9 @@ Le dernier script démarre ses propres MongoDB jetable, API et admin sur les por
 ```ts
 const client = new DelifastClient('/api/delifast/graphql');
 await client.login(email, password);
-const snapshot = await client.snapshot();
+const snapshot = await client.snapshot({ status: 'CONFIRMED', search: 'Démo' });
+const nextPage = snapshot.nextCursor ? await client.snapshot({ status: 'CONFIRMED', search: 'Démo' }, snapshot.nextCursor) : null;
+const detail = await client.operationsOrder(orderId);
 await client.transition(orderId, 'ACCEPTED', 'CONFIRMED');
 await client.assignRider(orderId, riderId, 'ACCEPTED');
 await client.updateRestaurantProfile(restaurantId, version, { name, description, open: false, deliveryZoneIds });
@@ -83,7 +89,7 @@ La consultation et les mutations ont été conçues pour les petits écrans ; le
 
 ### Ce qui reste non fait
 
-Ce lot ne rend pas l’ancien admin complet ni le projet prêt pour la production. Restent notamment : pagination/recherche serveur des commandes, recherche/filtrage global des tickets, assignation d’agents Support, réouverture, réponses conversationnelles, pièces jointes, notifications, SLA et politique de rétention/audit de consultation. Aucun remboursement, rapprochement financier, commission ou règlement restaurant/livreur n’est exécuté par cet admin. Gestion des comptes/permissions fines, validation des restaurants et disponibilité/GPS livreur restent absents. Les horaires, profils et zones existants sont conservés ; aucun fournisseur paiement ou mécanisme d’authentification n’est remplacé.
+Ce lot ne rend pas l’ancien admin complet ni le projet prêt pour la production. Restent notamment : pagination des autres catalogues et des anciens clients commandes, recherche/filtrage global des tickets, assignation d’agents Support, réouverture, réponses conversationnelles, pièces jointes, notifications, SLA et politique de rétention/audit de consultation. Aucun remboursement, rapprochement financier, commission ou règlement restaurant/livreur n’est exécuté par cet admin. Gestion des comptes/permissions fines, validation des restaurants et disponibilité/GPS livreur restent absents. Les horaires, profils et zones existants sont conservés ; aucun fournisseur paiement ou mécanisme d’authentification n’est remplacé.
 
 ### Recette navigateur commandes et Support
 
@@ -93,4 +99,4 @@ Après les builds API et admin ci-dessus, installer les outils de test Python d�
 DELIFAST_TEST_CHROMIUM=/chemin/vers/chromium node scripts/delifast-admin-acceptance.mjs
 ```
 
-Le lanceur crée une base MongoDB jetable, y insère uniquement des fixtures payées/tickets, sans simulation ni appel de paiement, et isole l’environnement de ses sous-processus de tout secret fournisseur. Le navigateur refuse les requêtes non locales. La recette couvre filtres multi-restaurants, activation clavier, confirmation, affectation, réponse perdue sans double écriture, pagination Support, conflit de version, résolution et note relue par le créateur, refus hors ADMIN, 390 px et purge logout. Les captures et le résultat sont écrits dans `test-results/admin-operations` (ou `DELIFAST_ADMIN_TEST_OUTPUT`). Les processus et la base sont nettoyés en sortie ; `--serve` conserve explicitement la stack pour inspection locale seulement. Cette recette est distincte des recettes HTTP intégrées à la CI, et ne vaut pas homologation de production.
+Le lanceur crée une base MongoDB jetable, y insère uniquement des fixtures payées/tickets, sans simulation ni appel de paiement, et isole l’environnement de ses sous-processus de tout secret fournisseur. Le navigateur refuse les requêtes non locales. La recette couvre pages commandes bornées sur gros jeu synthétique, recherche hors première page, filtres multi-restaurants, activation clavier, confirmation, affectation, réponse perdue avec sortie du filtre sans double écriture, échec de relecture et réponse trop volumineuse, pagination Support, conflit de version, résolution et note relue par le créateur, refus hors ADMIN, 390 px et purge logout. Les captures et le résultat sont écrits dans `test-results/admin-operations` (ou `DELIFAST_ADMIN_TEST_OUTPUT`). Les processus et la base sont nettoyés en sortie ; `--serve` conserve explicitement la stack pour inspection locale seulement. Cette recette est distincte des recettes HTTP intégrées à la CI, et ne vaut pas homologation de production.

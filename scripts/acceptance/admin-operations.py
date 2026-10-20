@@ -1,5 +1,5 @@
 """Recette admin réelle sur fixtures MongoDB jetables, sans fournisseur externe."""
-import json, sys
+import json, sys, re
 from pathlib import Path
 from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, expect
@@ -55,37 +55,48 @@ with sync_playwright() as p:
     admin = page.evaluate("sessionStorage.getItem('delifast-local-session')")
     assert admin
     ids = fixtures['orders']
-    commands = page.get_by_role('region', name='Filtres commandes')
+    paged = fixtures['paged']
     filters = page.locator('section[aria-label="Filtres commandes"]')
     search = page.get_by_role('searchbox', name='Rechercher une commande')
-    search.fill(ids[0])
-    expect(page.get_by_role('button', name='Ouvrir la commande ' + ids[0], exact=True)).to_be_visible()
-    expect(page.get_by_role('button', name='Ouvrir la commande ' + ids[1], exact=True)).to_have_count(0)
-    search.fill('Fixture admin-acceptance-r1')
+    apply = filters.get_by_role('button', name='Appliquer les filtres', exact=True)
+    rows = page.locator('button[aria-label^="Ouvrir la commande "]')
+    expect(rows).to_have_count(20)
+    assert rows.count() <= 20
+    first_page = set(rows.all_inner_texts())
+    first_label = rows.first.get_attribute('aria-label')
+    page_two = page.get_by_role('button', name='Suivante', exact=True)
+    expect(page_two).to_be_enabled()
+    page_two.click()
+    expect(page.get_by_text('Page 2', exact=False)).to_be_visible()
+    expect(page.get_by_role('button', name=first_label, exact=True)).to_have_count(0)
+    expect(rows).to_have_count(20)
+    second_page = set(rows.all_inner_texts())
+    assert first_page.isdisjoint(second_page), (first_page, second_page)
+    page.get_by_role('button', name='Précédente', exact=True).click()
+    expect(page.get_by_text('Page 1', exact=False)).to_be_visible()
+    expect(page.get_by_role('button', name=first_label, exact=True)).to_be_visible()
+    checked('pages serveur bornées à 20 sans doublon entre pages')
+    # The target is deliberately outside page 1; only an explicit Apply may issue
+    # the server-side search request.
+    search.fill(paged[0])
+    expect(page.get_by_role('button', name='Ouvrir la commande ' + paged[0], exact=True)).to_have_count(0)
+    apply.click()
+    expect(page.get_by_role('button', name='Ouvrir la commande ' + paged[0], exact=True)).to_be_visible()
     filters.get_by_label('Paiement', exact=True).select_option('PAID')
-    expect(page.get_by_role('button', name='Ouvrir la commande ' + ids[0], exact=True)).to_be_visible()
-    search.fill('')
-    filters.get_by_label('Restaurant', exact=True).select_option('rest-ouaga-centre')
-    expect(page.get_by_role('button', name='Ouvrir la commande ' + ids[1], exact=True)).to_be_visible()
-    expect(page.get_by_role('button', name='Ouvrir la commande ' + ids[0], exact=True)).to_have_count(0)
+    filters.get_by_label('Statut', exact=True).select_option('CONFIRMED')
+    filters.get_by_label('Restaurant', exact=True).select_option('rest-koudougou')
+    apply.click()
+    expect(page.get_by_role('button', name='Ouvrir la commande ' + paged[0], exact=True)).to_be_visible()
     page.get_by_role('button', name='Effacer les filtres', exact=True).click()
-    checked('recherche et filtres combinés sur deux restaurants')
+    filters.get_by_label('Statut', exact=True).select_option('CONFIRMED')
+    apply.click()
+    checked('recherche serveur hors première page et filtres combinés appliqués explicitement')
     link = page.get_by_role('button', name='Ouvrir la commande ' + ids[0], exact=True)
+    expect(link).to_be_enabled()
     link.focus(); page.keyboard.press('Enter')
     detail = page.locator('aside[aria-label="Détail de la commande"]')
     expect(detail).to_be_visible()
-    page.get_by_role('button', name='Passer à ACCEPTED', exact=True).click()
-    expect(page.get_by_role('group', name='Confirmer le changement de commande', exact=True)).to_be_visible()
-    before = success(page, '{operationsOrders{id status updatedAt}}', token=admin)['operationsOrders']
-    assert next(o for o in before if o['id']==ids[0])['status']=='CONFIRMED'
-    page.get_by_role('button', name='Confirmer le changement', exact=True).click()
-    expect(detail.get_by_role('button', name='Passer à PREPARING', exact=True)).to_be_enabled()
-    capture(page, 'order-accepted.png')
-    detail.get_by_label('Livreur', exact=True).select_option('staff-rider')
-    page.get_by_role('button', name='Affecter ce livreur', exact=True).click()
-    expect(detail.get_by_text('Livreur affecté :', exact=False)).to_be_visible()
-    checked('sélection clavier, confirmation commande et affectation explicite')
-    # Le serveur accepte l’écriture mais sa réponse est perdue. Aucun rejeu automatique.
+    # The server accepts the write but its response is lost. No automatic replay.
     lost = {'count':0}
     def lose_order(route):
         if 'transitionOrder(' in (route.request.post_data or ''):
@@ -95,15 +106,61 @@ with sync_playwright() as p:
             route.abort('failed')
         else: route.fallback()
     page.route('**/api/delifast/graphql', lose_order)
-    page.get_by_role('button', name='Passer à PREPARING', exact=True).click()
+    page.get_by_role('button', name='Passer à ACCEPTED', exact=True).click()
     page.get_by_role('button', name='Confirmer le changement', exact=True).click()
     expect(detail.get_by_text('Résultat à vérifier.', exact=False)).to_be_visible()
     assert lost['count'] == 1
-    expect(detail.get_by_role('button', name='Passer à READY', exact=True)).to_be_disabled()
+    expect(page.get_by_role('button', name='Ouvrir la commande ' + ids[0], exact=True)).to_have_count(0)
+    expect(detail.get_by_role('button', name='Passer à PREPARING', exact=True)).to_be_disabled()
     page.unroute('**/api/delifast/graphql', lose_order)
     detail.get_by_role('button', name='Relire la commande avant de décider', exact=True).click()
+    expect(detail.get_by_text('ACCEPTED ·', exact=False)).to_be_visible()
+    expect(detail.get_by_role('button', name='Passer à PREPARING', exact=True)).to_be_enabled()
+    checked('mutation CONFIRMED acceptée réponse perdue : commande sortie de liste, détail indépendant relu et action réautorisée')
+    # A second lost write leaves the detail blocked. A page refresh may succeed,
+    # but a failed independent detail read must not clear that safety lock.
+    lost_preparing = {'count': 0}
+    def lose_preparing(route):
+        if 'transitionOrder(' in (route.request.post_data or ''):
+            lost_preparing['count'] += 1
+            response = route.fetch()
+            assert response.ok
+            route.abort('failed')
+        else: route.fallback()
+    page.route('**/api/delifast/graphql', lose_preparing)
+    detail.get_by_role('button', name='Passer à PREPARING', exact=True).click()
+    page.get_by_role('button', name='Confirmer le changement', exact=True).click()
+    expect(detail.get_by_text('Résultat à vérifier.', exact=False)).to_be_visible()
+    assert lost_preparing['count'] == 1
+    expect(detail.get_by_role('button', name='Passer à READY', exact=True)).to_be_disabled()
+    page.unroute('**/api/delifast/graphql', lose_preparing)
+    reload_fail = {'count': 0}
+    def fail_detail_reload(route):
+        if 'operationsOrder(id:' in (route.request.post_data or ''):
+            reload_fail['count'] += 1
+            route.abort('failed')
+        else: route.fallback()
+    page.route('**/api/delifast/graphql', fail_detail_reload)
+    detail.get_by_role('button', name='Relire la commande avant de décider', exact=True).click()
+    expect(page.locator('.df-banner[role="status"]')).to_contain_text(re.compile('Failed to fetch|Erreur de lecture du détail'))
+    assert reload_fail['count'] == 1
+    expect(detail.get_by_role('button', name='Passer à READY', exact=True)).to_be_disabled()
+    # Exercise the 2,000,000-byte client guard on a read. The response is
+    # deliberately not a success-shaped payload and no write is attempted.
+    def oversized_detail(route):
+        if 'operationsOrder(id:' in (route.request.post_data or ''):
+            route.fulfill(status=200, headers={'content-type': 'application/json'}, body='x' * 2000001)
+        else: route.fallback()
+    page.route('**/api/delifast/graphql', oversized_detail)
+    page.get_by_role('button', name='Actualiser', exact=True).click()
+    expect(page.locator('.df-banner[role="status"]')).to_contain_text('Réponse API trop volumineuse')
+    expect(detail.get_by_role('button', name='Passer à READY', exact=True)).to_be_disabled()
+    page.unroute('**/api/delifast/graphql', fail_detail_reload)
+    page.unroute('**/api/delifast/graphql', oversized_detail)
+    detail.get_by_role('button', name='Relire la commande avant de décider', exact=True).click()
+    expect(detail.get_by_text('PREPARING ·', exact=False)).to_be_visible()
     expect(detail.get_by_role('button', name='Passer à READY', exact=True)).to_be_enabled()
-    checked('réponse commande perdue : état relu, action verrouillée et aucune double écriture')
+    checked('échec de relecture détail et lecture API >2 Mo : verrouillage conservé malgré page chargée, puis reprise explicite sans faux succès ni écriture')
     page.get_by_role('button', name='Support', exact=True).click()
     support = page.locator('section[aria-label="Support"]')
     expect(support.get_by_role('button', name='Recette support 1', exact=True)).to_be_visible()
@@ -168,6 +225,7 @@ with sync_playwright() as p:
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'débordement horizontal global'
     capture(page, 'admin-support-390.png')
     page.get_by_role('button', name='Commandes', exact=True).click()
+    page.get_by_role('button', name='Effacer les filtres', exact=True).click()
     page.get_by_role('button', name='Ouvrir la commande ' + ids[0], exact=True).click()
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'débordement commandes'
     capture(page, 'admin-orders-390.png')

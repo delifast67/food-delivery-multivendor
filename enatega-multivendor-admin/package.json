@@ -16,7 +16,7 @@
     "prepare": "husky",
     "cy:open": "cypress open",
     "cy:run": "cypress run",
-    "test:delifast": "node --test tests/delifast.test.mjs tests/admin-orders.test.mjs tests/admin-support.test.mjs",
+    "test:delifast": "node --test tests/delifast.test.mjs tests/admin-orders.test.mjs tests/admin-support.test.mjs tests/admin-pagination.test.mjs",
     "test:admin-multivendor": "node --test tests/admin-multivendor-audit.test.mjs"
   },
   "dependencies": {

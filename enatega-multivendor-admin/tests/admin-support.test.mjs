@@ -34,6 +34,7 @@ test('les requêtes support valident le schéma, portent le bearer et le CAS', a
   const calls = transport(({ query, variables }) => {
     if (query.includes('operationsSupportTickets')) return response({ operationsSupportTickets: [ticket] });
     if (query.includes('operationsSupportTicket')) return response({ operationsSupportTicket: ticket });
+    if (query.includes('transitionOrder')) return response({ transitionOrder: { id: variables.orderId, status: variables.status } });
     return response({ transitionSupportTicket: { ...ticket, status: variables.status, version: variables.expectedVersion + 1 } });
   });
   const client = new DelifastClient();

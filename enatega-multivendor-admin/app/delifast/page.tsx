@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   DelifastClient,
   DelifastError,
@@ -13,8 +13,10 @@ import './delifast.css';
 import { parseHoursText, parsePolygonText } from '@/lib/delifast/zone-parsing';
 import RestaurantSchedule from './RestaurantSchedule';
 import SupportPanel from './SupportPanel';
-import { filterOrders, orderTransitions, canAssignRider } from '@/lib/delifast/order-workspace';
-
+import {
+  orderTransitions,
+  canAssignRider,
+} from '@/lib/delifast/order-workspace';
 const client = new DelifastClient();
 const statuses = [
   'ALL',
@@ -27,39 +29,95 @@ const statuses = [
   'DELIVERED',
   'CANCELLED',
 ];
+const paymentOptions = ['ALL', 'PENDING', 'PAID', 'REFUND_PENDING', 'REFUNDED'];
+type OrderFilters = {
+  status?: string;
+  payment?: string;
+  restaurantId?: string;
+  search?: string;
+};
+type PageSnapshot = DelifastSnapshot & { nextCursor: string | null };
 function money(value: number) {
   return `${new Intl.NumberFormat('fr-FR').format(value)} XOF`;
 }
+function cleanFilters(filters: OrderFilters): OrderFilters {
+  return Object.fromEntries(
+    Object.entries(filters).filter(([, value]) => value && value !== 'ALL')
+  );
+}
 export default function DelifastPage() {
   const enabled = process.env.NEXT_PUBLIC_DELIFAST_LOCAL_MODE === 'true';
-  const [snapshot, setSnapshot] = useState<DelifastSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<PageSnapshot | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<Order | null>(null);
   const [section, setSection] = useState<'orders' | 'support'>('orders');
-  const [search, setSearch] = useState('');
-  const [payment, setPayment] = useState('ALL');
-  const [status, setStatus] = useState('ALL');
-  const [restaurant, setRestaurant] = useState('ALL');
+  const [draftSearch, setDraftSearch] = useState('');
+  const [draftPayment, setDraftPayment] = useState('ALL');
+  const [draftStatus, setDraftStatus] = useState('ALL');
+  const [draftRestaurant, setDraftRestaurant] = useState('ALL');
+  const [filters, setFilters] = useState<OrderFilters>({});
+  const [cursors, setCursors] = useState<string[]>(['']);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [fresh, setFresh] = useState(false);
-  const refresh = async (): Promise<boolean> => {
+  const sequence = useRef(0);
+  const sessionEpoch = useRef(0);
+  const pageCursor = cursors[cursors.length - 1] ?? '';
+  const readDetail = async (
+    id: string,
+    token = sequence.current
+  ): Promise<boolean> => {
+    setDetailLoading(true);
+    try {
+      const value = await client.operationsOrder(id);
+      if (token !== sequence.current) return false;
+      if (!value) {
+        setFresh(false);
+        setError('Détail de commande introuvable.');
+        return false;
+      }
+      setDetail(value);
+      return true;
+    } catch (e) {
+      if (token === sequence.current) {
+        setFresh(false);
+        setError(
+          e instanceof Error ? e.message : 'Erreur de lecture du détail'
+        );
+      }
+      return false;
+    } finally {
+      if (token === sequence.current) setDetailLoading(false);
+    }
+  };
+  const refresh = async (cursor = pageCursor): Promise<boolean> => {
+    const token = ++sequence.current;
     setLoading(true);
     setFresh(false);
     setError('');
     try {
-      const next = await client.snapshot();
+      const next = (await client.snapshot(
+        cleanFilters(filters),
+        cursor || undefined
+      )) as PageSnapshot;
+      if (token !== sequence.current) return false;
       setSnapshot(next);
+      if (selectedId) {
+        const ok = await readDetail(selectedId, token);
+        if (!ok) return false;
+      }
+      if (token !== sequence.current) return false;
       setFresh(true);
-      setSelectedId((id) =>
-        id && next.orders.some((o) => o.id === id) ? id : null
-      );
+      return true;
     } catch (e) {
-      if (e instanceof DelifastError && e.code === 'STALE_SESSION') return false;
+      if (e instanceof DelifastError && e.code === 'STALE_SESSION')
+        return false;
       if (
         e instanceof DelifastError &&
         ['UNAUTHENTICATED', 'FORBIDDEN'].includes(e.code)
@@ -67,65 +125,75 @@ export default function DelifastPage() {
         client.clearSession();
         setSnapshot(null);
         setSelectedId(null);
+        setDetail(null);
       }
-      setError(e instanceof Error ? e.message : 'Erreur de chargement');
+      if (token === sequence.current) {
+        setFresh(false);
+        setError(e instanceof Error ? e.message : 'Erreur de chargement');
+      }
       return false;
     } finally {
-      setLoading(false);
+      if (token === sequence.current) {
+        setLoading(false);
+        setDetailLoading(false);
+      }
     }
-    return true;
   };
   useEffect(() => {
     if (enabled && client.hasSession) void refresh();
   }, [enabled]);
-  const filtered = useMemo(
-    () =>
-      filterOrders(snapshot?.orders ?? [], { status, restaurant, payment, search }),
-    [snapshot, status, restaurant, payment, search]
-  );
-  const selected = useMemo(
-    () => snapshot?.orders.find((o) => o.id === selectedId) ?? null,
-    [snapshot, selectedId]
-  );
   const run = async (
     action: () => Promise<unknown>,
     message: string,
     reconcile = true
   ): Promise<{ ok: boolean; actionCompleted: boolean; refreshed: boolean }> => {
-    // A ref makes the guard synchronous, unlike state which permits same-tick double clicks.
-    if (busyRef.current) return { ok: false, actionCompleted: false, refreshed: false };
+    if (busyRef.current)
+      return { ok: false, actionCompleted: false, refreshed: false };
     busyRef.current = true;
     setBusy(true);
     setError('');
     setNotice('');
+    const epoch = sessionEpoch.current;
+    const sessionGone = () => epoch !== sessionEpoch.current || client.hasSession === false;
     try {
       await action();
+      if (sessionGone())
+        return { ok: false, actionCompleted: true, refreshed: false };
       const refreshed = reconcile ? await refresh() : true;
+      if (sessionGone())
+        return { ok: false, actionCompleted: true, refreshed: false };
       if (!refreshed) {
-        setError('Écriture acceptée mais actualisation impossible : résultat ambigu. Relisez avant toute nouvelle écriture.');
+        setError(
+          'Écriture acceptée mais actualisation impossible : résultat ambigu. Relisez avant toute nouvelle écriture.'
+        );
         return { ok: false, actionCompleted: true, refreshed: false };
       }
       setNotice(message);
       return { ok: true, actionCompleted: true, refreshed: true };
     } catch (e) {
-      const text = e instanceof DelifastError ? `${e.code}: ${e.message}` : e instanceof Error ? e.message : 'Action refusée';
-      let refreshed = false;
-      if (reconcile) {
-        try {
-          refreshed = await refresh();
-        } catch {
-          /* retain original action error */
-        }
-      }
+      if (sessionGone())
+        return { ok: false, actionCompleted: false, refreshed: false };
+      const text =
+        e instanceof DelifastError
+          ? `${e.code}: ${e.message}`
+          : e instanceof Error
+            ? e.message
+            : 'Action refusée';
+      const refreshed = reconcile ? await refresh() : false;
+      if (sessionGone())
+        return { ok: false, actionCompleted: false, refreshed: false };
       setError(
-        `${text}${reconcile ? refreshed ? ' — État serveur relu ; vérifiez avant de réessayer.' : ' — Actualisation impossible ; résultat incertain. Relisez avant de réessayer.' : ''}`
+        `${text}${reconcile ? (refreshed ? ' — État serveur relu ; vérifiez avant de réessayer.' : ' — Actualisation impossible ; résultat incertain. Relisez avant de réessayer.') : ''}`
       );
-      return { ok: false, actionCompleted: false, refreshed: false };
+      return { ok: false, actionCompleted: false, refreshed };
     } finally {
       busyRef.current = false;
       setBusy(false);
     }
   };
+  useEffect(() => {
+    if (snapshot) void refresh();
+  }, [filters, cursors]);
   if (!enabled)
     return (
       <main className="df-shell">
@@ -155,9 +223,10 @@ export default function DelifastPage() {
                 async () => {
                   await client.login(email, password);
                   setPassword('');
-                  if (!await refresh()) {
-                    throw new Error('Connexion vérifiée, mais chargement du tableau de bord impossible. Réessayez la connexion.');
-                  }
+                  if (!(await refresh()))
+                    throw new Error(
+                      'Connexion vérifiée, mais chargement du tableau de bord impossible. Réessayez la connexion.'
+                    );
                 },
                 'Session ouverte',
                 false
@@ -197,20 +266,61 @@ export default function DelifastPage() {
       </main>
     );
   const logout = () => {
+    sessionEpoch.current++;
+    sequence.current++;
     const pending = client.logout();
     setSnapshot(null);
-    setFresh(false);
+    setDetail(null);
     setSelectedId(null);
+    setFresh(false);
+    setLoading(false);
+    setDetailLoading(false);
+    setCursors(['']);
+    setFilters({});
+    setDraftSearch('');
+    setDraftPayment('ALL');
+    setDraftStatus('ALL');
+    setDraftRestaurant('ALL');
     setSection('orders');
-    setSearch('');
-    setPayment('ALL');
-    setStatus('ALL');
-    setRestaurant('ALL');
     setError('');
-    setPassword('');
     setNotice('');
     void pending;
   };
+  const selectOrder = (id: string) => {
+    const token = ++sequence.current;
+    setLoading(false);
+    setSelectedId(id);
+    setDetail(null);
+    setError('');
+    void readDetail(id, token);
+  };
+  const applyFilters = () => {
+    sequence.current++;
+    setFilters(
+      cleanFilters({
+        search: draftSearch.trim(),
+        payment: draftPayment,
+        status: draftStatus,
+        restaurantId: draftRestaurant,
+      })
+    );
+    setCursors(['']);
+    setSelectedId(null);
+    setDetail(null);
+  };
+  const goPage = (cursor: string) => {
+    setCursors((current) =>
+      cursor
+        ? [...current, cursor]
+        : current.length > 1
+          ? current.slice(0, -1)
+          : current
+    );
+    setSelectedId(null);
+    setDetail(null);
+  };
+  const selectedRestaurant = (id: string) =>
+    snapshot.restaurants.find((r) => r.id === id)?.name ?? id;
   return (
     <main className="df-shell">
       <header className="df-header">
@@ -218,8 +328,8 @@ export default function DelifastPage() {
           <p className="df-kicker">DELiFAST / ADMIN LOCAL</p>
           <h1>Opérations</h1>
           <p className="df-muted">
-            {snapshot.me.name} · ADMIN · {snapshot.orders.length} commandes
-            visibles
+            {snapshot.me.name} · ADMIN · {snapshot.orders.length} commandes sur
+            cette page
           </p>
         </div>
         <div className="df-actions">
@@ -244,109 +354,238 @@ export default function DelifastPage() {
         </div>
       )}
       <nav className="df-workspace-nav" aria-label="Espaces admin">
-        <button className={section === 'orders' ? '' : 'df-secondary'} aria-pressed={section === 'orders'} onClick={() => setSection('orders')}>Commandes</button>
-        <button className={section === 'support' ? '' : 'df-secondary'} aria-pressed={section === 'support'} onClick={() => setSection('support')}>Support</button>
+        <button
+          disabled={busy || loading || detailLoading}
+          className={section === 'orders' ? '' : 'df-secondary'}
+          aria-pressed={section === 'orders'}
+          onClick={() => setSection('orders')}
+        >
+          Commandes
+        </button>
+        <button
+          disabled={busy || loading || detailLoading}
+          className={section === 'support' ? '' : 'df-secondary'}
+          aria-pressed={section === 'support'}
+          onClick={() => setSection('support')}
+        >
+          Support
+        </button>
       </nav>
-      {!fresh && !loading && <p className="df-banner df-error" role="alert">Actualisation nécessaire : les écritures sur les commandes et restaurants sont désactivées jusqu’à relecture du serveur.</p>}
-      {section === 'support' ? <SupportPanel client={client} onUnauthorized={logout} /> : <>
-      <h2>Commandes</h2>
-      <p className="df-muted">Données du dernier chargement, sans suivi temps réel. Les filtres portent sur les commandes chargées.</p>
-      <section className="df-filters" aria-label="Filtres commandes">
-        <label>Rechercher une commande
-          <input type="search" placeholder="Référence ou destinataire" value={search} onChange={e => setSearch(e.target.value)} />
-        </label>
-        <label>Paiement
-          <select aria-label="Paiement" value={payment} onChange={e => setPayment(e.target.value)}>
-            <option value="ALL">Tous les paiements</option>
-            {Array.from(new Set(snapshot.orders.map(o => o.paymentStatus))).sort().map(value => <option key={value} value={value}>{value}</option>)}
-          </select>
-        </label>
-        <label>
-          Statut
-          <select aria-label="Statut" value={status} onChange={(e) => setStatus(e.target.value)}>
-            {statuses.map((s) => (
-              <option key={s} value={s}>{s === 'ALL' ? 'Tous les statuts' : s}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Restaurant
-          <select
-            aria-label="Restaurant"
-            value={restaurant}
-            onChange={(e) => setRestaurant(e.target.value)}
-          >
-            <option value="ALL">Tous</option>
-            {snapshot.restaurants.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="df-secondary" onClick={() => { setSearch(''); setStatus('ALL'); setRestaurant('ALL'); setPayment('ALL'); }}>Effacer les filtres</button>
-        <span className="df-count" role="status">{filtered.length} résultat(s) sur {snapshot.orders.length}</span>
-      </section>
-      <section className="df-grid">
-        <div className="df-card df-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Commande</th>
-                <th>Statut</th>
-                <th>Paiement</th>
-                <th>Créée</th>
-                <th>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((order) => (
-                <tr
-                  key={order.id}
-                  className={selectedId === order.id ? 'selected' : ''}
-
+      {!fresh && !loading && (
+        <p className="df-banner df-error" role="alert">
+          Actualisation nécessaire : les écritures sont désactivées jusqu’à
+          relecture du serveur.
+        </p>
+      )}
+      {section === 'support' ? (
+        <SupportPanel client={client} onUnauthorized={logout} />
+      ) : (
+        <>
+          <h2>Commandes</h2>
+          <p className="df-muted">
+            Recherche et filtres appliqués explicitement au serveur. 20
+            commandes maximum par page.
+          </p>
+          <section className="df-filters" aria-label="Filtres commandes">
+            <label>
+              Rechercher une commande
+              <input
+                type="search"
+                placeholder="Référence ou destinataire"
+                maxLength={100}
+                value={draftSearch}
+                disabled={busy || loading || detailLoading}
+                onChange={(e) => setDraftSearch(e.target.value)}
+              />
+            </label>
+            <label>
+              Paiement
+              <select
+                aria-label="Paiement"
+                disabled={busy || loading || detailLoading}
+                value={draftPayment}
+                onChange={(e) => setDraftPayment(e.target.value)}
+              >
+                {paymentOptions.map((value) => (
+                  <option key={value} value={value}>
+                    {value === 'ALL' ? 'Tous les paiements' : value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Statut
+              <select
+                aria-label="Statut"
+                disabled={busy || loading || detailLoading}
+                value={draftStatus}
+                onChange={(e) => setDraftStatus(e.target.value)}
+              >
+                {statuses.map((s) => (
+                  <option key={s} value={s}>
+                    {s === 'ALL' ? 'Tous les statuts' : s}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Restaurant
+              <select
+                aria-label="Restaurant"
+                disabled={busy || loading || detailLoading}
+                value={draftRestaurant}
+                onChange={(e) => setDraftRestaurant(e.target.value)}
+              >
+                <option value="ALL">Tous</option>
+                {snapshot.restaurants.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              disabled={busy || loading || detailLoading}
+              onClick={applyFilters}
+            >
+              Appliquer les filtres
+            </button>
+            <button
+              className="df-secondary"
+              disabled={busy || loading || detailLoading}
+              onClick={() => {
+                setDraftSearch('');
+                setDraftStatus('ALL');
+                setDraftRestaurant('ALL');
+                setDraftPayment('ALL');
+                setFilters({});
+                setCursors(['']);
+                setSelectedId(null);
+                setDetail(null);
+              }}
+            >
+              Effacer les filtres
+            </button>
+            <span className="df-count" role="status">
+              {snapshot.orders.length} résultat(s) sur cette page
+            </span>
+          </section>
+          <section className="df-grid">
+            <div className="df-card df-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Commande</th>
+                    <th>Statut</th>
+                    <th>Paiement</th>
+                    <th>Créée</th>
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {snapshot.orders.map((order) => (
+                    <tr
+                      key={order.id}
+                      className={selectedId === order.id ? 'selected' : ''}
+                    >
+                      <td>
+                        <button
+                          className="df-order-link"
+                          aria-label={`Ouvrir la commande ${order.id}`}
+                          disabled={busy || loading || detailLoading}
+                          onClick={() => selectOrder(order.id)}
+                        >
+                          #{order.id}
+                        </button>
+                        <small>{selectedRestaurant(order.restaurantId)}</small>
+                      </td>
+                      <td>
+                        <span className="df-pill">{order.status}</span>
+                      </td>
+                      <td>{order.paymentStatus}</td>
+                      <td>
+                        {new Date(order.createdAt).toLocaleString('fr-FR')}
+                      </td>
+                      <td>{money(order.checkout.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {snapshot.orders.length === 0 && (
+                <p className="df-empty">Aucune commande pour ces filtres.</p>
+              )}
+              <div className="df-button-row" aria-label="Pagination">
+                <button
+                  className="df-secondary"
+                  disabled={cursors.length === 1 || loading || busy}
+                  onClick={() => goPage('')}
                 >
-                  <td>
-                    <button className="df-order-link" aria-label={`Ouvrir la commande ${order.id}`} onClick={() => setSelectedId(order.id)}>#{order.id}</button>
-                    <small>
-                      {snapshot.restaurants.find(
-                        (r) => r.id === order.restaurantId
-                      )?.name ?? order.restaurantId}
-                    </small>
-                  </td>
-                  <td>
-                    <span className="df-pill">{order.status}</span>
-                  </td>
-                  <td>{order.paymentStatus}</td>
-                  <td>{new Date(order.createdAt).toLocaleString('fr-FR')}</td>
-                  <td>{money(order.checkout.total)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {filtered.length === 0 && (
-            <p className="df-empty">Aucune commande pour ces filtres.</p>
-          )}
-        </div>
-        {selected && (
-          <OrderPanel
-            key={selected.id}
-            order={selected}
+                  Précédente
+                </button>
+                <span>Page {cursors.length}</span>
+                <button
+                  className="df-secondary"
+                  disabled={!snapshot.nextCursor || loading || busy}
+                  onClick={() => goPage(snapshot.nextCursor ?? '')}
+                >
+                  Suivante
+                </button>
+              </div>
+            </div>
+            {selectedId && (
+              <>
+                {detailLoading && (
+                  <aside className="df-card df-detail">
+                    <p>Lecture du détail…</p>
+                  </aside>
+                )}
+                {detail && (
+                  <OrderPanel
+                    key={detail.id}
+                    order={detail}
+                    snapshot={snapshot}
+                    refresh={refresh}
+                    busy={busy || loading || detailLoading || !fresh}
+                    run={run}
+                    close={() => {
+                      sequence.current++;
+                      setSelectedId(null);
+                      setDetail(null);
+                    }}
+                  />
+                )}
+              </>
+            )}
+          </section>
+          <RestaurantProfilesPanel
             snapshot={snapshot}
-            refresh={refresh}
             busy={busy || loading || !fresh}
             run={run}
-            close={() => setSelectedId(null)}
+            refreshSnapshot={refresh}
           />
-        )}
-      </section>
-      <RestaurantProfilesPanel snapshot={snapshot} busy={busy || loading || !fresh} run={run} refreshSnapshot={refresh} />
-      <RestaurantSchedule restaurants={snapshot.restaurants} busy={busy || loading || !fresh} save={async (id, version, schedule) => (await run(() => client.setRestaurantSchedule(id, version, schedule), 'Horaires restaurant enregistrés')).ok} />
-      <DeliveryZonesPanel snapshot={snapshot} busy={busy || loading || !fresh} refresh={refresh} />
-      </>}
+          <RestaurantSchedule
+            restaurants={snapshot.restaurants}
+            busy={busy || loading || !fresh}
+            save={async (id, version, schedule) =>
+              (
+                await run(
+                  () => client.setRestaurantSchedule(id, version, schedule),
+                  'Horaires restaurant enregistrés'
+                )
+              ).ok
+            }
+          />
+          <DeliveryZonesPanel
+            snapshot={snapshot}
+            busy={busy || loading || !fresh}
+            refresh={refresh}
+          />
+        </>
+      )}
     </main>
   );
 }
+
 function emptyZone(): DeliveryZoneInput {
   return {
     name: '', shape: 'CIRCLE', center: null, radiusMeters: null, polygon: null,
@@ -511,14 +750,23 @@ function OrderPanel({
   order: Order;
   snapshot: DelifastSnapshot;
   busy: boolean;
-  run: (a: () => Promise<unknown>, m: string) => Promise<{ ok: boolean; actionCompleted: boolean; refreshed: boolean }>;
+  run: (
+    a: () => Promise<unknown>,
+    m: string
+  ) => Promise<{ ok: boolean; actionCompleted: boolean; refreshed: boolean }>;
   close: () => void;
   refresh: () => Promise<boolean>;
 }) {
   const detailRef = useRef<HTMLElement>(null);
-  useEffect(() => { detailRef.current?.focus(); }, []);
+  useEffect(() => {
+    detailRef.current?.focus();
+  }, []);
   const [blocked, setBlocked] = useState(false);
-  const [pending, setPending] = useState<{ target: string; expected: string; revision: string } | null>(null);
+  const [pending, setPending] = useState<{
+    target: string;
+    expected: string;
+    revision: string;
+  } | null>(null);
   const [rider, setRider] = useState('');
   const lock = useRef(false);
   const transitions = orderTransitions(order);
@@ -531,17 +779,33 @@ function OrderPanel({
       setPending(null);
       setRider('');
       if (!result.ok) setBlocked(true);
-    } finally { lock.current = false; }
+    } finally {
+      lock.current = false;
+    }
   };
   return (
-    <aside ref={detailRef} tabIndex={-1} className="df-card df-detail" aria-label="Détail de la commande">
+    <aside
+      ref={detailRef}
+      tabIndex={-1}
+      className="df-card df-detail"
+      aria-label="Détail de la commande"
+    >
       <div className="df-detail-head">
         <div>
           <p className="df-kicker">DÉTAIL</p>
           <h2 className="df-reference">#{order.id}</h2>
-          <p className="df-muted">{order.status} · {snapshot.restaurants.find(r => r.id === order.restaurantId)?.name ?? order.restaurantId}</p>
+          <p className="df-muted">
+            {order.status} ·{' '}
+            {snapshot.restaurants.find((r) => r.id === order.restaurantId)
+              ?.name ?? order.restaurantId}
+          </p>
         </div>
-        <button className="df-icon" onClick={close} aria-label="Fermer">
+        <button
+          className="df-icon"
+          disabled={busy}
+          onClick={close}
+          aria-label="Fermer"
+        >
           ×
         </button>
       </div>
@@ -605,34 +869,130 @@ function OrderPanel({
           </li>
         ))}
       </ol>
-      {blocked && <div className="df-banner df-error" role="alert">
-        Résultat à vérifier. Aucune action ne sera rejouée automatiquement.
-        <button className="df-secondary" onClick={async () => { if (lock.current) return; lock.current = true; try { if (await refresh()) { setPending(null); setRider(''); setBlocked(false); } } finally { lock.current = false; } }}>Relire la commande avant de décider</button>
-      </div>}
-      {transitions.length > 0 && (
-        <div className="df-button-row">
-          {transitions.map(target => <button key={target} disabled={busy || blocked} onClick={() => setPending({ target, expected: order.status, revision: order.updatedAt })}>
-            {target === 'CANCELLED' ? 'Annuler la commande' : `Passer à ${target}`}
-          </button>)}
+      {blocked && (
+        <div className="df-banner df-error" role="alert">
+          Résultat à vérifier. Aucune action ne sera rejouée automatiquement.
+          <button
+            className="df-secondary"
+            onClick={async () => {
+              if (lock.current) return;
+              lock.current = true;
+              try {
+                if (await refresh()) {
+                  setPending(null);
+                  setRider('');
+                  setBlocked(false);
+                }
+              } finally {
+                lock.current = false;
+              }
+            }}
+          >
+            Relire la commande avant de décider
+          </button>
         </div>
       )}
-      {pending && <div className="df-confirm" role="group" aria-label="Confirmer le changement de commande">
-        <p>Commande #{order.id} : {pending.expected} → {pending.target}.</p>
-        {pending.target === 'CANCELLED' && <p>Le remboursement restera à traiter ; cette action ne rembourse pas le client.</p>}
-        <button disabled={busy || blocked || pending.expected !== order.status || pending.revision !== order.updatedAt} onClick={() => void perform(() => client.transition(order.id, pending.target, pending.expected, pending.revision), `Commande ${pending.target}`)}>Confirmer le changement</button>
-        <button className="df-secondary" disabled={busy} onClick={() => setPending(null)}>Ne pas modifier</button>
-      </div>}
-      {riderAllowed && <div className="df-rider-assignment">
-        <label>Livreur
-          <select aria-label="Livreur" value={rider} disabled={busy || blocked} onChange={e => setRider(e.target.value)}>
-            <option value="">Choisir…</option>
-            {snapshot.riders.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
-        </label>
-        <p className="df-muted">Comptes actifs uniquement ; disponibilité et position non vérifiées.</p>
-        <button disabled={busy || blocked || !rider} onClick={() => void perform(() => client.assignRider(order.id, rider, order.status), 'Livreur affecté')}>Affecter ce livreur</button>
-      </div>}
-
+      {transitions.length > 0 && (
+        <div className="df-button-row">
+          {transitions.map((target) => (
+            <button
+              key={target}
+              disabled={busy || blocked}
+              onClick={() =>
+                setPending({
+                  target,
+                  expected: order.status,
+                  revision: order.updatedAt,
+                })
+              }
+            >
+              {target === 'CANCELLED'
+                ? 'Annuler la commande'
+                : `Passer à ${target}`}
+            </button>
+          ))}
+        </div>
+      )}
+      {pending && (
+        <div
+          className="df-confirm"
+          role="group"
+          aria-label="Confirmer le changement de commande"
+        >
+          <p>
+            Commande #{order.id} : {pending.expected} → {pending.target}.
+          </p>
+          {pending.target === 'CANCELLED' && (
+            <p>
+              Le remboursement restera à traiter ; cette action ne rembourse pas
+              le client.
+            </p>
+          )}
+          <button
+            disabled={
+              busy ||
+              blocked ||
+              pending.expected !== order.status ||
+              pending.revision !== order.updatedAt
+            }
+            onClick={() =>
+              void perform(
+                () =>
+                  client.transition(
+                    order.id,
+                    pending.target,
+                    pending.expected,
+                    pending.revision
+                  ),
+                `Commande ${pending.target}`
+              )
+            }
+          >
+            Confirmer le changement
+          </button>
+          <button
+            className="df-secondary"
+            disabled={busy}
+            onClick={() => setPending(null)}
+          >
+            Ne pas modifier
+          </button>
+        </div>
+      )}
+      {riderAllowed && (
+        <div className="df-rider-assignment">
+          <label>
+            Livreur
+            <select
+              aria-label="Livreur"
+              value={rider}
+              disabled={busy || blocked}
+              onChange={(e) => setRider(e.target.value)}
+            >
+              <option value="">Choisir…</option>
+              {snapshot.riders.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="df-muted">
+            Comptes actifs uniquement ; disponibilité et position non vérifiées.
+          </p>
+          <button
+            disabled={busy || blocked || !rider}
+            onClick={() =>
+              void perform(
+                () => client.assignRider(order.id, rider, order.status),
+                'Livreur affecté'
+              )
+            }
+          >
+            Affecter ce livreur
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

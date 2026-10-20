@@ -5,7 +5,8 @@ describe('Delifast local admin', () => {
     cy.intercept('POST', '/api/delifast/graphql', (req) => {
       if (req.body.query.includes('staffLogin')) req.reply({ data: { staffLogin: { token: 'local-token-123456789012345', user: snapshot.data.me } } });
       else if (req.body.query.includes('mutation Logout')) req.reply({ data: { staffLogout: true } });
-      else req.reply(snapshot);
+      else if (req.body.query.includes('query OperationsOrder(')) req.reply({ data: { operationsOrder: snapshot.data.operationsOrders[0] } });
+      else req.reply({ data: { ...snapshot.data, operationsOrdersPage: { items: snapshot.data.operationsOrders, nextCursor: null } } });
     });
     cy.visit('/delifast');
     cy.get('input[type=email]').type('admin@example.test');

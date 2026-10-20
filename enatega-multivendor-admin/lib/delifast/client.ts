@@ -48,9 +48,32 @@ export type Order = {
   checkout: Checkout;
 };
 export type DeliveryPoint = { latitude: number; longitude: number };
-export type DeliveryZone = { id: string; restaurantId: string; name: string; shape: 'CIRCLE' | 'POLYGON'; center: DeliveryPoint | null; radiusMeters: number | null; polygon: DeliveryPoint[] | null; enabled: boolean; feeXof: number; minimumOrderXof: number; estimatedMinutes: number; priority: number; demo: boolean; hours: { day: number; startMinute: number; endMinute: number }[]; version: number };
-export type DeliveryZoneInput = Omit<DeliveryZone, 'id' | 'restaurantId' | 'version'>;
-export type RestaurantHours = { day: number; startMinute: number; endMinute: number };
+export type DeliveryZone = {
+  id: string;
+  restaurantId: string;
+  name: string;
+  shape: 'CIRCLE' | 'POLYGON';
+  center: DeliveryPoint | null;
+  radiusMeters: number | null;
+  polygon: DeliveryPoint[] | null;
+  enabled: boolean;
+  feeXof: number;
+  minimumOrderXof: number;
+  estimatedMinutes: number;
+  priority: number;
+  demo: boolean;
+  hours: { day: number; startMinute: number; endMinute: number }[];
+  version: number;
+};
+export type DeliveryZoneInput = Omit<
+  DeliveryZone,
+  'id' | 'restaurantId' | 'version'
+>;
+export type RestaurantHours = {
+  day: number;
+  startMinute: number;
+  endMinute: number;
+};
 export type Restaurant = {
   id: string;
   name: string;
@@ -66,9 +89,18 @@ export type RestaurantProfileInput = {
   open: boolean;
   deliveryZoneIds: string[];
 };
+export type OrderFilters = {
+  status?: string;
+  payment?: string;
+  restaurantId?: string;
+  search?: string;
+};
+export type OrderSummary = Pick<Order, 'id' | 'status' | 'paymentStatus' | 'createdAt' | 'updatedAt' | 'restaurantId' | 'riderId'> & { deliveryAddress: Pick<Order['deliveryAddress'], 'recipientName'>; checkout: Pick<Checkout, 'total'> };
+export type OrderPage = { items: OrderSummary[]; nextCursor: string | null };
 export type DelifastSnapshot = {
   me: StaffUser;
-  orders: Order[];
+  orders: OrderSummary[];
+  nextCursor: string | null;
   restaurants: Restaurant[];
   riders: StaffUser[];
 };
@@ -111,9 +143,48 @@ export class DelifastError extends Error {
 }
 const SESSION_KEY = 'delifast-local-session';
 const ME_QUERY = 'query Me { me { id name role restaurantId } }';
-const RESTAURANT_FIELDS = 'id name description open deliveryZoneIds version weeklySchedule { day startMinute endMinute }';
-const OPERATIONS_QUERY = `query Operations { operationsOrders { id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity baseUnitPrice unitPrice selectedOptions { groupName name priceXof } total } } } operationsRestaurants { ${RESTAURANT_FIELDS} } availableRiders { id name role restaurantId } }`;
-const SUPPORT_FIELDS = 'id customerId creatorId creatorRole restaurantId subject description status version createdAt updatedAt history { status at actorRole note }';
+const RESTAURANT_FIELDS =
+  'id name description open deliveryZoneIds version weeklySchedule { day startMinute endMinute }';
+const ORDER_FIELDS =
+  'id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity baseUnitPrice unitPrice selectedOptions { groupName name priceXof } total } }';
+const OPERATIONS_QUERY = `query Operations($limit: Int, $after: String, $status: String, $payment: String, $restaurantId: ID, $search: String) { operationsOrdersPage(limit: $limit, after: $after, status: $status, payment: $payment, restaurantId: $restaurantId, search: $search) { items { id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName } checkout { total } } nextCursor } operationsRestaurants { ${RESTAURANT_FIELDS} } availableRiders { id name role restaurantId } }`;
+const MAX_RESPONSE_BYTES = 2_000_000;
+/** Bound bytes before JSON parsing: a huge list must fail closed, not freeze the admin. */
+async function readBody(response: Response): Promise<GraphQLBody> {
+  const oversized = () =>
+    new DelifastError(
+      'Réponse API trop volumineuse. Réduisez les filtres ou contactez l’équipe technique.',
+      'RESPONSE_TOO_LARGE'
+    );
+  if (Number(response.headers?.get('content-length')) > MAX_RESPONSE_BYTES) {
+    await response.body?.cancel();
+    throw oversized();
+  }
+  if (!response.body) return response.json();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0,
+    text = '';
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw oversized();
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return JSON.parse(text);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+const SUPPORT_FIELDS =
+  'id customerId creatorId creatorRole restaurantId subject description status version createdAt updatedAt history { status at actorRole note }';
 function storageGet(key: string) {
   try {
     return typeof window !== 'undefined'
@@ -172,6 +243,7 @@ export class DelifastClient {
         },
         body: JSON.stringify({ query, variables }),
         cache: 'no-store',
+        signal: AbortSignal.timeout(15000),
       });
     } catch (e) {
       if (generation !== this.generation)
@@ -180,9 +252,15 @@ export class DelifastClient {
     }
     let body: GraphQLBody = {};
     try {
-      body = await response.json();
-    } catch {
-      body = {};
+      body = await readBody(response);
+    } catch (e) {
+      if (generation !== this.generation)
+        throw new DelifastError('Réponse de session périmée', 'STALE_SESSION');
+      if (e instanceof DelifastError) throw e;
+      throw new DelifastError(
+        'Réponse API illisible ou interrompue',
+        'INVALID_RESPONSE'
+      );
     }
     // Check generation after consuming the body too: a logout/login can race JSON parsing.
     if (generation !== this.generation)
@@ -214,7 +292,10 @@ export class DelifastClient {
     }
     return me.me;
   }
-  async snapshot(): Promise<DelifastSnapshot> {
+  async snapshot(
+    filters: OrderFilters = {},
+    after?: string
+  ): Promise<DelifastSnapshot> {
     // Never request operational data until the restored session has been checked.
     const meData = await this.request<{ me: StaffUser | null }>(ME_QUERY);
     if (!meData.me || meData.me.role !== 'ADMIN') {
@@ -225,26 +306,60 @@ export class DelifastClient {
       );
     }
     const data = await this.request<{
-      operationsOrders: Order[];
+      operationsOrdersPage: OrderPage;
       operationsRestaurants: Restaurant[];
       availableRiders: StaffUser[];
-    }>(OPERATIONS_QUERY);
+    }>(OPERATIONS_QUERY, {
+      ...filters,
+      limit: 20,
+      ...(after ? { after } : {}),
+    });
+    if (
+      !data.operationsOrdersPage ||
+      !Array.isArray(data.operationsOrdersPage.items) ||
+      data.operationsOrdersPage.items.length > 20 ||
+      (data.operationsOrdersPage.nextCursor !== null &&
+        typeof data.operationsOrdersPage.nextCursor !== 'string') ||
+      !Array.isArray(data.operationsRestaurants) ||
+      !Array.isArray(data.availableRiders)
+    )
+      throw new DelifastError('Liste API invalide', 'INVALID_RESPONSE');
     return {
       me: meData.me,
-      orders: data.operationsOrders,
+      orders: data.operationsOrdersPage.items,
+      nextCursor: data.operationsOrdersPage.nextCursor,
       restaurants: data.operationsRestaurants,
       riders: data.availableRiders,
     };
   }
-  async operationsSupportTickets(limit = 20, offset = 0): Promise<SupportTicket[]> {
-    const data = await this.request<{ operationsSupportTickets: SupportTicket[] }>(
+  async operationsOrder(id: string): Promise<Order | null> {
+    const data = await this.request<{ operationsOrder: Order | null }>(
+      `query OperationsOrder($id: ID!) { operationsOrder(id: $id) { ${ORDER_FIELDS} } }`,
+      { id }
+    );
+    if (
+      data.operationsOrder !== null &&
+      (!data.operationsOrder || data.operationsOrder.id !== id)
+    )
+      throw new DelifastError('Détail API invalide', 'INVALID_RESPONSE');
+    return data.operationsOrder;
+  }
+  async operationsSupportTickets(
+    limit = 20,
+    offset = 0
+  ): Promise<SupportTicket[]> {
+    const data = await this.request<{
+      operationsSupportTickets: SupportTicket[];
+    }>(
       `query OperationsSupportTickets($limit: Int, $offset: Int) { operationsSupportTickets(limit: $limit, offset: $offset) { ${SUPPORT_FIELDS} } }`,
       { limit, offset }
     );
     return data.operationsSupportTickets;
   }
   async operationsSupportTicket(id: string): Promise<SupportTicket | null> {
-    const data = await this.request<{ operationsSupportTicket: SupportTicket | null }>(
+    const data = await this.request<{
+      operationsSupportTicket: SupportTicket | null;
+    }>(
       `query OperationsSupportTicket($id: ID!) { operationsSupportTicket(id: $id) { ${SUPPORT_FIELDS} } }`,
       { id }
     );
@@ -262,7 +377,12 @@ export class DelifastClient {
     );
     return data.transitionSupportTicket;
   }
-  async transition(orderId: string, status: string, expectedStatus: string, expectedUpdatedAt?: string) {
+  async transition(
+    orderId: string,
+    status: string,
+    expectedStatus: string,
+    expectedUpdatedAt?: string
+  ) {
     const variables = {
       orderId,
       status,
@@ -296,7 +416,11 @@ export class DelifastClient {
     );
     return data.createDeliveryZone;
   }
-  async updateDeliveryZone(id: string, expectedVersion: number, input: DeliveryZoneInput) {
+  async updateDeliveryZone(
+    id: string,
+    expectedVersion: number,
+    input: DeliveryZoneInput
+  ) {
     const data = await this.request<{ updateDeliveryZone: DeliveryZone }>(
       'mutation UpdateDeliveryZone($id: ID!, $expectedVersion: Int!, $input: DeliveryZoneInput!) { updateDeliveryZone(id: $id, expectedVersion: $expectedVersion, input: $input) { id restaurantId name shape center { latitude longitude } radiusMeters polygon { latitude longitude } enabled feeXof minimumOrderXof estimatedMinutes priority demo hours { day startMinute endMinute } version } }',
       { id, expectedVersion, input }
@@ -310,14 +434,22 @@ export class DelifastClient {
     );
     return data.createRestaurantProfile;
   }
-  async updateRestaurantProfile(id: string, expectedVersion: number, input: RestaurantProfileInput) {
+  async updateRestaurantProfile(
+    id: string,
+    expectedVersion: number,
+    input: RestaurantProfileInput
+  ) {
     const data = await this.request<{ updateRestaurantProfile: Restaurant }>(
       `mutation UpdateRestaurantProfile($id: ID!, $expectedVersion: Int!, $input: RestaurantProfileInput!) { updateRestaurantProfile(id: $id, expectedVersion: $expectedVersion, input: $input) { ${RESTAURANT_FIELDS} } }`,
       { id, expectedVersion, input }
     );
     return data.updateRestaurantProfile;
   }
-  async setRestaurantSchedule(id: string, expectedVersion: number, weeklySchedule: RestaurantHours[] | null) {
+  async setRestaurantSchedule(
+    id: string,
+    expectedVersion: number,
+    weeklySchedule: RestaurantHours[] | null
+  ) {
     const data = await this.request<{ setRestaurantSchedule: Restaurant }>(
       `mutation SetRestaurantSchedule($id: ID!, $expectedVersion: Int!, $weeklySchedule: [RestaurantHoursInput!]) { setRestaurantSchedule(id: $id, expectedVersion: $expectedVersion, weeklySchedule: $weeklySchedule) { ${RESTAURANT_FIELDS} } }`,
       { id, expectedVersion, weeklySchedule }
@@ -363,12 +495,21 @@ export class DelifastClient {
       field === 'setRestaurantOpen'
         ? `${RESTAURANT_FIELDS}`
         : 'id status paymentStatus createdAt updatedAt restaurantId riderId';
-    return (
-      await this.request<Record<string, T>>(
-        `mutation Operation(${variableDefs}) { ${selection} { ${fields} } }`,
-        variables
-      )
-    )[field];
+    const data = await this.request<Record<string, T>>(
+      `mutation Operation(${variableDefs}) { ${selection} { ${fields} } }`,
+      variables
+    );
+    const value = data[field] as Record<string, unknown> | null;
+    if (!value || typeof value !== 'object' || Array.isArray(value) ||
+        value.id !== (variables.orderId ?? variables.id) ||
+        (field === 'transitionOrder' && value.status !== variables.status) ||
+        (field === 'assignRider' && value.riderId !== variables.riderId) ||
+        (field === 'setRestaurantOpen' && (value.open !== variables.open || !Number.isInteger(value.version))))
+      throw new DelifastError(
+        'Réponse de mise à jour incomplète : relisez l’état serveur avant de décider.',
+        'INVALID_RESPONSE'
+      );
+    return data[field];
   }
 }
 export const createDelifastClient = (endpoint?: string) =>

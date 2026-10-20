@@ -26,7 +26,7 @@ function loadRoute(path, fetch, target = 'http://127.0.0.1:4000/graphql') {
   }
   const exports = {};
   const context = vm.createContext({
-    exports, fetch, TextEncoder, AbortSignal,
+    exports, fetch, TextEncoder, TextDecoder, AbortSignal,
     process: { env: {
       DELIFAST_LOCAL_MODE: 'true',
       DELIFAST_API_URL: target,

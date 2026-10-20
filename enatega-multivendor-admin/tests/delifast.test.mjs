@@ -26,7 +26,7 @@ function transport(handler) {
   };
   return calls;
 }
-const operations = { operationsOrders: [], operationsRestaurants: [], availableRiders: [] };
+const operations = { operationsOrdersPage: { items: [], nextCursor: null }, operationsRestaurants: [], availableRiders: [] };
 afterEach(() => { globalThis.fetch = originalFetch; delete globalThis.window; });
 
 test('les vrais documents client valident le schéma v1, avec variables CAS et bearer', async () => {
@@ -35,9 +35,9 @@ test('les vrais documents client valident le schéma v1, avec variables CAS et b
     if (query.includes('staffLogin')) return response({ staffLogin: { token, user: admin } });
     if (query.includes('query Me')) return response({ me: admin });
     if (query.includes('query Operations')) return response(operations);
-    if (query.includes('transitionOrder')) return response({ transitionOrder: { id: variables.orderId } });
-    if (query.includes('assignRider')) return response({ assignRider: { id: variables.orderId } });
-    if (query.includes('setRestaurantOpen')) return response({ setRestaurantOpen: { id: variables.id } });
+    if (query.includes('transitionOrder')) return response({ transitionOrder: { id: variables.orderId, status: variables.status } });
+    if (query.includes('assignRider')) return response({ assignRider: { id: variables.orderId, riderId: variables.riderId } });
+    if (query.includes('setRestaurantOpen')) return response({ setRestaurantOpen: { id: variables.id, open: variables.open, version: variables.expectedVersion + 1 } });
     return response({ staffLogout: true });
   });
   const client = new DelifastClient();
@@ -180,13 +180,15 @@ test('les codes zone inconnue et conflit sont transmis sans rejeu', async () => 
 
 // Exercise the actual page handlers with a minimal hook host, not a DOM renderer.
 // This catches wiring omissions that the HTTP client and source-pattern tests miss.
-async function pageHarness(client) {
+async function pageHarness(client, withEffects = false) {
   const { createRequire } = await import('node:module');
   const { runInNewContext } = await import('node:vm');
   const require = createRequire(import.meta.url);
   const React = require('react');
   const states = [];
-  let cursor = 0;
+  let cursor = 0, effectCursor = 0;
+  const effectDeps = [];
+  let pendingEffects = [];
   const hooks = {
     useState(initial) {
       const index = cursor++;
@@ -199,7 +201,15 @@ async function pageHarness(client) {
       return states[index];
     },
     useMemo: fn => fn(),
-    useEffect() {},
+    useEffect(fn, deps) {
+      if (!withEffects) return;
+      const index = effectCursor++;
+      const old = effectDeps[index];
+      if (!old || deps.some((value, i) => value !== old[i])) {
+        effectDeps[index] = deps;
+        pendingEffects.push(fn);
+      }
+    },
   };
   const page = fs.readFileSync(new URL('../app/delifast/page.tsx', import.meta.url), 'utf8');
   const compiledPage = ts.transpileModule(page, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
@@ -209,7 +219,7 @@ async function pageHarness(client) {
   const workspaceJs = ts.transpileModule(workspaceSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
   const workspace = await import(`data:text/javascript;base64,${Buffer.from(workspaceJs).toString('base64')}`);
   runInNewContext(compiledPage, {
-    module, exports: module.exports,
+    module, exports: module.exports, Error,
     process: { env: { NEXT_PUBLIC_DELIFAST_LOCAL_MODE: 'true' } },
     require(name) {
       if (name === 'react') return hooks;
@@ -222,7 +232,12 @@ async function pageHarness(client) {
       return require(name);
     },
   });
-  const render = () => { cursor = 0; return module.exports.default(); };
+  const render = () => {
+    cursor = 0; effectCursor = 0; pendingEffects = [];
+    const tree = module.exports.default();
+    for (const effect of pendingEffects) effect();
+    return tree;
+  };
   const find = (node, predicate) => {
     if (!node || typeof node !== 'object') return null;
     if (predicate(node)) return node;
@@ -239,7 +254,7 @@ test('la connexion admin charge réellement le tableau de bord sans rechargement
   const calls = [];
   const harness = await pageHarness({
     async login() { calls.push('login'); return admin; },
-    async snapshot() { calls.push('snapshot'); return { me: admin, orders: [], restaurants: [], riders: [] }; },
+    async snapshot() { calls.push('snapshot'); return { me: admin, orders: [], nextCursor: null, restaurants: [], riders: [] }; },
   });
   const form = harness.find(harness.render(), node => node.type === 'form');
   form.props.onSubmit({ preventDefault() {} });
@@ -270,7 +285,7 @@ test('une écriture et une relecture échouées ne sont pas annoncées comme ét
     async login() { return admin; },
     async snapshot() {
       if (unavailable) throw new Error('Hors ligne');
-      return { me: admin, orders: [], restaurants: [], riders: [] };
+      return { me: admin, orders: [], nextCursor: null, restaurants: [], riders: [] };
     },
   });
   harness.find(harness.render(), node => node.type === 'form').props.onSubmit({ preventDefault() {} });
@@ -389,4 +404,79 @@ test('la garde synchrone empêche deux enregistrements dans le même tour', asyn
   submit({ preventDefault() {} }); submit({ preventDefault() {} });
   assert.equal(calls, 1); resolve(true); await h.settle();
   assert.equal(h.find(h.render(), node => node.type === 'form'), null);
+});
+
+const uiOrder = (id = 'fixture-ui') => ({ id, status: 'CONFIRMED', paymentStatus: 'PAID', restaurantId: 'r1', updatedAt: '2026-10-20T00:00:00.000Z', createdAt: '2026-10-20T00:00:00.000Z', deliveryAddress: { recipientName: 'Fictif' }, checkout: { total: 1000 }, history: [] });
+const uiSnapshot = (orders = [], nextCursor = null) => ({ me: admin, orders, nextCursor, restaurants: [], riders: [] });
+async function loginHarness(client, effects = false) {
+  const h = await pageHarness(client, effects);
+  h.find(h.render(), node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  await h.settle(); h.render(); await h.settle();
+  return h;
+}
+const orderPanel = h => h.find(h.render(), node => node.props?.order && typeof node.props?.refresh === 'function');
+test('navigation curseur serveur et application de filtres repartent de la première page', async () => {
+  const calls = [];
+  const h = await loginHarness({
+    async login() { return admin; },
+    async snapshot(filters, after) { calls.push({ filters, after }); return uiSnapshot([], after ? null : 'curseur-page-2'); },
+  }, true);
+  buttonWith(h, h.render(), 'Suivante').props.onClick(); h.render(); await h.settle();
+  assert.equal(calls.at(-1).after, 'curseur-page-2');
+  assert.match(h.text(h.render()), /Page\s+2/);
+  buttonWith(h, h.render(), 'Précédente').props.onClick(); h.render(); await h.settle();
+  assert.equal(calls.at(-1).after, undefined);
+  buttonWith(h, h.render(), 'Suivante').props.onClick(); h.render(); await h.settle();
+  h.find(h.render(), node => node.type === 'input' && node.props.type === 'search').props.onChange({ target: { value: '  client hors page  ' } });
+  buttonWith(h, h.render(), 'Appliquer les filtres').props.onClick(); h.render(); await h.settle();
+  assert.equal(calls.at(-1).filters.search, 'client hors page');
+  assert.equal(calls.at(-1).after, undefined);
+  assert.match(h.text(h.render()), /Page\s+1/);
+});
+test('une commande quittant le filtre garde son détail serveur et sa relecture explicite', async () => {
+  let current = uiOrder(), writes = 0;
+  const h = await loginHarness({
+    async login() { return admin; },
+    async snapshot() { return uiSnapshot(current.status === 'CONFIRMED' ? [current] : []); },
+    async operationsOrder() { return current; },
+  });
+  h.find(h.render(), node => node.props?.['aria-label'] === 'Ouvrir la commande fixture-ui').props.onClick();
+  await h.settle();
+  const result = await orderPanel(h).props.run(async () => { writes++; current = { ...current, status: 'ACCEPTED' }; throw new Error('réponse perdue'); }, 'Faux succès');
+  assert.equal(result.ok, false); assert.equal(writes, 1);
+  assert.equal(orderPanel(h).props.order.status, 'ACCEPTED');
+  assert.equal(h.find(h.render(), node => node.props?.['aria-label'] === 'Ouvrir la commande fixture-ui'), null);
+  assert.doesNotMatch(h.text(h.render()), /Faux succès/);
+  assert.equal(await orderPanel(h).props.refresh(), true);
+});
+test('une relecture détail échouée ne réarme pas les écritures si la liste réussit', async () => {
+  let failDetail = false;
+  const h = await loginHarness({
+    async login() { return admin; }, async snapshot() { return uiSnapshot([uiOrder()]); },
+    async operationsOrder() { if (failDetail) throw new Error('Détail indisponible'); return uiOrder(); },
+  });
+  h.find(h.render(), node => node.props?.['aria-label'] === 'Ouvrir la commande fixture-ui').props.onClick(); await h.settle();
+  failDetail = true;
+  assert.equal(await orderPanel(h).props.refresh(), false);
+  assert.equal(orderPanel(h).props.busy, true);
+  assert.match(h.text(h.render()), /Détail indisponible/);
+  failDetail = false;
+  assert.equal(await orderPanel(h).props.refresh(), true);
+  assert.equal(orderPanel(h).props.busy, false);
+});
+test('une réponse détail tardive après déconnexion ne restaure aucune donnée', async () => {
+  let resolveDetail;
+  const client = { hasSession: false,
+    async login() { this.hasSession = true; return admin; },
+    async snapshot() { return uiSnapshot([uiOrder()]); },
+    operationsOrder() { return new Promise(resolve => { resolveDetail = resolve; }); },
+    async logout() { this.hasSession = false; },
+  };
+  const h = await loginHarness(client);
+  h.find(h.render(), node => node.props?.['aria-label'] === 'Ouvrir la commande fixture-ui').props.onClick();
+  buttonWith(h, h.render(), 'Effacer les données / quitter').props.onClick();
+  resolveDetail(uiOrder()); await h.settle();
+  assert.ok(h.find(h.render(), node => node.type === 'form'));
+  assert.equal(orderPanel(h), null);
+  assert.doesNotMatch(h.text(h.render()), /fixture-ui/);
 });

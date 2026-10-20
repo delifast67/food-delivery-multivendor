@@ -16,6 +16,8 @@ import {
   customerOrders,
   customerOrderByCustomer,
   operationsOrders,
+  operationsOrdersPage,
+  operationsOrder,
   availableRiders,
   transition,
   simulatePayment,
@@ -57,6 +59,7 @@ const knownCodes = new Set([
   "INVALID_INPUT",
   "INVALID_CART",
   "INVALID_CURSOR",
+  "RESTAURANT_NOT_FOUND",
   "INVALID_QUANTITY",
   "INVALID_INPUT",
   "RESTAURANT_NOT_FOUND",
@@ -155,6 +158,12 @@ const resolvers: any = {
         getDb(),
         requireRole(ctx, ["ADMIN", "RESTAURANT", "RIDER"]),
       ),
+    operationsOrdersPage: (_: any, args: any, ctx: any) => {
+      const user = requireRole(ctx, ["ADMIN", "RESTAURANT", "RIDER"]);
+      return operationsOrdersPage(getDb(), user, args.limit, args.after, args.status, args.payment, args.restaurantId, args.search);
+    },
+    operationsOrder: (_: any, { id }: any, ctx: any) =>
+      operationsOrder(getDb(), requireRole(ctx, ["ADMIN", "RESTAURANT", "RIDER"]), id),
     availableRiders: (_: any, _a: any, ctx: any) =>
       availableRiders(getDb(), requireRole(ctx, ["ADMIN"])),
     me: (_: any, _a: any, ctx: any) => ctx.user || null,

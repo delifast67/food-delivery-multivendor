@@ -33,7 +33,44 @@ export async function POST(request: NextRequest) {
         signal: AbortSignal.timeout(10000),
       }
     );
-    return new NextResponse(await upstream.text(), {
+    const reader = upstream.body?.getReader();
+    const decoder = new TextDecoder();
+    let bytes = 0;
+    let text = '';
+    const tooLarge = () =>
+      NextResponse.json(
+        {
+          errors: [
+            {
+              message: 'Réponse API trop volumineuse. Affinez les filtres.',
+              extensions: { code: 'RESPONSE_TOO_LARGE' },
+            },
+          ],
+        },
+        { status: 502, headers: { 'cache-control': 'no-store' } }
+      );
+    if (Number(upstream.headers.get('content-length')) > 2_000_000) {
+      await reader?.cancel();
+      return tooLarge();
+    }
+    if (reader) {
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          bytes += value.byteLength;
+          if (bytes > 2_000_000) {
+            await reader.cancel();
+            return tooLarge();
+          }
+          text += decoder.decode(value, { stream: true });
+        }
+        text += decoder.decode();
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    return new NextResponse(text, {
       status: upstream.status,
       headers: {
         'content-type': 'application/json',

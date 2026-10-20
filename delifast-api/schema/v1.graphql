@@ -10,6 +10,8 @@ type Query {
   customerOrder(id: ID!): CustomerOrder
   paymentSession(orderId: ID!, accessToken: String!): PaymentSession
   operationsOrders: [Order!]!
+  operationsOrdersPage(limit: Int = 20, after: String, status: String, payment: String, restaurantId: ID, search: String): OperationOrderPage!
+  operationsOrder(id: ID!): Order
   operationsRestaurants: [Restaurant!]!
   availableRiders: [StaffUser!]!
   me: StaffUser
@@ -96,6 +98,7 @@ input DeliveryZoneInput { name: String!, shape: DeliveryZoneShape!, center: Deli
 type DeliveryZone { id: ID!, restaurantId: ID!, name: String!, shape: DeliveryZoneShape!, center: Point, radiusMeters: Float, polygon: [Point!], enabled: Boolean!, feeXof: Int!, minimumOrderXof: Int!, estimatedMinutes: Int!, priority: Int!, demo: Boolean!, hours: [DeliveryZoneHours!]!, version: Int! }
 type OrderEvent { status: String!, at: String!, actorRole: String! }
 type CustomerOrderPage { items: [CustomerOrder!]!, nextCursor: String }
+type OperationOrderPage { items: [Order!]!, nextCursor: String }
 type CustomerOrder { id: String!, status: String!, paymentStatus: String!, createdAt: String!, updatedAt: String!, restaurantId: String!, riderId: String, deliveryAddress: DeliveryAddress!, history: [OrderEvent!]!, checkout: Checkout! }
 type Order { id: String!, accessToken: String!, status: String!, paymentStatus: String!, createdAt: String!, updatedAt: String!, restaurantId: String!, riderId: String, deliveryAddress: DeliveryAddress!, history: [OrderEvent!]!, checkout: Checkout! }
 type StaffUser { id: ID!, name: String!, role: String!, restaurantId: String }

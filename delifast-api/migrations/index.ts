@@ -68,5 +68,8 @@ await db
     { customerId: 1, createdAt: -1, id: -1 },
     { name: "orders_customer_created_desc" },
   );
+await db.collection("orders").createIndex({ createdAt: -1, id: -1 }, { name: "orders_operations_created_desc" });
+await db.collection("orders").createIndex({ restaurantId: 1, createdAt: -1, id: -1 }, { name: "orders_operations_restaurant_created_desc" });
+await db.collection("orders").createIndex({ riderId: 1, createdAt: -1, id: -1 }, { name: "orders_operations_rider_created_desc" });
 console.log("Migrations v1 appliquées");
 await closeDb();
