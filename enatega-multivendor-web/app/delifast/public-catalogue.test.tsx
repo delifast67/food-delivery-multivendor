@@ -46,6 +46,7 @@ const menu = (
   nextCursor,
 });
 const checkout = {
+  quoteHash: "a".repeat(64),
   currency: "XOF",
   subtotal: 1000,
   deliveryFee: 0,
@@ -308,6 +309,7 @@ describe("Catalogue public Web paginé", () => {
     expect(place).toHaveBeenCalledTimes(1);
     expect(place).toHaveBeenCalledWith({
       ...payload,
+      expectedQuoteHash: "legacy-recovery-only",
       idempotencyKey: "saved-stable-key",
     });
     expect(delifastApi.restaurants).not.toHaveBeenCalled();

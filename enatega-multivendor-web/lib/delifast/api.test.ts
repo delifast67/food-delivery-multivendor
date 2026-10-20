@@ -40,6 +40,7 @@ describe("Delifast helpers", () => {
     "ITEM_UNAVAILABLE",
     "RESTAURANT_CLOSED",
     "INVALID_ADDRESS",
+    "CHECKOUT_CHANGED",
     "GRAPHQL_VALIDATION_FAILED",
   ])("recognizes definitive server validation %s", async (code) => {
     vi.stubGlobal(
@@ -84,6 +85,21 @@ describe("Delifast helpers", () => {
     });
   });
 
+  it("transmits expectedQuoteHash for order creation", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ data: { placeOrder: { id: "o1" } } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await delifastApi.placeOrder({
+      restaurantId: "r1", items: [{ menuItemId: "m1", quantity: 1 }],
+      idempotencyKey: "stable", expectedQuoteHash: "b".repeat(64),
+      deliveryAddress: { recipientName: "A", phone: "+22670123456", city: "Ouagadougou", neighborhood: "Koulouba", landmark: "Mairie", instructions: "" },
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/delifast/graphql", expect.objectContaining({
+      body: expect.stringContaining('"expectedQuoteHash":"' + "b".repeat(64) + '"'),
+    }));
+  });
   it("forwards staff Bearer tokens and expected status workflow variables", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

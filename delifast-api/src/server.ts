@@ -86,6 +86,7 @@ const knownCodes = new Set([
   "INVALID_ADDRESS",
   "INVALID_IDEMPOTENCY_KEY",
   "IDEMPOTENCY_CONFLICT",
+  "CHECKOUT_CHANGED",
   "UNAUTHENTICATED",
   "FORBIDDEN",
   "PAYMENT_DISABLED",
@@ -244,6 +245,7 @@ const resolvers: any = {
         normalizeAddress(input.deliveryAddress),
         input.idempotencyKey,
         ctx.customer?.id,
+        input.expectedQuoteHash,
       );
     },
     startPayment: (_: any, { input }: any, ctx: any) =>

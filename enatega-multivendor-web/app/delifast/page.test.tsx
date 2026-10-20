@@ -42,6 +42,7 @@ const restaurants = [
   },
 ];
 const checkout = {
+  quoteHash: "a".repeat(64),
   currency: "XOF",
   subtotal: 1000,
   deliveryFee: 0,
@@ -264,6 +265,7 @@ describe("Delifast recovery", () => {
     await screen.findByText("COMMANDE ENREGISTRÉE");
     expect(place).toHaveBeenCalledWith({
       ...payload,
+      expectedQuoteHash: "legacy-recovery-only",
       idempotencyKey: "known-order-key",
     });
   });
@@ -908,5 +910,61 @@ describe("Confirmation sans avertissement périmé", () => {
     expect(
       screen.getByText("Total serveur").parentElement,
     ).not.toContainElement(snapshot);
+  });
+});
+
+
+describe("Delifast quote freshness", () => {
+  it("persists the displayed hash before sending and preserves it on an uncertain retry", async () => {
+    const { DelifastApiError, attemptStorageKey } = await import("@/lib/delifast/api");
+    let persisted: any;
+    const place = vi.spyOn(delifastApi, "placeOrder").mockImplementation(async () => {
+      persisted = JSON.parse(localStorage.getItem(attemptStorageKey)!);
+      throw new DelifastApiError("Réponse perdue", "unavailable");
+    });
+    render(<DelifastPage />);
+    await prepareOrder();
+    fireEvent.click(screen.getByRole("button", { name: "Enregistrer la commande" }));
+    await screen.findByRole("button", { name: "Reprendre la même tentative" });
+    expect(persisted.payload.expectedQuoteHash).toBe(checkout.quoteHash);
+    expect(place.mock.calls[0][0].expectedQuoteHash).toBe(checkout.quoteHash);
+    fireEvent.click(screen.getByRole("button", { name: "Reprendre la même tentative" }));
+    await waitFor(() => expect(place).toHaveBeenCalledTimes(2));
+    expect(place.mock.calls[1][0]).toEqual(place.mock.calls[0][0]);
+  });
+
+  it.each([null, "bad-hash"])("never creates a new order from a quote with hash %s", async (quoteHash) => {
+    const { attemptStorageKey } = await import("@/lib/delifast/api");
+    vi.mocked(delifastApi.checkout).mockResolvedValue({ ...checkout, quoteHash });
+    const place = vi.spyOn(delifastApi, "placeOrder").mockResolvedValue(order);
+    render(<DelifastPage />);
+    await prepareOrder();
+    fireEvent.click(screen.getByRole("button", { name: "Enregistrer la commande" }));
+    await waitFor(() => expect(delifastApi.checkout).toHaveBeenCalledTimes(2));
+    expect(place).not.toHaveBeenCalled();
+    expect(localStorage.getItem(attemptStorageKey)).toBeNull();
+  });
+
+  it("refreshes a rejected quote but requires a manual confirmation with the new hash", async () => {
+    const { DelifastApiError, attemptStorageKey } = await import("@/lib/delifast/api");
+    const fresh = { ...checkout, quoteHash: "b".repeat(64), total: 1500, subtotal: 1500 };
+    const place = vi.spyOn(delifastApi, "placeOrder")
+      .mockRejectedValueOnce(new DelifastApiError("Devis périmé", "validation", 200, "CHECKOUT_CHANGED"))
+      .mockResolvedValue({ ...order, checkout: fresh });
+    render(<DelifastPage />);
+    await prepareOrder();
+    vi.mocked(delifastApi.checkout).mockResolvedValue(fresh);
+    fireEvent.click(screen.getByRole("button", { name: "Enregistrer la commande" }));
+    await screen.findByText(/Vérifiez le nouveau total avant de confirmer à nouveau/);
+    await waitFor(() => expect(delifastApi.checkout).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Enregistrer la commande" })).not.toBeDisabled());
+    expect(place).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(attemptStorageKey)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Enregistrer la commande" }));
+    await screen.findByText("COMMANDE ENREGISTRÉE");
+    expect(place).toHaveBeenCalledTimes(2);
+    expect(place.mock.calls[0][0].expectedQuoteHash).toBe(checkout.quoteHash);
+    expect(place.mock.calls[1][0].expectedQuoteHash).toBe(fresh.quoteHash);
+    expect(place.mock.calls[1][0].idempotencyKey).not.toBe(place.mock.calls[0][0].idempotencyKey);
   });
 });

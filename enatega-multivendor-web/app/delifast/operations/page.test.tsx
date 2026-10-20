@@ -25,6 +25,7 @@ const restaurant: StaffUser = {
 };
 const rider: StaffUser = { id: "d1", name: "Livreur", role: "RIDER" };
 const checkout = {
+  quoteHash: "a".repeat(64),
   currency: "XOF",
   subtotal: 1000,
   deliveryFee: 0,

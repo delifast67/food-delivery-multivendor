@@ -12,6 +12,7 @@ const order = (overrides: Partial<Order> = {}): Order => ({
   createdAt: "2026-01-01T00:00:00Z",
   restaurantId: "restaurant-1",
   checkout: {
+    quoteHash: "a".repeat(64),
     currency: "XOF", subtotal: 1200, deliveryFee: 300, serviceFee: 0,
     tax: 0, discount: 0, total: 1500, items: [],
   },

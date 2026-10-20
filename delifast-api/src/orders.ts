@@ -91,6 +91,7 @@ export async function placeOrder(
   address: Address,
   idempotencyKey: unknown,
   customerId?: string,
+  expectedQuoteHash?: unknown,
 ) {
   if (
     typeof idempotencyKey !== "string" ||
@@ -146,6 +147,13 @@ export async function placeOrder(
   }
   if (!address.point) fail("DELIVERY_POINT_REQUIRED", "Un point GPS de livraison est requis");
   const checkout = await calculateCheckout(db, { ...cart, point: address.point });
+  // Optional only for legacy consumers. Updated clients must send the exact
+  // displayed quote; a mismatching quote never creates an order. Existing
+  // idempotent attempts above still recover their immutable original snapshot.
+  if (expectedQuoteHash != null &&
+      (typeof expectedQuoteHash !== "string" || !/^[a-f0-9]{64}$/.test(expectedQuoteHash) ||
+       expectedQuoteHash !== checkout.quoteHash))
+    fail("CHECKOUT_CHANGED", "Le devis a changé. Vérifiez le nouveau total avant de confirmer.");
   const raw = crypto.randomBytes(24).toString("hex");
   const timestamp = now();
   const order = {

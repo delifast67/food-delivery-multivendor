@@ -14,7 +14,7 @@ const address = {
   point: { latitude: 12.3714, longitude: -1.5197 }
 }
 const checkout = () => ({
-  currency: 'XOF', total: 100, subtotal: 100, deliveryFee: 0, serviceFee: 0, tax: 0,
+  currency: 'XOF', quoteHash: 'a'.repeat(64), total: 100, subtotal: 100, deliveryFee: 0, serviceFee: 0, tax: 0,
   discount: 0, items: [{ menuItemId: 'i', quantity: 1, unitPrice: 100, total: 100 }]
 })
 const result = (id = 'o') => ({ id, accessToken: '01234567890123456789', checkout: checkout() })
@@ -199,6 +199,14 @@ test('submit requires a current client-visible quote and never auto-calculates i
   assert.equal(quotes, 1)
   assert.equal(orders, 0)
 })
+test('submit refuses a legacy quote without hash and never contacts placeOrder', async () => {
+  let orders = 0
+  const { controller } = setup({ calculateCheckout: async () => { const value = checkout(); delete value.quoteHash; return value }, placeOrder: async () => { orders++; return result() } })
+  await ready(controller)
+  await controller.addItem(restaurant.menu[0], [])
+  await assert.rejects(controller.submit(address), /empreinte|actualisez/i)
+  assert.equal(orders, 0)
+})
 test('submit persists exact idempotent payload before network', async () => {
   const db = {}; let observed
   const { controller } = setup({ placeOrder: async payload => { observed = db[ATTEMPT_KEY]; return result() } }, db)
@@ -206,7 +214,7 @@ test('submit persists exact idempotent payload before network', async () => {
   await controller.submit({ ...address, phone: '70000000' })
   const attempt = JSON.parse(observed)
   assert.equal(attempt.idempotencyKey, 'key-test-0001')
-  assert.deepEqual(attempt.payload, { restaurantId: 'r', items: [{ menuItemId: 'i', quantity: 1, selections: [] }], deliveryAddress: { ...address, phone: '+22670000000', instructions: '' } })
+  assert.deepEqual(attempt.payload, { restaurantId: 'r', items: [{ menuItemId: 'i', quantity: 1, selections: [] }], deliveryAddress: { ...address, phone: '+22670000000', instructions: '' }, expectedQuoteHash: 'a'.repeat(64) })
   assert.equal(JSON.stringify(attempt).includes('total'), false)
 })
 test('double submit shares one in-flight request and sets busy synchronously', async () => {
@@ -231,6 +239,19 @@ test('transport uncertainty retains pending attempt and retry uses same key and 
   await controller.retryPending()
   assert.deepEqual(received[0], received[1])
   assert.equal(controller.getState().pending, null)
+})
+test('legacy pending is sent with a recovery sentinel and CHECKOUT_CHANGED unlocks without retrying', async () => {
+  const db = {}
+  db[ATTEMPT_KEY] = JSON.stringify({ version: 1, sessionScope: 'guest-legacy', idempotencyKey: 'legacy-key-0001', payload: { restaurantId: 'r', items: [{ menuItemId: 'i', quantity: 1, selections: [] }], deliveryAddress: { ...address, instructions: '' } } })
+  let received
+  const { controller } = setup({ placeOrder: async payload => { received = payload; throw Object.assign(new Error('devis périmé'), { kind: 'validation', code: 'CHECKOUT_CHANGED' }) } }, db)
+  await controller.restoreAttempt()
+  await assert.rejects(controller.retryPending(), /périmé/)
+  assert.equal(received.expectedQuoteHash, 'legacy-recovery-only')
+  assert.equal(received.idempotencyKey, 'legacy-key-0001')
+  assert.equal(controller.getState().pending, null)
+  assert.equal(controller.getState().quote, null)
+  assert.equal(db[ATTEMPT_KEY], undefined)
 })
 test('pending attempt blocks cart, restaurant and submit modifications', async () => {
   const { controller } = setup({ placeOrder: async () => { throw Object.assign(new Error('offline'), { kind: 'unavailable' }) } })

@@ -8,6 +8,7 @@ const PAYMENT_ATTEMPT_KEY = 'delifast-payment-attempt'
 const clone = (value) => (value == null ? value : JSON.parse(JSON.stringify(value)))
 const errorView = (error) => ({ message: error?.message || String(error), kind: error?.kind || 'unknown', code: error?.code })
 const validQuote = (quote) => quote && quote.currency === 'XOF' && Number.isSafeInteger(quote.total) && quote.total >= 0 && Array.isArray(quote.items)
+const validQuoteHash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 const validReference = (ref) => ref && typeof ref.id === 'string' && ref.id.length > 0 && typeof ref.accessToken === 'string' && ref.accessToken.length >= 16
 const validPageCursor = cursor => cursor == null || (typeof cursor === 'string' && cursor.length > 0 && cursor.length <= 512)
 
@@ -215,7 +216,8 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
     if (typeof attempt.idempotencyKey !== 'string' || attempt.idempotencyKey.length < 8 || attempt.idempotencyKey.length > 128 || !payload || typeof payload.restaurantId !== 'string' || !Array.isArray(payload.items) || !payload.items.length || !validateAddress(payload.deliveryAddress).ok) {
       throw new Error('Tentative locale invalide ; création bloquée pour éviter un doublon')
     }
-    if (Object.keys(payload).some((key) => !['restaurantId', 'items', 'deliveryAddress'].includes(key))) throw new Error('Tentative locale incompatible')
+    if (Object.keys(payload).some((key) => !['restaurantId', 'items', 'deliveryAddress', 'expectedQuoteHash'].includes(key))) throw new Error('Tentative locale incompatible')
+    if (payload.expectedQuoteHash !== undefined && !validQuoteHash(payload.expectedQuoteHash)) throw new Error('Tentative locale invalide ; création bloquée pour éviter un doublon')
   }
   async function restoreAttempt() {
     if (restorePromise) return restorePromise
@@ -274,7 +276,11 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
     const current = () => !guard || (guard.epoch === authEpoch && (!guard.customerId || state.customer?.id === guard.customerId) && (!guard.scope || guard.scope === attempt.sessionScope))
     try {
       if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
-      const result = await api.placeOrder({ ...clone(attempt.payload), idempotencyKey: attempt.idempotencyKey })
+      const requestPayload = { ...clone(attempt.payload), idempotencyKey: attempt.idempotencyKey }
+      // Les anciens pending n'ont pas de devis approuvé : le serveur ne doit
+      // les accepter que si la clé existe déjà (récupération idempotente).
+      if (requestPayload.expectedQuoteHash === undefined) requestPayload.expectedQuoteHash = 'legacy-recovery-only'
+      const result = await api.placeOrder(requestPayload)
       if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
       if (!validReference(result) || !validQuote(result.checkout)) throw new Error('Réponse de commande incomplète ; reprendre la même tentative')
       const reference = { id: result.id, accessToken: result.accessToken }
@@ -683,10 +689,11 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
         storageReady()
         if (!state.cart.restaurantId || !state.cart.items.length) throw new Error('Panier vide')
         if (!validQuote(state.quote)) throw new Error('Devis serveur requis : actualisez le panier avant de confirmer')
+        if (!validQuoteHash(state.quote.quoteHash)) throw new Error('Devis serveur sans empreinte : actualisez le panier avant de confirmer')
         const validation = validateAddress(address, { requirePoint: true })
         if (!validation.ok) throw new Error(validation.message)
         if (JSON.stringify(validation.address.point) !== JSON.stringify(state.deliveryPoint)) throw new Error('Le point a changé : rechargez les restaurants et le devis')
-        const payload = { ...clone(state.cart), deliveryAddress: validation.address }
+        const payload = { ...clone(state.cart), deliveryAddress: validation.address, expectedQuoteHash: state.quote.quoteHash }
         const version = state.quoteVersion
         const key = makeIdempotencyKey(random)
         if (key.length < 8 || key.length > 128) throw new Error('Clé d’idempotence invalide')

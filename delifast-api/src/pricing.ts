@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { eligibility } from "./zones.js";
 import type { Db } from "mongodb";
 import { config } from "./config.js";
@@ -20,6 +21,7 @@ export type CheckoutItem = {
   total: number;
 };
 export type Checkout = {
+  quoteHash: string;
   currency: "XOF";
   subtotal: number;
   deliveryFee: number;
@@ -117,8 +119,8 @@ export async function calculateCheckout(db: Db, cart: Cart): Promise<Checkout> {
   const deliveryFee = delivery?.deliveryFee ?? 0;
   const fees = assertIntAmount(deliveryFee + config.serviceFee + config.tax),
     total = assertIntAmount(subtotal + fees);
-  return {
-    currency: "XOF",
+  const snapshot = {
+    currency: "XOF" as const,
     subtotal,
     deliveryFee,
     delivery,
@@ -128,4 +130,11 @@ export async function calculateCheckout(db: Db, cart: Cart): Promise<Checkout> {
     total,
     items,
   };
+  // An expectation, not a price supplied by the client: compare it with a fresh
+  // authoritative calculation before inserting an order. No stored quote/cache
+  // can set the amount or bypass availability, options, or delivery validation.
+  const quoteHash = crypto.createHash("sha256").update(JSON.stringify({
+    restaurantId: cart.restaurantId, point: cart.point ?? null, ...snapshot,
+  })).digest("hex");
+  return { ...snapshot, quoteHash };
 }

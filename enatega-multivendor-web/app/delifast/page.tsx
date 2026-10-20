@@ -7,6 +7,7 @@ import {
   DelifastApiError,
   formatXof,
   makeIdempotencyKey,
+  LEGACY_RECOVERY_QUOTE_HASH,
   canonicalCartLineKey,
   deliveryAddressInput,
   type CartLine,
@@ -99,6 +100,7 @@ export default function DelifastPage() {
   const [checkout, setCheckout] = useState<Awaited<
     ReturnType<typeof delifastApi.checkout>
   > | null>(null);
+  const [checkoutRevision, setCheckoutRevision] = useState(0);
   const [address, setAddress] = useState<DeliveryAddress>(emptyAddress);
   const [attempt, setAttempt] = useState<OrderAttempt | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
@@ -307,7 +309,7 @@ export default function DelifastPage() {
     return () => {
       cancelled = true;
     };
-  }, [selected, cart, locked, point]);
+  }, [selected, cart, locked, point, checkoutRevision]);
   const cartCount = useMemo(
     () => cart.reduce((sum, line) => sum + line.quantity, 0),
     [cart],
@@ -452,7 +454,19 @@ export default function DelifastPage() {
     if (!locked && (!selected || !cart.length || !checkout)) return;
     const payload: OrderPayload = locked
       ? attempt!.payload
-      : { restaurantId: selected!.id, items: cart, deliveryAddress: address };
+      : {
+          restaurantId: selected!.id,
+          items: cart,
+          deliveryAddress: address,
+          expectedQuoteHash: checkout?.quoteHash ?? undefined,
+        };
+    // A null/absent hash is historical data only: never create a new order from it.
+    if (!locked && !/^[a-f0-9]{64}$/.test(checkout?.quoteHash ?? "")) {
+      setCheckout(null);
+      setCheckoutRevision((value) => value + 1);
+      setError("Le devis serveur n’a pas d’identifiant valide. Rechargez-le avant de confirmer.");
+      return;
+    }
     if (
       !locked &&
       (!address.recipientName ||
@@ -483,6 +497,9 @@ export default function DelifastPage() {
       }
       const created = await delifastApi.placeOrder({
         ...payload,
+        // Legacy attempts may be replayed only with the invalid sentinel; it cannot insert.
+        expectedQuoteHash:
+          payload.expectedQuoteHash ?? LEGACY_RECOVERY_QUOTE_HASH,
         idempotencyKey: current.idempotencyKey,
       });
       const saved = {
@@ -503,6 +520,14 @@ export default function DelifastPage() {
       const validation =
         e instanceof DelifastApiError && e.kind === "validation";
       if (validation) {
+        // CHECKOUT_CHANGED (and all definitive validation errors) invalidate the
+        // displayed quote and unresolved attempt. The effect reloads a quote for
+        // explicit user confirmation; it never submits automatically.
+        setCheckout(null);
+        setCheckoutRevision((value) => value + 1);
+        setNotice(e.code === "CHECKOUT_CHANGED"
+          ? "Le devis a changé. Vérifiez le nouveau total avant de confirmer à nouveau."
+          : "");
         setAttempt(null);
         try {
           localStorage.removeItem(attemptStorageKey);
