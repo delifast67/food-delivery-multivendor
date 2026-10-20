@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   delifastApi,
   formatXof,
@@ -183,16 +183,10 @@ export default function OperationsPage() {
     }
   };
   const role = user?.role.toLowerCase() || "";
-  const canAdmin = role === "admin";
   const transition = (order: Order, status: string) =>
     act(`transition-${order.id}`, () =>
       delifastApi.transitionOrder(token, order.id, status, order.status),
     );
-  const selected = useMemo(
-    () => orders.find((o) => o.id === selectedOrder),
-    [orders, selectedOrder],
-  );
-
   if (!token || !user)
     return (
       <main className="df-shell">

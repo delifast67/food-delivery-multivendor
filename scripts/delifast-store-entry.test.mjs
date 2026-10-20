@@ -22,6 +22,13 @@ test("entrée active autonome, ancien routeur archivé sans suppression", () => 
     );
   }
 });
+test("Jest ignore uniquement les tests Node Delifast et conserve node_modules", () => {
+  const jest = JSON.parse(read("package.json")).jest;
+  assert.deepEqual(jest.testPathIgnorePatterns, [
+    "<rootDir>/node_modules/",
+    "<rootDir>/src/delifast/",
+  ]);
+});
 test("configuration native sans OTA/EAS ni nouvelles identités de publication", () => {
   const config = require("./app.config.js");
   const old = JSON.parse(read("app.json")).expo;

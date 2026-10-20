@@ -95,7 +95,7 @@ describe("customer transport protocol", () => {
     async (operation, invoke, privateOperation) => {
       const fetchMock = stubSuccessfulFetch();
       await invoke();
-      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const [, init] = fetchMock.mock.calls[0] as [string, NonNullable<Parameters<typeof fetch>[1]>];
       const body = JSON.parse(String(init.body)) as {
         query: string;
         variables?: Record<string, unknown>;
@@ -160,7 +160,7 @@ describe("customer transport protocol", () => {
       code: "OTP_PROVIDER_UNAVAILABLE",
       kind: "unavailable",
     });
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [, init] = fetchMock.mock.calls[0] as [string, NonNullable<Parameters<typeof fetch>[1]>];
     const body = JSON.parse(String(init.body)) as {
       variables: Record<string, unknown>;
     };
@@ -186,7 +186,7 @@ describe("customer transport protocol", () => {
         createdAt: "server-time",
       } as typeof address,
     });
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [, init] = fetchMock.mock.calls[0] as [string, NonNullable<Parameters<typeof fetch>[1]>];
     const payload = JSON.parse(String(init.body));
     expect(payload.variables.input.deliveryAddress).toEqual(
       deliveryAddressInput(address),

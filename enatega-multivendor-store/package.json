@@ -20,7 +20,11 @@
     "export:delifast": "expo export --platform android --platform ios --output-dir dist/delifast"
   },
   "jest": {
-    "preset": "jest-expo"
+    "preset": "jest-expo",
+    "testPathIgnorePatterns": [
+      "<rootDir>/node_modules/",
+      "<rootDir>/src/delifast/"
+    ]
   },
   "dependencies": {
     "@apollo/client": "^3.14.0",
