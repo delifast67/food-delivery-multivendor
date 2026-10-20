@@ -93,6 +93,8 @@ function App({ api, storage }) {
   const [search, setSearch] = useState('')
   const [openOnly, setOpenOnly] = useState(false)
   const [categoryId, setCategoryId] = useState(null)
+  const [menuSearchOpen, setMenuSearchOpen] = useState(false)
+  const [menuSearch, setMenuSearch] = useState('')
   const [address, setAddress] = useState(initialAddress)
   const [selected, setSelected] = useState(null)
   const [localError, setLocalError] = useState('')
@@ -176,6 +178,8 @@ function App({ api, storage }) {
     try {
       await controller.selectRestaurant(item.id)
       setCategoryId(null)
+      setMenuSearch('')
+      setMenuSearchOpen(false)
       setScreen('menu')
     } catch (error) {
       setLocalError(errorText(error))
@@ -217,8 +221,10 @@ function App({ api, storage }) {
           <View style={styles.flex}><Text style={styles.eyebrow}>Delifast · LIVRAISON</Text><Text style={styles.deliveryLocation}>{address.city || 'Votre point de livraison'}</Text><Text style={styles.caption}>{address.neighborhood || 'À préciser avant de commander'}</Text></View>
           <TouchableOpacity accessibilityRole='button' accessibilityLabel='Compte' style={styles.avatarButton} onPress={() => setScreen('account')}><Icon name='person-outline' /></TouchableOpacity>
         </View>
-        <ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
-          <Text style={styles.title}>Qu’est-ce qui vous{`\n`}fait envie ?</Text>
+        <FlatList style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}
+          data={visibleRestaurants} keyExtractor={(item) => String(item.id)} initialNumToRender={6} windowSize={7}
+          ListHeaderComponent={<>
+          <Text style={styles.title}>Qu’est-ce qui vous{`\n`}fait envie ?</Text>
           <SearchField value={search} onChangeText={setSearch} />
           <View style={styles.chipRow}><Chip label='Tous' selected={!openOnly} onPress={() => setOpenOnly(false)} /><Chip label='Ouverts' selected={openOnly} onPress={() => setOpenOnly(true)} /></View>
           <View style={styles.demoNotice}><Icon name='information-circle-outline' size={17} color='#765b18' /><Text style={styles.demoText}>Démonstration locale · aucun paiement réel ni paiement à la livraison.</Text></View>
@@ -250,21 +256,12 @@ function App({ api, storage }) {
               <AppButton title='Actualiser le suivi' onPress={trackLast} disabled={state.busy} />
             </View>
           )}
-          {!search && !openOnly && restaurants.some(item => item.open !== false) && <>
-            <Text style={styles.sectionTitle}>À découvrir</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.discoveryRail}>
-              {restaurants.filter(item => item.open !== false).map(item => <TouchableOpacity key={item.id} accessibilityRole='button' accessibilityLabel={`Découvrir ${item.name}`} disabled={state.busy || !!pending || !state.restored} style={styles.discoveryTile} onPress={() => beginNewRestaurant(item)}><RestaurantMark name={item.name} large /><Text style={styles.tileName} numberOfLines={2}>{item.name}</Text></TouchableOpacity>)}
-            </ScrollView>
-          </>}
           <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Restaurants</Text><Text style={styles.caption}>{visibleRestaurants.length} résultat{visibleRestaurants.length !== 1 ? 's' : ''}</Text></View>
-          <FlatList
-            data={visibleRestaurants}
-            scrollEnabled={false}
-            keyExtractor={(item) => String(item.id)}
+          </>}
             renderItem={({ item }) => (
               <TouchableOpacity accessibilityRole='button' accessibilityLabel={item.name} style={[styles.restaurantRow, item.open === false && styles.cardClosed]} disabled={item.open === false || state.busy || !!pending || !state.restored} onPress={() => beginNewRestaurant(item)}>
                 <RestaurantMark name={item.name} />
-                <View style={styles.flex}><Text style={styles.cardTitle}>{item.name}</Text>{item.description ? <Text numberOfLines={2} style={styles.muted}>{item.description}</Text> : null}<Text style={[styles.statusPill, item.open === false ? styles.closed : styles.open]}>{item.open === false ? 'Fermé' : 'Ouvert'}</Text>{item.open === false && <Text style={styles.caption}>Ce restaurant n’accepte pas de commandes.</Text>}</View>
+                <View style={styles.flex}><Text style={styles.cardTitle}>{item.name}</Text>{item.description ? <Text numberOfLines={2} style={styles.muted}>{item.description}</Text> : null}<View style={styles.restaurantMeta}><View style={[styles.statusDot, item.open === false && styles.statusDotClosed]} /><Text style={[styles.statusPill, item.open === false ? styles.closed : styles.open]}>{item.open === false ? 'Fermé' : 'Ouvert'}</Text><Text style={styles.caption}>Voir le menu</Text></View>{item.open === false && <Text style={styles.caption}>Ce restaurant n’accepte pas de commandes.</Text>}</View>
                 <Icon name='chevron-forward' size={18} color={BRAND.muted} />
               </TouchableOpacity>
             )}
@@ -275,7 +272,6 @@ function App({ api, storage }) {
               <Text style={styles.outlineText}>Voir le suivi et l’historique</Text>
             </TouchableOpacity>
           )}
-        </ScrollView>
         <BottomTabs current={screen} onNavigate={navigate} cartCount={cartCount} />
       </SafeAreaView>
     )
@@ -428,34 +424,39 @@ function App({ api, storage }) {
 
   if (screen === 'menu') {
     const sections = menuSections(restaurant)
-    const visibleSections = filterMenuSections(sections, categoryId)
+    const visibleSections = filterMenuSections(sections, categoryId, menuSearch)
     return (
       <SafeAreaView style={styles.safe}>
         <Header
-          title={restaurant ? restaurant.name : 'Menu'}
+          title='Menu restaurant'
           onBack={() => setScreen('restaurants')}
-          right={
-            <TouchableOpacity onPress={() => setScreen('cart')}>
-              <Text style={styles.link}>Panier ({cartCount})</Text>
-            </TouchableOpacity>
-          }
+          right={<TouchableOpacity accessibilityRole='button' accessibilityLabel={menuSearchOpen ? 'Fermer la recherche du menu' : 'Rechercher dans le menu'} style={styles.back} onPress={() => { setMenuSearchOpen(!menuSearchOpen); setMenuSearch('') }}><Icon name={menuSearchOpen ? 'close-outline' : 'search-outline'} /></TouchableOpacity>}
         />
-        <View style={styles.restaurantHero}><RestaurantMark name={restaurant?.name} /><View style={styles.flex}><Text style={styles.restaurantName}>{restaurant?.name}</Text>{!!restaurant?.description && <Text style={styles.muted}>{restaurant.description}</Text>}</View></View>
-        <View><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRail}><Chip label='Tout le menu' selected={categoryId === null} onPress={() => setCategoryId(null)} />{sections.map(section => <Chip key={section.id} label={section.name} selected={categoryId === section.id} onPress={() => setCategoryId(section.id)} />)}</ScrollView></View>
-        <ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
+        <ScrollView style={styles.flex} stickyHeaderIndices={[1]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.menuContent}>
+          <View style={styles.restaurantHero}>
+            <View style={styles.restaurantIdentity}><RestaurantMark name={restaurant?.name} /><View style={styles.flex}><Text style={styles.eyebrow}>DELIFAST · RESTAURANT</Text><Text style={styles.restaurantName}>{restaurant?.name}</Text></View></View>
+            {!!restaurant?.description && <Text style={styles.heroDescription}>{restaurant.description}</Text>}
+            <View style={styles.restaurantMeta}><View style={[styles.statusDot, restaurant?.open === false && styles.statusDotClosed]} /><Text style={restaurant?.open === false ? styles.closed : styles.open}>{restaurant?.open === false ? 'Fermé' : 'Ouvert'}</Text><Text style={styles.caption}>{sections.reduce((n, section) => n + section.items.length, 0)} plats au menu</Text></View>
+          </View>
+          <View style={styles.stickyCategories}>
+            {menuSearchOpen ? <View style={styles.menuSearch}><SearchField value={menuSearch} onChangeText={setMenuSearch} label='Rechercher un plat' placeholder='Nom du plat, ingrédient…' /></View> : <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRail}><Chip variant='category' label='Tout le menu' selected={categoryId === null} onPress={() => setCategoryId(null)} />{sections.map(section => <Chip variant='category' key={section.id} label={section.name} selected={categoryId === section.id} onPress={() => setCategoryId(section.id)} />)}</ScrollView>}
+          </View>
+          <View style={styles.menuSections}>
           {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
           {!sections.length && <EmptyState icon='restaurant-outline' title='Menu indisponible' description='Aucun article disponible pour ce restaurant.' />}
+          {!!sections.length && !visibleSections.length && <EmptyState icon='search-outline' title='Aucun plat trouvé' description='Essayez un autre nom ou effacez votre recherche.' />}
           {visibleSections.map((category) => (
             <View key={category.id}>
-              <Text style={styles.sectionTitle}>{category.name}</Text>
+              <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>{category.name}</Text><Text style={styles.caption}>{category.items.length} plat{category.items.length !== 1 ? 's' : ''}</Text></View>
               {category.items.map((item) => (
                 <TouchableOpacity key={item.id} accessibilityRole='button' accessibilityLabel={`Configurer ${item.name}`} style={styles.menuRow} disabled={state.busy || !!pending || !state.restored} onPress={() => { setSelected({ item, selections: {} }); setLocalError('') }}>
-                  <View style={styles.flex}><Text style={styles.cardTitle}>{item.name}</Text>{item.description ? <Text numberOfLines={2} style={styles.muted}>{item.description}</Text> : null}<Text style={styles.menuPrice}>{money(item.priceXof)}</Text></View>
+                  <View style={styles.flex}><Text style={styles.cardTitle}>{item.name}</Text>{item.description ? <Text numberOfLines={2} style={styles.muted}>{item.description}</Text> : null}<Text style={styles.menuPrice}>{money(item.priceXof)}</Text>{!!item.optionGroups?.length && <Text style={styles.caption}>Options au choix</Text>}</View>
                   <View style={styles.addIcon}><Icon name='add' size={24} /></View>
                 </TouchableOpacity>
               ))}
             </View>
           ))}
+          </View>
         </ScrollView>
           <Modal visible={!!selected} transparent animationType='slide' onRequestClose={() => setSelected(null)}>
             <View style={styles.sheetOverlay}><TouchableOpacity style={styles.sheetDismiss} accessibilityRole='button' accessibilityLabel='Fermer la personnalisation' onPress={() => setSelected(null)} />
@@ -709,7 +710,7 @@ const styles = StyleSheet.create({
   headerTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontFamily: 'MuseoSans700', color: tokens.colors.textPrimary },
   headerRight: { minWidth: 48, maxWidth: 94, alignItems: 'flex-end' },
   link: { color: tokens.colors.accentForeground, fontFamily: 'MuseoSans700', paddingVertical: 14, fontSize: 13 },
-  title: { fontSize: 29, lineHeight: 35, fontFamily: 'MuseoSans700', color: tokens.colors.textPrimary, marginTop: 8, letterSpacing: -0.6 },
+  title: { fontSize: 27, lineHeight: 32, fontFamily: 'MuseoSans700', color: tokens.colors.textPrimary, marginTop: 8, letterSpacing: -0.6 },
   subtitle: { color: BRAND.muted, fontSize: 13, lineHeight: 19, marginBottom: 16 },
   sectionTitle: { fontSize: 20, fontFamily: 'MuseoSans700', color: tokens.colors.textPrimary, marginTop: 18, marginBottom: 12 },
   card: { padding: 16, backgroundColor: tokens.colors.surfaceSubtle, borderRadius: tokens.radii.lg, marginBottom: 12 },
@@ -768,18 +769,24 @@ const styles = StyleSheet.create({
   chipRow: { flexDirection: 'row', marginBottom: 12 },
   demoNotice: { flexDirection: 'row', gap: 8, alignItems: 'center', backgroundColor: '#fff8dd', borderRadius: 10, padding: 10, marginBottom: 4 },
   demoText: { flex: 1, fontSize: 11, lineHeight: 16, color: '#765b18' },
-  discoveryRail: { gap: 12, paddingBottom: 4 },
-  discoveryTile: { width: 108, padding: 4, borderRadius: tokens.radii.xl, backgroundColor: tokens.colors.surfaceSubtle },
-  tileName: { fontSize: 12, lineHeight: 16, fontFamily: 'MuseoSans700', color: tokens.colors.textPrimary, paddingHorizontal: 4, paddingVertical: 8, minHeight: 48 },
   sectionHeading: { flexDirection: 'row', gap: 10, alignItems: 'center', justifyContent: 'space-between' },
-  restaurantRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: BRAND.border },
-  statusPill: { alignSelf: 'flex-start', fontSize: 11, marginTop: 8 },
-  restaurantHero: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 14 },
-  restaurantName: { fontSize: 21, fontFamily: 'MuseoSans700', color: tokens.colors.textPrimary },
-  categoryRail: { paddingHorizontal: 16, paddingVertical: 10 },
+  restaurantRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: BRAND.border, borderRadius: tokens.radii.xl, backgroundColor: '#fff' },
+  statusPill: { fontSize: 12 },
+  restaurantHero: { padding: 20, backgroundColor: tokens.colors.surfaceSubtle, gap: 12 },
+  restaurantIdentity: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  heroDescription: { fontSize: 14, lineHeight: 21, color: BRAND.muted },
+  restaurantMeta: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 8, rowGap: 2, marginTop: 8 },
+  statusDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: tokens.colors.accentForeground },
+  statusDotClosed: { backgroundColor: '#a33' },
+  menuContent: { paddingBottom: 28 },
+  stickyCategories: { backgroundColor: '#fff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: BRAND.border },
+  menuSearch: { paddingHorizontal: 16 },
+  menuSections: { paddingHorizontal: 16 },
+  restaurantName: { marginTop: 5, fontSize: 25, fontFamily: 'MuseoSans700', color: tokens.colors.textPrimary },
+  categoryRail: { paddingHorizontal: 16 },
   menuRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 18, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: BRAND.border },
   menuPrice: { color: tokens.colors.textPrimary, fontSize: 15, fontFamily: 'MuseoSans700', marginTop: 10 },
-  addIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: BRAND.primary, alignItems: 'center', justifyContent: 'center' },
+  addIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: tokens.colors.accentSubtle, borderWidth: 1, borderColor: BRAND.border, alignItems: 'center', justifyContent: 'center' },
   cartDock: { marginHorizontal: 16, marginVertical: 8, backgroundColor: BRAND.primary, borderRadius: tokens.radii.round, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 52, flexWrap: 'wrap' },
   cartDockTitle: { flex: 1, fontFamily: 'MuseoSans700', color: BRAND.onPrimary, fontSize: 15 },
   cartDockCount: { width: 30, minHeight: 30, borderRadius: 15, backgroundColor: '#ffffff66', alignItems: 'center', justifyContent: 'center' },

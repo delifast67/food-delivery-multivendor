@@ -68,3 +68,15 @@ test('menuSections excludes unavailable/archived items and puts archived-categor
   assert.deepEqual(menuSections(null), [])
   assert.deepEqual(filterRestaurants(null, 'test'), [])
 })
+
+
+test('filterMenuSections filters every section by normalized name and description, ignoring category', () => {
+  const sections = [
+    { id: 'cat-first', name: 'Plats', items: [{ id: 'main', name: 'Riz sauté', description: 'Repas chaud' }] },
+    { id: 'cat-late', name: 'Desserts', items: [{ id: 'dessert', name: 'Crème brûlée', description: 'Douceur vanillée' }] }
+  ]
+
+  assert.deepEqual(filterMenuSections(sections, 'cat-first', 'CREME brulee').map(section => section.id), ['cat-late'])
+  assert.deepEqual(filterMenuSections(sections, 'cat-first', 'VANILLE')[0].items.map(item => item.id), ['dessert'])
+  assert.deepEqual(filterMenuSections(sections, 'cat-first', 'inexistant'), [])
+})

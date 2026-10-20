@@ -25,5 +25,9 @@ function menuSections(restaurant) {
     .map((category) => ({ id: String(category.id), name: category.name, items: grouped.get(String(category.id)) }))
     .concat(grouped.has('__uncategorized') ? [{ id: '__uncategorized', name: 'Autres', items: grouped.get('__uncategorized') }] : [])
 }
-const filterMenuSections = (sections, categoryId) => (categoryId == null ? sections : sections.filter((section) => section.id === categoryId))
+function filterMenuSections(sections, categoryId, query = '') {
+  const needle = normalize(query)
+  if (!needle) return categoryId == null ? sections : sections.filter(section => section.id === categoryId)
+  return sections.map(section => ({ ...section, items: section.items.filter(item => normalize(`${item.name || ''} ${item.description || ''}`).includes(needle)) })).filter(section => section.items.length)
+}
 module.exports = { filterRestaurants, menuSections, filterMenuSections }

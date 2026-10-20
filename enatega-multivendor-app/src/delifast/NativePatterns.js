@@ -10,14 +10,14 @@ export const BRAND = { primary: tokens.colors.accent, onPrimary: tokens.colors.t
 export function Icon({ name, size = 22, color = tokens.colors.textPrimary }) {
   return <Ionicons name={name} size={size} color={color} accessible={false} />
 }
-export function SearchField({ value, onChangeText }) {
+export function SearchField({ value, onChangeText, label = 'Rechercher un restaurant', placeholder = 'Restaurants, envies…' }) {
   const s = searchStyles(tokens)
   return (
     <View style={[s.mainContainer, { backgroundColor: tokens.colors.surfaceSubtle, marginVertical: 12 }]}>
       <View style={s.subContainer}>
         <View style={s.leftContainer}>
           <Icon name='search-outline' color={tokens.colors.textMuted} size={20} />
-          <TextInput accessibilityLabel='Rechercher un restaurant' placeholder='Restaurants, envies…' placeholderTextColor={tokens.colors.textMuted} style={[s.bodyStyleOne, { minWidth: 0 }]} value={value} onChangeText={onChangeText} returnKeyType='search' autoCorrect={false} />
+          <TextInput accessibilityLabel={label} placeholder={placeholder} placeholderTextColor={tokens.colors.textMuted} style={[s.bodyStyleOne, { minWidth: 0 }]} value={value} onChangeText={onChangeText} returnKeyType='search' autoCorrect={false} />
         </View>
         {!!value && (
           <TouchableOpacity accessibilityRole='button' accessibilityLabel='Effacer la recherche' onPress={() => onChangeText('')} style={styles.iconButton}>
@@ -28,10 +28,10 @@ export function SearchField({ value, onChangeText }) {
     </View>
   )
 }
-export function Chip({ label, selected, onPress }) {
+export function Chip({ label, selected, onPress, variant }) {
   return (
-    <TouchableOpacity accessibilityRole='button' accessibilityLabel={label} accessibilityState={{ selected }} onPress={onPress} style={[styles.chip, selected && styles.chipSelected]}>
-      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{label}</Text>
+    <TouchableOpacity accessibilityRole='button' accessibilityLabel={label} accessibilityState={{ selected }} onPress={onPress} style={[styles.chip, selected && styles.chipSelected, variant === 'category' && styles.category, variant === 'category' && selected && styles.categorySelected]}>
+      <Text style={[styles.chipText, selected && styles.chipTextSelected, variant === 'category' && selected && styles.categoryTextSelected]}>{label}</Text>
     </TouchableOpacity>
   )
 }
@@ -79,6 +79,9 @@ export function SettingRow({ icon, title, description, onPress, disabled }) {
 const styles = StyleSheet.create({
   iconButton: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   chip: { minHeight: 44, paddingHorizontal: 17, borderRadius: tokens.radii.round, backgroundColor: tokens.colors.surfaceSubtle, justifyContent: 'center', marginRight: 8, borderWidth: 1, borderColor: tokens.colors.borderSubtle },
+  category: { minHeight: 54, borderRadius: 0, paddingHorizontal: 12, marginRight: 8, backgroundColor: 'transparent', borderWidth: 0, borderBottomWidth: 3, borderBottomColor: 'transparent' },
+  categorySelected: { backgroundColor: 'transparent', borderBottomColor: tokens.colors.accentForeground },
+  categoryTextSelected: { color: tokens.colors.accentForeground },
   chipSelected: { backgroundColor: tokens.colors.accent, borderColor: tokens.colors.accent },
   chipText: { fontSize: 13, fontFamily: 'MuseoSans500', color: tokens.colors.textSecondary },
   chipTextSelected: { color: tokens.colors.textOnAccent, fontFamily: 'MuseoSans700' },

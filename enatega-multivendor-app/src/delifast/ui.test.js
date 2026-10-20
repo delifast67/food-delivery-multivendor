@@ -10,7 +10,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const native = Object.fromEntries(['ActivityIndicator', 'Button', 'FlatList', 'KeyboardAvoidingView', 'Modal', 'SafeAreaView', 'ScrollView', 'Text', 'TextInput', 'TouchableOpacity', 'View'].map(name => [name, name]))
 // Le renderer JS ne fournit pas de moteur natif : la liste expose ses lignes
 // pour exercer les vrais handlers et hooks, sans prétendre tester iOS/Android.
-native.FlatList = ({ data = [], renderItem, ListEmptyComponent }) => React.createElement('FlatList', null, data.length ? data.map((item, index) => React.createElement(React.Fragment, { key: item.id || index }, renderItem({ item, index }))) : ListEmptyComponent)
+native.FlatList = ({ data = [], renderItem, ListHeaderComponent, ListEmptyComponent, ListFooterComponent }) => React.createElement('FlatList', null, ListHeaderComponent, data.length ? data.map((item, index) => React.createElement(React.Fragment, { key: item.id || index }, renderItem({ item, index }))) : ListEmptyComponent, ListFooterComponent)
 native.Dimensions = { get: () => ({ width: 390, height: 844 }) }
 native.Modal = ({ visible, children, ...props }) => visible ? React.createElement('Modal', props, children) : null
 native.Platform = { OS: 'ios' }
@@ -669,5 +669,81 @@ test('panier : l’action de livraison reste hors du contenu défilant', async (
   assert.equal(buttons(tree).filter(node => node.props.title === 'Livrer à cette adresse').length, 1)
   await press(tree, 'Livrer à cette adresse')
   assert.equal(tree.root.findAllByType('TextInput').length, 8)
+  await unmount(tree)
+})
+
+
+test('accueil : chaque restaurant est affiché une seule fois sans rail À découvrir dupliqué', async () => {
+  const second = { ...restaurant, id: 'r2', name: 'Deuxième restaurant' }
+  const tree = await mount(api({ restaurants: async () => [restaurant, second] }))
+  assert.equal(tree.root.findAllByProps({ accessibilityLabel: 'Restaurant fictif' }).length, 1)
+  assert.equal(tree.root.findAllByProps({ accessibilityLabel: 'Deuxième restaurant' }).length, 1)
+  assert.equal(tree.root.findAllByProps({ accessibilityLabel: 'Découvrir Restaurant fictif' }).length, 0)
+  await unmount(tree)
+})
+
+test('menu : la recherche dédiée ouvre, filtre tout le menu, se ferme et restaure la catégorie', async () => {
+  const searchable = {
+    ...restaurant,
+    categories: [{ id: 'cat', name: 'Repas', sortOrder: 0 }, { id: 'dessert', name: 'Desserts', sortOrder: 1 }],
+    menu: [
+      { ...restaurant.menu[0] },
+      { id: 'dessert-1', name: 'Crème brûlée', description: 'Douceur vanillée', priceXof: 800, available: true, categoryId: 'dessert', optionGroups: [] }
+    ]
+  }
+  const tree = await mount(api({ restaurants: async () => [searchable], restaurant: async () => searchable }))
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  await press(tree, 'Desserts', 'TouchableOpacity')
+  const openSearch = tree.root.findByProps({ accessibilityLabel: 'Rechercher dans le menu' })
+  await renderer.act(async () => { await openSearch.props.onPress() })
+  const input = tree.root.findByProps({ accessibilityLabel: 'Rechercher un plat' })
+  await renderer.act(async () => { input.props.onChangeText('CREME brulee') })
+  assert.match(treeText(tree), /Crème brûlée/)
+  assert.doesNotMatch(treeText(tree), /Riz test/)
+  const closeSearch = tree.root.findByProps({ accessibilityLabel: 'Fermer la recherche du menu' })
+  await renderer.act(async () => { await closeSearch.props.onPress() })
+  assert.equal(tree.root.findAllByProps({ accessibilityLabel: 'Rechercher un plat' }).length, 0)
+  assert.match(treeText(tree), /Crème brûlée/)
+  assert.doesNotMatch(treeText(tree), /Riz test/)
+  await unmount(tree)
+})
+
+test('menu : une recherche sans résultat rend un état vide explicite', async () => {
+  const tree = await mount()
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  await renderer.act(async () => { await tree.root.findByProps({ accessibilityLabel: 'Rechercher dans le menu' }).props.onPress() })
+  await renderer.act(async () => { await tree.root.findByProps({ accessibilityLabel: 'Rechercher un plat' }).props.onChangeText('plat totalement absent') })
+  assert.match(treeText(tree), /Aucun plat trouvé/)
+  await unmount(tree)
+})
+
+test('menu : le rail de catégories est le deuxième enfant sticky du flux', async () => {
+  const tree = await mount()
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  const menuScroll = tree.root.findAllByType('ScrollView').find(node => Array.isArray(node.props.stickyHeaderIndices) && node.props.stickyHeaderIndices.includes(1))
+  assert.ok(menuScroll, 'ScrollView du menu sticky manquant')
+  assert.deepEqual(menuScroll.props.stickyHeaderIndices, [1])
+  assert.ok(Array.isArray(menuScroll.props.children))
+  assert.ok(menuScroll.props.children.length >= 3)
+  assert.notEqual(menuScroll.props.children[0], null)
+  assert.notEqual(menuScroll.props.children[1], null)
+  assert.notEqual(menuScroll.props.children[2], null)
+  await unmount(tree)
+})
+
+
+test('menu : changer de restaurant réinitialise la recherche dédiée', async () => {
+  const second = { ...restaurant, id: 'r2', name: 'Deuxième restaurant', menu: [{ ...restaurant.menu[0], id: 'plat-2', name: 'Pâtes test' }] }
+  const tree = await mount(api({
+    restaurants: async () => [restaurant, second],
+    restaurant: async id => id === 'r2' ? second : restaurant
+  }))
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  await renderer.act(async () => { await tree.root.findByProps({ accessibilityLabel: 'Rechercher dans le menu' }).props.onPress() })
+  await renderer.act(async () => { await tree.root.findByProps({ accessibilityLabel: 'Rechercher un plat' }).props.onChangeText('Riz') })
+  await renderer.act(async () => { await tree.root.findByProps({ accessibilityLabel: 'Retour' }).props.onPress() })
+  await press(tree, 'Deuxième restaurant', 'TouchableOpacity')
+  await renderer.act(async () => { await tree.root.findByProps({ accessibilityLabel: 'Rechercher dans le menu' }).props.onPress() })
+  assert.equal(tree.root.findByProps({ accessibilityLabel: 'Rechercher un plat' }).props.value, '')
   await unmount(tree)
 })
