@@ -1,0 +1,55 @@
+import crypto from "node:crypto";
+import type { Db } from "mongodb";
+import type { Staff } from "./auth.js";
+import { fail } from "./validation.js";
+
+const MAX_NAME = 160;
+const MAX_DESCRIPTION = 2000;
+const idOf = (v: unknown, field: string) => {
+  if (typeof v !== "string" || !v.trim() || v.length > 128) fail("INVALID_INPUT", `${field} invalide`);
+  return v.trim();
+};
+const text = (v: unknown, field: string, max: number, allowEmpty = false) => {
+  if (typeof v !== "string" || v.length > max || (!allowEmpty && !v.trim())) fail("INVALID_INPUT", `${field} invalide`);
+  return v.trim();
+};
+export type RestaurantProfileInput = { name: string; description: string; open: boolean; deliveryZoneIds: string[] };
+export function normalizeRestaurantProfile(input: any): RestaurantProfileInput {
+  if (!input || typeof input !== "object") fail("INVALID_INPUT", "Profil restaurant invalide");
+  if (typeof input.open !== "boolean" || !Array.isArray(input.deliveryZoneIds) || input.deliveryZoneIds.length > 1000) fail("INVALID_INPUT", "Profil restaurant invalide");
+  const ids = input.deliveryZoneIds.map((x: unknown) => idOf(x, "deliveryZoneId"));
+  if (new Set(ids).size !== ids.length) fail("INVALID_INPUT", "Zones dupliquées");
+  return { name: text(input.name, "name", MAX_NAME), description: text(input.description, "description", MAX_DESCRIPTION, true), open: input.open, deliveryZoneIds: ids };
+}
+function admin(user: Staff) { if (user.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants"); }
+function view(r: any) { return { ...r, open: r.open !== false, version: Number.isInteger(r.version) ? r.version : 0 }; }
+async function validateZones(db: Db, ids: string[]) {
+  if (!ids.length) return;
+  const found = await db.collection("delivery_zones").find({ id: { $in: ids } }).project({ id: 1 }).toArray();
+  if (found.length !== ids.length) fail("ZONE_NOT_FOUND", "Zone de livraison introuvable");
+}
+function audit(user: Staff, action: string, version: number) { return { actor: { id: user.id, role: user.role }, action, version, at: new Date().toISOString() }; }
+export async function createRestaurantProfile(db: Db, user: Staff, raw: unknown) {
+  admin(user); const input = normalizeRestaurantProfile(raw); await validateZones(db, input.deliveryZoneIds);
+  const item = { id: crypto.randomUUID(), ...input, version: 0, audit: [audit(user, "RESTAURANT_PROFILE_CREATED", 0)], createdAt: new Date(), updatedAt: new Date() };
+  await db.collection("restaurants").insertOne(item);
+  return view(item);
+}
+export async function updateRestaurantProfile(db: Db, user: Staff, idRaw: unknown, expectedRaw: unknown, raw: unknown) {
+  admin(user); const id = idOf(idRaw, "id");
+  if (!Number.isInteger(expectedRaw) || (expectedRaw as number) < 0) fail("INVALID_INPUT", "Version invalide");
+  const input = normalizeRestaurantProfile(raw); await validateZones(db, input.deliveryZoneIds);
+  const expected = expectedRaw as number; const version = expected + 1;
+  const filter: any = { id, ...(expected === 0 ? { $or: [{ version: 0 }, { version: { $exists: false } }] } : { version: expected }) };
+  const result = await db.collection<any>("restaurants").findOneAndUpdate(filter, { $set: { ...input, version, updatedAt: new Date() }, $push: { audit: { $each: [audit(user, "RESTAURANT_PROFILE_UPDATED", version)], $slice: -100 } } } as any, { returnDocument: "after" });
+  if (!result) {
+    const exists = await db.collection("restaurants").findOne({ id }, { projection: { id: 1 } });
+    if (!exists) fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
+    fail("CONCURRENT_MODIFICATION", "Version modifiée, rechargez le restaurant");
+  }
+  return view(result);
+}
+export async function restaurantZoneIds(db: Db, restaurant: any) {
+  if (Array.isArray(restaurant.deliveryZoneIds)) return restaurant.deliveryZoneIds;
+  return (await db.collection<any>("delivery_zones").find({ restaurantId: restaurant.id }).project({ id: 1, _id: 0 }).toArray()).map(x => x.id);
+}

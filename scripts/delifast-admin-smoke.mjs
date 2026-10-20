@@ -105,14 +105,42 @@ try {
   assert.equal(zoneUpdated.version,zone.version+1); assert.equal(zoneUpdated.enabled,false);
   await assert.rejects(client.updateDeliveryZone(zone.id,zone.version,zoneInput),e=>e.code==='CONCURRENT_MODIFICATION');
   ok('zones créées et modifiées via le client admin : tarif serveur, isolation et version périmée vérifiés');
-  const closed = (await gql(openMutation, { id: own.id, version: own.version, open: false }, admin.token)).setRestaurantOpen;
+  const currentOwn = (await client.snapshot()).restaurants.find(r => r.id === own.id);
+  const closed = (await gql(openMutation, { id: own.id, version: currentOwn.version, open: false }, admin.token)).setRestaurantOpen;
   assert.equal(closed.open, false);
-  assert.equal(closed.version, own.version + 1);
-  await rejected(openMutation, { id: own.id, version: own.version, open: true }, admin.token, 'CONCURRENT_MODIFICATION');
+  assert.equal(closed.version, currentOwn.version + 1);
+  await rejected(openMutation, { id: own.id, version: currentOwn.version, open: true }, admin.token, 'CONCURRENT_MODIFICATION');
   await rejected(openMutation, { id: own.id, version: closed.version, open: true }, other.token, 'FORBIDDEN');
   await rejected(openMutation, { id: own.id, version: closed.version, open: true }, rider.token, 'FORBIDDEN');
   await client.setRestaurantOpen(own.id, closed.version, true);
   ok('restaurants : ouverture versionnée, concurrence et cloisonnement vérifiés');
+  // Profils exclusivement fictifs dans la base jetable, sans création de compte.
+  const profileInput = { name: 'Profil restaurant fictif — ne pas livrer', description: 'Fixture de recette sans activité commerciale', open: false, deliveryZoneIds: [zone.id] };
+  const profileMutation = 'mutation($input:RestaurantProfileInput!){createRestaurantProfile(input:$input){id version deliveryZoneIds}}';
+  await rejected(profileMutation, { input: profileInput }, undefined, 'UNAUTHENTICATED');
+  for (const staff of [restaurant, other, rider]) await rejected(profileMutation, { input: profileInput }, staff.token, 'FORBIDDEN');
+  await assert.rejects(client.createRestaurantProfile({ ...profileInput, name: ' ' }), e => e.code === 'INVALID_INPUT');
+  await assert.rejects(client.createRestaurantProfile({ ...profileInput, deliveryZoneIds: ['zone-inconnue-fictive'] }), e => e.code === 'ZONE_NOT_FOUND');
+  const profile = await client.createRestaurantProfile(profileInput);
+  assert.equal(profile.version, 0); assert.equal(profile.open, false);
+  assert.deepEqual(profile.deliveryZoneIds, [zone.id]);
+  assert.ok((await client.deliveryZones()).some(z => z.id === zone.id && z.restaurantId === own.id));
+  assert.deepEqual((await client.deliveryZones(profile.id)).map(z => z.id), [zone.id]);
+  const linked = (await client.deliveryZones(own.id)).find(z => z.id !== zone.id && z.enabled);
+  assert.ok(linked, 'Une zone de démonstration active doit rester disponible');
+  const updatedProfile = await client.updateRestaurantProfile(profile.id, profile.version, { ...profileInput, name: 'Profil fictif modifié', deliveryZoneIds: [linked.id] });
+  assert.equal(updatedProfile.version, 1);
+  await assert.rejects(client.updateRestaurantProfile(profile.id, profile.version, profileInput), e => e.code === 'CONCURRENT_MODIFICATION');
+  await assert.rejects(client.updateRestaurantProfile(profile.id, updatedProfile.version, { ...profileInput, deliveryZoneIds: ['zone-inconnue-fictive'] }), e => e.code === 'ZONE_NOT_FOUND');
+  const persistedProfile = (await client.snapshot()).restaurants.find(r => r.id === profile.id);
+  assert.equal(persistedProfile.name, 'Profil fictif modifié');
+  assert.deepEqual(persistedProfile.deliveryZoneIds, [linked.id]);
+  const attachedEligibility = (await gql('query($r:ID!,$p:DeliveryPointInput!){deliveryEligibility(restaurantId:$r,point:$p){zoneId deliveryFee}}', { r: profile.id, p: zoneInput.center })).deliveryEligibility;
+  assert.equal(attachedEligibility.zoneId, linked.id);
+  assert.equal(attachedEligibility.deliveryFee, linked.feeXof);
+  await client.updateRestaurantProfile(profile.id, updatedProfile.version, { ...profileInput, deliveryZoneIds: [] });
+  await rejected('query($r:ID!,$p:DeliveryPointInput!){deliveryEligibility(restaurantId:$r,point:$p){zoneId}}', { r: profile.id, p: zoneInput.center }, undefined, 'OUT_OF_DELIVERY_ZONE');
+  ok('profils restaurant : création/modification via proxy, droits, validation, zone inconnue, rattachement sans déplacement, persistance et conflit');
   async function place() {
     return (await gql('mutation($input:PlaceOrderInput!){placeOrder(input:$input){id status accessToken checkout{total}}}', { input: {
       restaurantId: own.id, items: [{ menuItemId: 'riz-gras', quantity: 2 }], idempotencyKey: `admin-${randomUUID()}`,

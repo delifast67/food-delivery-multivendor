@@ -34,6 +34,7 @@ import {
   setRestaurantOpen,
 } from "./catalog.js";
 import { normalizePoint, eligibility, listDeliveryZones, createDeliveryZone, updateDeliveryZone } from "./zones.js";
+import { createRestaurantProfile, updateRestaurantProfile, restaurantZoneIds } from "./restaurant.js";
 const typeDefs = await readFile(
   new URL("../schema/v1.graphql", import.meta.url),
   "utf8",
@@ -75,6 +76,7 @@ const knownCodes = new Set([
   "PAYMENT_REVIEW_REQUIRED",
   "PAYMENT_NOT_ALLOWED",
   "PAYMENT_UNAVAILABLE",
+  "ZONE_NOT_FOUND",
 ]);
 function complexityRule(context: ValidationContext) {
   let depth = 0,
@@ -163,6 +165,7 @@ const resolvers: any = {
     me: (_: any, _a: any, ctx: any) => ctx.user || null,
   },
   Restaurant: {
+    deliveryZoneIds: (r: any) => restaurantZoneIds(getDb(), r),
     menu: (r: any) => menuFor(getDb(), r),
     categories: (r: any) => categoriesFor(getDb(), r),
   },
@@ -245,6 +248,8 @@ const resolvers: any = {
         expectedVersion,
         archived,
       ),
+    createRestaurantProfile: (_: any, { input }: any, ctx: any) => createRestaurantProfile(getDb(), requireRole(ctx, ["ADMIN"]), input),
+    updateRestaurantProfile: (_: any, { id, expectedVersion, input }: any, ctx: any) => updateRestaurantProfile(getDb(), requireRole(ctx, ["ADMIN"]), id, expectedVersion, input),
     setRestaurantOpen: (_: any, { id, expectedVersion, open }: any, ctx: any) =>
       setRestaurantOpen(
         getDb(),

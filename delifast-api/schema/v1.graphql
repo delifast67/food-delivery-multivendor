@@ -27,13 +27,16 @@ type Mutation {
   updateMenuItem(id: ID!, expectedVersion: Int!, input: MenuItemInput!): MenuItem!
   setMenuItemArchived(id: ID!, expectedVersion: Int!, archived: Boolean!): MenuItem!
   setRestaurantOpen(id: ID!, expectedVersion: Int!, open: Boolean!): Restaurant!
+  createRestaurantProfile(input: RestaurantProfileInput!): Restaurant!
+  updateRestaurantProfile(id: ID!, expectedVersion: Int!, input: RestaurantProfileInput!): Restaurant!
   createMenuCategory(restaurantId: ID!, input: MenuCategoryInput!): MenuCategory!
   updateMenuCategory(id: ID!, expectedVersion: Int!, input: MenuCategoryInput!): MenuCategory!
   setMenuCategoryArchived(id: ID!, expectedVersion: Int!, archived: Boolean!): MenuCategory!
 }
 type Point { latitude: Float!, longitude: Float! }
 input DeliveryPointInput { latitude: Float!, longitude: Float! }
-type Restaurant { id: ID!, name: String!, description: String!, open: Boolean!, version: Int!, categories: [MenuCategory!]!, menu: [MenuItem!]! }
+input RestaurantProfileInput { name: String!, description: String!, open: Boolean!, deliveryZoneIds: [ID!]! }
+type Restaurant { id: ID!, name: String!, description: String!, open: Boolean!, version: Int!, deliveryZoneIds: [ID!]!, categories: [MenuCategory!]!, menu: [MenuItem!]! }
 type MenuCategory { id: ID!, name: String!, sortOrder: Int!, archived: Boolean!, version: Int! }
 type MenuItem { id: ID!, name: String!, description: String!, priceXof: Int!, available: Boolean!, version: Int!, archived: Boolean!, categoryId: ID, optionGroups: [MenuOptionGroup!]! }
 input MenuCategoryInput { name: String!, sortOrder: Int! }

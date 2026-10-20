@@ -55,7 +55,14 @@ export type Restaurant = {
   name: string;
   description: string;
   open: boolean;
+  deliveryZoneIds: string[];
   version: number;
+};
+export type RestaurantProfileInput = {
+  name: string;
+  description: string;
+  open: boolean;
+  deliveryZoneIds: string[];
 };
 export type DelifastSnapshot = {
   me: StaffUser;
@@ -81,7 +88,8 @@ export class DelifastError extends Error {
 }
 const SESSION_KEY = 'delifast-local-session';
 const ME_QUERY = 'query Me { me { id name role restaurantId } }';
-const OPERATIONS_QUERY = `query Operations { operationsOrders { id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity baseUnitPrice unitPrice selectedOptions { groupName name priceXof } total } } } operationsRestaurants { id name description open version } availableRiders { id name role restaurantId } }`;
+const RESTAURANT_FIELDS = 'id name description open deliveryZoneIds version';
+const OPERATIONS_QUERY = `query Operations { operationsOrders { id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity baseUnitPrice unitPrice selectedOptions { groupName name priceXof } total } } } operationsRestaurants { id name description open deliveryZoneIds version } availableRiders { id name role restaurantId } }`;
 function storageGet(key: string) {
   try {
     return typeof window !== 'undefined'
@@ -218,10 +226,10 @@ export class DelifastClient {
       'assignRider(orderId: $orderId, riderId: $riderId, expectedStatus: $expectedStatus)'
     );
   }
-  async deliveryZones(restaurantId: string) {
+  async deliveryZones(restaurantId?: string) {
     const data = await this.request<{ deliveryZones: DeliveryZone[] }>(
-      'query DeliveryZones($restaurantId: ID!) { deliveryZones(restaurantId: $restaurantId) { id restaurantId name shape center { latitude longitude } radiusMeters polygon { latitude longitude } enabled feeXof minimumOrderXof estimatedMinutes priority demo hours { day startMinute endMinute } version } }',
-      { restaurantId }
+      'query DeliveryZones($restaurantId: ID) { deliveryZones(restaurantId: $restaurantId) { id restaurantId name shape center { latitude longitude } radiusMeters polygon { latitude longitude } enabled feeXof minimumOrderXof estimatedMinutes priority demo hours { day startMinute endMinute } version } }',
+      { restaurantId: restaurantId || undefined }
     );
     return data.deliveryZones;
   }
@@ -238,6 +246,20 @@ export class DelifastClient {
       { id, expectedVersion, input }
     );
     return data.updateDeliveryZone;
+  }
+  async createRestaurantProfile(input: RestaurantProfileInput) {
+    const data = await this.request<{ createRestaurantProfile: Restaurant }>(
+      `mutation CreateRestaurantProfile($input: RestaurantProfileInput!) { createRestaurantProfile(input: $input) { ${RESTAURANT_FIELDS} } }`,
+      { input }
+    );
+    return data.createRestaurantProfile;
+  }
+  async updateRestaurantProfile(id: string, expectedVersion: number, input: RestaurantProfileInput) {
+    const data = await this.request<{ updateRestaurantProfile: Restaurant }>(
+      `mutation UpdateRestaurantProfile($id: ID!, $expectedVersion: Int!, $input: RestaurantProfileInput!) { updateRestaurantProfile(id: $id, expectedVersion: $expectedVersion, input: $input) { ${RESTAURANT_FIELDS} } }`,
+      { id, expectedVersion, input }
+    );
+    return data.updateRestaurantProfile;
   }
   async setRestaurantOpen(id: string, expectedVersion: number, open: boolean) {
     return this.mutate<Restaurant>(
@@ -276,7 +298,7 @@ export class DelifastClient {
       .join(', ');
     const fields =
       field === 'setRestaurantOpen'
-        ? 'id name description open version'
+        ? `${RESTAURANT_FIELDS}`
         : 'id status paymentStatus createdAt updatedAt restaurantId riderId';
     return (
       await this.request<Record<string, T>>(

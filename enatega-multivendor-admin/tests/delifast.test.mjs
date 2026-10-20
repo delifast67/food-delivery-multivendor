@@ -140,3 +140,40 @@ test('les textes polygonaires ou horaires invalides renvoient une erreur sans pe
   assert.match(parseHoursText('[{"day":1,"startMinute":900,"endMinute":480}]').error, /début < fin/);
   assert.deepEqual(parseHoursText('[]').value, []);
 });
+
+test('les profils restaurant et la liste complète des zones utilisent le contrat strict', async () => {
+  storage(token);
+  const zone = { id: 'zone-fictive-1', restaurantId: 'restaurant-fictif', name: 'Zone Démo', shape: 'CIRCLE', center: null, radiusMeters: 1000, polygon: null, enabled: false, feeXof: 0, minimumOrderXof: 0, estimatedMinutes: 35, priority: 0, demo: true, hours: [], version: 1 };
+  const calls = transport(({ query, variables }) => {
+    if (query.includes('query DeliveryZones')) return response({ deliveryZones: [zone] });
+    if (query.includes('createRestaurantProfile')) return response({ createRestaurantProfile: { id: 'restaurant-fictif', name: variables.input.name, description: variables.input.description, open: variables.input.open, deliveryZoneIds: variables.input.deliveryZoneIds, version: 1 } });
+    if (query.includes('updateRestaurantProfile')) return response({ updateRestaurantProfile: { id: variables.id, name: variables.input.name, description: variables.input.description, open: variables.input.open, deliveryZoneIds: variables.input.deliveryZoneIds, version: variables.expectedVersion + 1 } });
+    return response({ me: admin });
+  });
+  const client = new DelifastClient();
+  assert.deepEqual(await client.deliveryZones(), [zone]);
+  await client.createRestaurantProfile({ name: 'Fictif', description: '', open: false, deliveryZoneIds: [] });
+  await client.updateRestaurantProfile('restaurant-fictif', 4, { name: 'Fictif v2', description: 'Démo', open: true, deliveryZoneIds: [zone.id] });
+  const create = calls.find((call) => call.query.includes('createRestaurantProfile'));
+  assert.deepEqual(create.variables, { input: { name: 'Fictif', description: '', open: false, deliveryZoneIds: [] } });
+  const update = calls.find((call) => call.query.includes('updateRestaurantProfile'));
+  assert.deepEqual(update.variables, { id: 'restaurant-fictif', expectedVersion: 4, input: { name: 'Fictif v2', description: 'Démo', open: true, deliveryZoneIds: [zone.id] } });
+  assert.match(calls.find((call) => call.query.includes('query DeliveryZones')).query, /\$restaurantId: ID\)/);
+});
+
+test('les codes zone inconnue et conflit sont transmis sans rejeu', async () => {
+  storage(token);
+  const calls = transport(() => ({ ok: true, status: 200, json: async () => ({ errors: [{ message: 'Zone inconnue', extensions: { code: 'UNKNOWN_DELIVERY_ZONE' } }] }) }));
+  await assert.rejects(new DelifastClient().createRestaurantProfile({ name: 'Fictif', description: '', open: false, deliveryZoneIds: ['zone-inconnue'] }), { code: 'UNKNOWN_DELIVERY_ZONE', message: 'Zone inconnue' });
+  assert.equal(calls.length, 1);
+});
+
+
+ test("le modèle UI capture la version d'édition et verrouille les écritures ambiguës", () => {
+  const page = fs.readFileSync(new URL('../app/delifast/page.tsx', import.meta.url), 'utf8');
+  assert.match(page, /useState<number \| null>\(null\)/);
+  assert.match(page, /client\.updateRestaurantProfile\(selectedId, editingVersion, input\)/);
+  assert.match(page, /blocked === 'ambiguous'/);
+  assert.match(page, /Écriture acceptée mais actualisation impossible/);
+  assert.match(page, /\[snapshot\]/);
+ });

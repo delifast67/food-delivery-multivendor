@@ -34,7 +34,10 @@ test('les routes historiques et APIs étrangères sont cloisonnées', async () =
 });
 test('aucune opération paiement ni gestion de comptes inventée dans le client admin', async () => {
   const client = await read('lib/delifast/client.ts');
-  assert.doesNotMatch(client, /simulateDemoPayment|startPayment|refreshPayment|createStaff|createRestaurant|passwordHash/);
+  assert.doesNotMatch(client, /simulateDemoPayment|startPayment|refreshPayment|createStaff|createRestaurantAccount|createUser|passwordHash/);
+  assert.match(client, /createRestaurantProfile/);
+  assert.match(client, /updateRestaurantProfile/);
+  assert.match(client, /RestaurantProfileInput/);
   assert.match(client, /expectedStatus/);
   assert.match(client, /expectedVersion/);
 });

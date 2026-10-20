@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { Db } from "mongodb";
 import type { Staff } from "./auth.js";
 import { fail } from "./validation.js";
+import { restaurantZoneIds } from "./restaurant.js";
 
 export type Point = { latitude: number; longitude: number };
 export type DeliveryPointInput = Point;
@@ -90,12 +91,41 @@ function scope(user: Staff, restaurantId:string){if(user.role==="RESTAURANT"&&us
 function versionFilter(v:number):any{return v===0?{$or:[{version:0},{version:{$exists:false}}]}:{version:v};}
 
 export async function listDeliveryZones(db:Db,user:Staff,restaurantId?:unknown){
-  allowed(user); const q:any={}; if(restaurantId!==undefined&&restaurantId!==null){const r=id(restaurantId,"restaurantId");scope(user,r);q.restaurantId=r;} else if(user.role==="RESTAURANT") q.restaurantId=user.restaurantId;
-  return (await db.collection("delivery_zones").find(q).sort({priority:1,id:1}).toArray()).map(view);
+  allowed(user);
+  if (user.role === "ADMIN" && (restaurantId === undefined || restaurantId === null))
+    return (await db.collection("delivery_zones").find({}).sort({priority:1,id:1}).toArray()).map(view);
+  const rid = restaurantId == null ? user.restaurantId : id(restaurantId,"restaurantId");
+  if (!rid) fail("INVALID_INPUT", "restaurantId invalide"); scope(user,rid);
+  const r = await db.collection<any>("restaurants").findOne({id:rid});
+  if (!r) fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
+  const ids = await restaurantZoneIds(db,r);
+  return (await db.collection("delivery_zones").find({id:{$in:ids}}).sort({priority:1,id:1}).toArray()).map(view);
 }
 export async function createDeliveryZone(db:Db,user:Staff,restaurantIdRaw:unknown,input:any){
-  if(user.role!=="ADMIN") fail("FORBIDDEN","Droits insuffisants"); const restaurantId=id(restaurantIdRaw,"restaurantId"); scope(user,restaurantId); if(!(await db.collection("restaurants").findOne({id:restaurantId}))) fail("RESTAURANT_NOT_FOUND","Restaurant introuvable");
-  const value=normalizeZoneInput(input), item={id:crypto.randomUUID(),restaurantId,...value,version:0,audit:[audit(user,"DELIVERY_ZONE_CREATED",0)],createdAt:new Date(),updatedAt:new Date()}; await db.collection("delivery_zones").insertOne(item); return view(item);
+  if(user.role!=="ADMIN") fail("FORBIDDEN","Droits insuffisants"); const restaurantId=id(restaurantIdRaw,"restaurantId"); scope(user,restaurantId);
+  const restaurant = await db.collection<any>("restaurants").findOne({id:restaurantId});
+  if(!restaurant) fail("RESTAURANT_NOT_FOUND","Restaurant introuvable");
+  const value=normalizeZoneInput(input), item={id:crypto.randomUUID(),restaurantId,...value,version:0,audit:[audit(user,"DELIVERY_ZONE_CREATED",0)],createdAt:new Date(),updatedAt:new Date()};
+  await db.collection("delivery_zones").insertOne(item);
+  const expectedVersion = Number.isInteger(restaurant.version) ? restaurant.version : 0;
+  // Keep legacy ownership lookup until a profile explicitly selects zones.
+  // Materialising concurrent, not-yet-committed inserts could retain orphan IDs
+  // when the losing insertion is compensated below.
+  const refs = Array.isArray(restaurant.deliveryZoneIds)
+    ? {deliveryZoneIds:[...new Set([...restaurant.deliveryZoneIds,item.id])]}
+    : {};
+  try {
+    const result = await db.collection<any>("restaurants").updateOne(
+      {id:restaurantId, ...versionFilter(expectedVersion)},
+      {$set:{...refs,version:expectedVersion+1,updatedAt:new Date()},
+       $push:{audit:{$each:[audit(user,"DELIVERY_ZONE_CREATED",expectedVersion+1)],$slice:-100}}} as any,
+    );
+    if (result.matchedCount !== 1) fail("CONCURRENT_MODIFICATION","Version modifiée, rechargez le restaurant");
+  } catch (error) {
+    await db.collection("delivery_zones").deleteOne({id:item.id});
+    throw error;
+  }
+  return view(item);
 }
 export async function updateDeliveryZone(db:Db,user:Staff,idRaw:unknown,expectedRaw:unknown,input:any){
   if(user.role!=="ADMIN") fail("FORBIDDEN","Droits insuffisants"); const zid=id(idRaw,"id"); const current=await db.collection<any>("delivery_zones").findOne({id:zid}); if(!current) fail("ZONE_NOT_FOUND","Zone introuvable"); scope(user,current.restaurantId); if(!Number.isInteger(expectedRaw)||(expectedRaw as number)<0) fail("INVALID_INPUT","Version invalide"); const old=Number.isInteger(current.version)?current.version:0; if(expectedRaw!==old) fail("CONCURRENT_MODIFICATION","Version modifiée"); const value=normalizeZoneInput(input), next=old+1;
@@ -107,6 +137,9 @@ function insidePolygon(p:Point,poly:Point[]){let inside=false;for(let i=0,j=poly
 function active(hours:ZoneHours[],now:Date){if(!hours.length)return true;const day=now.getUTCDay(),minute=now.getUTCHours()*60+now.getUTCMinutes();return hours.some(h=>h.day===day&&minute>=h.startMinute&&minute<h.endMinute);}
 export async function eligibility(db:Db,restaurantIdRaw:unknown,p:unknown,subtotal?:unknown,now=new Date()){
   const restaurantId=id(restaurantIdRaw,"restaurantId"); if(p===undefined||p===null) fail("DELIVERY_POINT_REQUIRED","Point de livraison requis"); const pointValue=normalizePoint(p); const subtotalValue=subtotal==null?undefined:subtotal; if(subtotalValue!==undefined&&(!Number.isInteger(subtotalValue)||(subtotalValue as number)<0)) fail("INVALID_INPUT","Sous-total invalide");
-  const zones=await db.collection<any>("delivery_zones").find({restaurantId,enabled:true}).toArray(); const matched=zones.map(view).filter(z=>active(Array.isArray(z.hours)?z.hours:[],now)&& (z.shape==="CIRCLE"?distance(pointValue,z.center)<=z.radiusMeters+1e-7: z.shape==="POLYGON"&&insidePolygon(pointValue,z.polygon))).sort((a,b)=>(a.priority??0)-(b.priority??0)||String(a.id).localeCompare(String(b.id)));
+  const restaurant = await db.collection<any>("restaurants").findOne({id:restaurantId});
+  if (!restaurant) fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
+  const zoneIds = await restaurantZoneIds(db, restaurant);
+  const zones=await db.collection<any>("delivery_zones").find({id:{$in:zoneIds},enabled:true}).toArray(); const matched=zones.map(view).filter(z=>active(Array.isArray(z.hours)?z.hours:[],now)&& (z.shape==="CIRCLE"?distance(pointValue,z.center)<=z.radiusMeters+1e-7: z.shape==="POLYGON"&&insidePolygon(pointValue,z.polygon))).sort((a,b)=>(a.priority??0)-(b.priority??0)||String(a.id).localeCompare(String(b.id)));
   if(!matched.length) fail("OUT_OF_DELIVERY_ZONE","Point hors zone de livraison"); const z=matched[0]; if(subtotalValue!==undefined&&(subtotalValue as number)<z.minimumOrderXof) fail("MINIMUM_ORDER_NOT_MET","Minimum de commande non atteint"); return {zoneId:z.id,zoneName:z.name,zoneVersion:Number.isInteger(z.version)?z.version:0,deliveryFee:z.feeXof,minimumOrderXof:z.minimumOrderXof,estimatedMinutes:z.estimatedMinutes,demo:z.demo===true};
 }

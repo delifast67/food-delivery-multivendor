@@ -22,13 +22,13 @@ Se connecter avec un compte staff existant reconnu `ADMIN` par le serveur, consu
 
 Les transitions nécessitent un paiement déjà confirmé et transmettent `expectedStatus`. L’affectation est possible uniquement aux états `ACCEPTED`, `PREPARING`, `READY`, sans remplacer un livreur déjà affecté. L’ouverture transmet `expectedVersion`. En cas de conflit ou de réponse incertaine, relire l’état serveur avant toute nouvelle décision : aucune mutation n’est rejouée automatiquement.
 
-L’admin ne propose aucun encaissement, simulateur de paiement ou remboursement effectif. `REFUND_PENDING` signifie uniquement « remboursement à traiter ». Il ne crée ni comptes, ni mots de passe, ni restaurants. Les clients permanents, zones, commissions, finances, horaires, validation de restaurants et permissions fines ne sont pas pris en charge par cette API.
+L’admin ne propose aucun encaissement, simulateur de paiement ou remboursement effectif. `REFUND_PENDING` signifie uniquement « remboursement à traiter ». Il ne crée ni comptes, ni mots de passe, ni clients permanents. Il permet désormais de créer et modifier les profils restaurant (nom, description, état ouvert/fermé et références vers des zones existantes). Les tarifs, périmètres, commissions, finances, horaires, validation de restaurants et permissions fines ne sont pas pris en charge par cette interface.
 
 ## Sessions et requêtes
 
 Le jeton staff est conservé dans `sessionStorage`, jamais prérempli. Une connexion ou reprise de session est revalidée par `me` avant l’accès aux opérations, réservé au rôle `ADMIN`. Le serveur reste responsable des autorisations ; aucun jeton d’accès client aux commandes n’est demandé.
 
-Le snapshot regroupe commandes, restaurants et livreurs ; les filtres et détails n’effectuent pas de requête supplémentaire, et il n’y a pas de polling. Les listes serveur ne sont pas paginées : usage local avec peu de données seulement. Un snapshot n’est pas une vue temps réel.
+Le snapshot regroupe commandes, profils restaurant (avec leurs IDs de zones) et livreurs ; la liste complète des zones est relue séparément ; les filtres et détails n’effectuent pas de requête supplémentaire, et il n’y a pas de polling. Les listes serveur ne sont pas paginées : usage local avec peu de données seulement. Un snapshot n’est pas une vue temps réel.
 
 ## Vérifier
 
@@ -54,8 +54,9 @@ await client.login(email, password);
 const snapshot = await client.snapshot();
 await client.transition(orderId, 'ACCEPTED', 'CONFIRMED');
 await client.assignRider(orderId, riderId, 'ACCEPTED');
-await client.setRestaurantOpen(restaurantId, version, false);
+await client.updateRestaurantProfile(restaurantId, version, { name, description, open: false, deliveryZoneIds });
+await client.createRestaurantProfile({ name, description, open: false, deliveryZoneIds });
 await client.logout();
 ```
 
-Les erreurs conservent les codes GraphQL, dont `UNAUTHENTICATED`, `FORBIDDEN` et `CONCURRENT_MODIFICATION`. Ce lot ne suppose aucune stratégie de création ou de nombre de comptes admin.
+Les erreurs conservent les codes GraphQL, dont `UNAUTHENTICATED`, `FORBIDDEN` et `CONCURRENT_MODIFICATION`. Pendant une modification, la version CAS est capturée au clic « Modifier » et reste indépendante des actualisations : une actualisation ne remplace jamais silencieusement le brouillon. Après conflit, le bouton « Relire et réviser » recharge la liste, puis une seconde confirmation « J’ai vérifié, réviser ce brouillon » est nécessaire avant de réarmer l’enregistrement. Une réponse réseau perdue après création/mutation, ou une actualisation échouée après succès, est traitée comme résultat ambigu : le formulaire est verrouillé, aucune écriture n’est rejouée et, pour une création, l’interface demande de rechercher le profil dans la liste avant d’autoriser un recommencement. La création d’une zone actualise aussi le snapshot, ce qui peut incrémenter la version du restaurant ; un brouillon de profil existant conserve toutefois sa version capturée et doit être révisé explicitement.
