@@ -16,10 +16,7 @@ import {
 } from "@/lib/utils/interfaces";
 
 // API
-import {
-  STORE_PROFILE,
-  STORE_PROFILE_SINGLE_VENDOR,
-} from "@/lib/apollo/queries";
+import { STORE_PROFILE } from "@/lib/apollo/queries";
 import {
   IStoreEarnings,
   IStoreEarningsArray,
@@ -48,14 +45,14 @@ export const UserProvider = ({ children }: IUserProviderProps) => {
   const [storeOrdersEarnings, setStoreOrderEarnings] = useState<
     IStoreEarningsArray[] | null
   >(null);
-  const { isSingleVendor, storeIdKey } = useStoreMode();
+  const { storeIdKey } = useStoreMode();
 
   const {
     loading: loadingProfile,
     error: errorProfile,
     data: dataProfile,
     refetch: refetchProfile,
-  } = useQuery(isSingleVendor ? STORE_PROFILE_SINGLE_VENDOR : STORE_PROFILE, {
+  } = useQuery(STORE_PROFILE, {
     fetchPolicy: "cache-and-network",
     variables: {
       restaurantId: userId,
@@ -98,19 +95,8 @@ export const UserProvider = ({ children }: IUserProviderProps) => {
   const normalizedProfile = useMemo(() => {
     const profile = dataProfile?.restaurant;
     if (!profile) return null;
-    if (!isSingleVendor) return profile;
-
-    const details = profile.bussinessDetails;
-    return {
-      ...profile,
-      hasBusinessDetails: Boolean(
-        details?.bankName ||
-          details?.accountNumber ||
-          details?.accountName ||
-          details?.accountCode,
-      ),
-    };
-  }, [dataProfile?.restaurant, isSingleVendor]);
+    return profile;
+  }, [dataProfile?.restaurant]);
 
   const value = useMemo<IUserContextProps>(
     () => ({

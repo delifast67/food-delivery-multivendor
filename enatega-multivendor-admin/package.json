@@ -16,7 +16,8 @@
     "prepare": "husky",
     "cy:open": "cypress open",
     "cy:run": "cypress run",
-    "test:delifast": "node --test tests/delifast.test.mjs"
+    "test:delifast": "node --test tests/delifast.test.mjs",
+    "test:admin-multivendor": "node --test tests/admin-multivendor-audit.test.mjs"
   },
   "dependencies": {
     "@apollo/client": "^3.11.8",

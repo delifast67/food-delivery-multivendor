@@ -190,9 +190,9 @@ Les montants sont relus dans le catalogue serveur puis figés dans la commande. 
 
 Les prix, taxes, zones et frais du seed ne sont **pas des décisions commerciales validées**. La ville de démonstration est Ouagadougou ; aucune livrabilité GPS, plage horaire réelle ou réserve de stock concurrentielle n’est revendiquée.
 
-Pour un pilote réel, Hilton doit valider le prestataire et ses accès marchands, les restaurants/menus, zones/frais/commissions et règles d’annulation. Il reste du développement indépendant de ces validations : migration complète des fonctions historiques des applications mobiles et de l’admin, retrait des anciens paiements et des modes mono-vendeur des autres surfaces, rebranding global, photos et gestion des horaires/zones, durcissement des comptes clients, suivi GPS, notifications, support, finances/rapprochement, jobs et stockage objet. Ces décisions ne sont pas nécessaires pour continuer le développement local ; aucun accès marchand n’est demandé par le nettoyage client.
+Pour un pilote réel, Hilton doit valider le prestataire et ses accès marchands, les restaurants/menus, zones/frais/commissions et règles d’annulation. Il reste du développement indépendant de ces validations : migration complète des fonctions historiques des applications mobiles et de l’admin, retrait des anciens paiements, rebranding global, photos et gestion des horaires/zones, durcissement des comptes clients, suivi GPS, notifications, support, finances/rapprochement, jobs et stockage objet. Les anciennes bascules monovendeur restaurant/livreur sont désormais neutralisées, sans suppression globale de leurs sources historiques. Ces décisions ne sont pas nécessaires pour continuer le développement local ; aucun accès marchand n’est demandé par ce nettoyage.
 
-Le module `enatega-singlevendor-admin` avait déjà été supprimé et les liens qui y menaient retirés. Le nettoyage client est détaillé dans [la note de configuration](VENDOR_MODE_CONFIGURATION.md) ; le restaurant et le livreur conservent leur support historique mono-vendeur. Le back-office local des opérations ne remplace pas encore toutes les fonctionnalités administratives demandées. Des exports JS mobiles sont vérifiés, pas des builds natifs signés. La publication stores et le déploiement de préproduction ne sont pas exécutés. La PR n’est ni fusionnée ni déployée en production.
+Le module `enatega-singlevendor-admin` avait déjà été supprimé et les liens qui y menaient retirés. Le nettoyage est détaillé dans [la note multivendeur](VENDOR_MODE_CONFIGURATION.md) : restaurant et livreur restent maintenant sur le parcours multivendeur, y compris en présence d’une ancienne sélection monovendeur. Le back-office local des opérations ne remplace pas encore toutes les fonctionnalités administratives demandées. Des exports JS mobiles ont été vérifiés dans les lots précédents, pas des builds natifs signés. La publication stores et le déploiement de préproduction ne sont pas exécutés. La PR n’est ni fusionnée ni déployée en production.
 
 Les dépendances historiques web conservent notamment des alertes Firebase/Firestore/gRPC. Un correctif automatique impliquant un changement majeur n’a pas été appliqué aveuglément. Le blocage explicite `NODE_ENV=production` côté API reste en place.
 
@@ -369,3 +369,34 @@ Correctifs de ce lot : chargement ESM du plugin Tailwind (le `require` faisait p
 Vérifications réussies : **283 tests API, 139 tests web, 76 tests client mobile**, test natif de configuration, **30 documents GraphQL**, builds API/web et **34 contrôles HTTP** (14 client, 9 opérations, 5 catalogue, 6 catégories/options) sur la base jetable. Les tests de composants utilisent des réponses injectées ; ils ne valident pas Orange. Une installation locale Next incomplète a été restaurée par `npm ci`, sans changement de lockfile.
 
 **Limites inchangées : produit complet non terminé.** Cette recette couvre les rôles dans le web local, pas l’exécution visuelle des applications natives restaurant/livreur/admin ni une validation sur téléphone Android/iOS. Aucun nouvel export mobile, APK/IPA, envoi SMS, achat de crédits, paiement/remboursement réel, push GitHub, fusion ou déploiement n’a été réalisé. Le carnet client authentifié n’est pas recetté à l’écran sans transport OTP autorisé ; ses tests automatisés ne remplacent pas une recette réelle. Les prérequis de pilote et travaux restants listés ci-dessus demeurent applicables.
+
+## Multivendeur par défaut — restaurant, livreur et admin
+
+Les couches historiques restaurant et livreur ne proposent plus de bascule Multi/Single à la connexion. Leur mode effectif est fixé à `MULTI`, même si une ancienne variable ou sélection persistée indique `SINGLE`. Les environnements runtime utilisent uniquement les connexions multivendeurs existantes. Les clés de sessions explicitement monovendeur restent séparées et ne sont ni copiées ni transmises au backend multivendeur. Les anciennes clés non scopées gardent leur migration compatible sans écraser une session multivendeur existante.
+
+Le restaurant sélectionne directement les contrats multivendeurs pour profil, commandes, configuration et abonnements. Son ancien chargement de page monovendeur devient une API compatible sans requête : la requête multivendeur conservée n’est pas présentée comme paginée. Une erreur de migration de stockage ne produit pas de rejet non géré. Le livreur conserve la signature de son helper d’environnement pour les appelants historiques, mais ignore le choix de mode ; les connexions de release restent contrôlées en HTTPS/WSS.
+
+L’audit admin n’a trouvé aucune bascule monovendeur à supprimer. Le type `ISingleVendorResponseGraphQL` correspond à `getVendor`, donc au profil d’un vendeur et non à un mode de plateforme. Les listes de vendeurs et de leurs restaurants sont préservées. La [note multivendeur](VENDOR_MODE_CONFIGURATION.md) détaille le périmètre, les compatibilités et les sources historiques conservées.
+
+### Vérifications exécutées pour ce lot
+
+| Vérification | Résultat |
+| --- | --- |
+| API, y compris nouveau scénario deux restaurants → même admin/livreur → deux livraisons | 284/284 tests, 22 fichiers |
+| Typecheck et compilation API sous Node 24.19.0 | Réussis |
+| Web et client mobile | 139/139 et 76/76 tests |
+| Restaurant autonome | 43/43 tests |
+| Jest restaurant ciblé (mode, provider, commandes et stockage sécurisé) | 7/7 tests dans 4 suites |
+| Livreur, gardes d’entrée et nouveaux tests comportementaux multivendeur | 63/63 tests |
+| Admin autonome et audit multivendeur | 18/18 et 2/2 tests |
+| TypeScript admin local | Réussi |
+| Gardes d’entrée/configuration transversaux | 21/21 tests |
+| Documents GraphQL web/client/restaurant/livreur | 30/5/5/5 conformes |
+| Recettes HTTP autonomes restaurant et livreur | 9 et 13 contrôles réussis sur API/MongoDB jetables |
+| `git diff --check` | Réussi |
+
+Le nouveau scénario API utilise deux comptes restaurant fictifs, un admin et deux livreurs. Les restaurants ne voient et ne préparent que leurs commandes ; une transition visant l’autre établissement renvoie `ORDER_NOT_FOUND` pour ne pas révéler son existence. L’admin affecte les deux commandes au même livreur, qui peut les récupérer et les livrer. Le second livreur ne voit aucune de ces missions. Les confirmations de paiement restent des simulations confinées à la base jetable du test.
+
+La vérification TypeScript globale des sources mobiles historiques restaurant/livreur reste bloquée par `TS5095` (configuration module/moduleResolution incompatible) ; les contrôles avec options compatibles signalent aussi des erreurs préexistantes ailleurs. Les tests ciblés ne constituent pas une validation complète de ces sources. Aucun nouvel export mobile, build natif signé, essai sur téléphone, parcours navigateur ou build web n’est revendiqué pour ce lot ; les recettes visuelles précédentes restent des résultats historiques.
+
+Les notices, licences, anciennes routes, documents Apollo et scripts de diagnostic sont conservés sans suppression générale. Les fichiers de déploiement et de configuration externe ne sont pas changés. Aucun achat, SMS Orange, paiement réel, publication Git, fusion, préproduction ou production n’est effectué. Le produit complet n’est toujours pas terminé : les fonctions métier encore absentes et les validations réelles restent décrites plus haut.

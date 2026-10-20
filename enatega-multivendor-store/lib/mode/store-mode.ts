@@ -13,12 +13,8 @@ export type StoreServerMode =
 
 export const DEFAULT_STORE_SERVER_MODE = STORE_SERVER_MODES.MULTI;
 
-export const getForcedStoreServerMode = (): StoreServerMode | null => {
-  const policy = process.env.EXPO_PUBLIC_VENDOR_MODE?.toUpperCase();
-  if (policy === STORE_SERVER_MODES.SINGLE) return STORE_SERVER_MODES.SINGLE;
-  if (policy === STORE_SERVER_MODES.MULTI) return STORE_SERVER_MODES.MULTI;
-  return null;
-};
+export const getForcedStoreServerMode = (): StoreServerMode =>
+  STORE_SERVER_MODES.MULTI;
 export const STORE_SERVER_MODE_KEY = "@enatega/store/server-mode";
 
 const STORE_STORAGE_MIGRATION_KEY = "@enatega/store/server-storage-migrated-v1";
@@ -56,11 +52,13 @@ export const migrateLegacyStoreSession = async (): Promise<void> => {
     : await AsyncStorage.getItem(STORE_ID);
   const legacyStoreId = legacySecureStoreId ?? legacyAsyncStoreId;
 
-  if (legacyToken && !scopedToken) {
-    await SecureStore.setItemAsync(multiTokenKey, legacyToken);
+  const canonicalToken = scopedToken ?? legacyToken;
+  const canonicalStoreId = scopedStoreId ?? legacyStoreId;
+  if (canonicalToken && !scopedToken) {
+    await SecureStore.setItemAsync(multiTokenKey, canonicalToken);
   }
-  if (legacyStoreId && !scopedStoreId) {
-    await SecureStore.setItemAsync(multiStoreIdKey, legacyStoreId);
+  if (canonicalStoreId && !scopedStoreId) {
+    await SecureStore.setItemAsync(multiStoreIdKey, canonicalStoreId);
   }
 
   await Promise.all([

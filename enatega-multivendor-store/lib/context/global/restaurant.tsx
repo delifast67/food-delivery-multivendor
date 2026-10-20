@@ -20,10 +20,7 @@ import * as SecureStore from "expo-secure-store";
 import { AppState } from "react-native";
 
 // API
-import {
-  GET_ORDERS,
-  GET_ORDERS_SINGLE_VENDOR,
-} from "@/lib/apollo/queries/orders";
+import { GET_ORDERS } from "@/lib/apollo/queries/orders";
 import { SUBSCRIBE_PLACE_ORDER } from "@/lib/apollo/subscriptions";
 import { getStoreId } from "@/lib/services";
 import { IRestaurantProviderProps } from "@/lib/utils/interfaces";
@@ -67,8 +64,11 @@ const Provider = ({ children }: IRestaurantProviderProps) => {
   const unsubscribeRef = useRef<null | (() => void)>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const subscribedRestaurantRef = useRef<string | null>(null);
-  const [hasMoreOrders, setHasMoreOrders] = useState(true);
-  const { isSingleVendor, storeIdKey } = useStoreMode();
+  // Multivendor GET_ORDERS is not paginated. Keep the historical context API
+  // for screens that still call loadMoreOrders, but never issue a pagination
+  // request against that query.
+  const hasMoreOrders = false;
+  const { storeIdKey } = useStoreMode();
 
   useEffect(() => {
     (async () => {
@@ -85,30 +85,19 @@ const Provider = ({ children }: IRestaurantProviderProps) => {
   // subscription (subscribePlaceOrder + per-order subscriptionOrder). The
   // initial fetch loads the list; realtime keeps it current. Pull-to-refresh
   // still calls refetch() manually.
-  const { loading, error, data, subscribeToMore, refetch, fetchMore, networkStatus } =
-    useQuery<RestaurantOrdersData>(
-      isSingleVendor ? GET_ORDERS_SINGLE_VENDOR : GET_ORDERS,
-      {
-        fetchPolicy: "cache-and-network",
-        variables: isSingleVendor ? { offset: 0, limit: 50 } : undefined,
-      },
-    );
+  const {
+    loading,
+    error,
+    data,
+    subscribeToMore,
+    refetch,
+    networkStatus,
+  } = useQuery<RestaurantOrdersData>(GET_ORDERS, {
+    fetchPolicy: "cache-and-network",
+    variables: undefined,
+  });
 
-  const loadMoreOrders = useCallback(async () => {
-    if (!isSingleVendor || loading || !hasMoreOrders) return;
-    const existing = data?.restaurantOrders ?? [];
-    const { data: nextPage } = await fetchMore({
-      variables: {offset: existing.length, limit: 50},
-      updateQuery: (previous, {fetchMoreResult}) => {
-        const incoming = fetchMoreResult?.restaurantOrders ?? [];
-        const byId = new Map(
-          [...(previous.restaurantOrders ?? []), ...incoming].map(order => [order._id, order]),
-        );
-        return {restaurantOrders: [...byId.values()]};
-      },
-    });
-    setHasMoreOrders((nextPage?.restaurantOrders?.length ?? 0) === 50);
-  }, [data?.restaurantOrders, fetchMore, hasMoreOrders, isSingleVendor, loading]);
+  const loadMoreOrders = useCallback(async () => {}, []);
 
   useEffect(() => {
     async function GetToken() {

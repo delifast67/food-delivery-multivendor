@@ -9,7 +9,6 @@ import {
   Image,
   Platform,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -33,8 +32,6 @@ import { useApolloClient } from "@apollo/client";
 import { useApptheme } from "@/lib/context/global/theme.context";
 import { ILoginInitialValues } from "@/lib/utils/interfaces";
 import { CustomContinueButton } from "../../useable-components";
-import { useRiderMode } from "@/lib/context/global/rider-mode.context";
-import { RIDER_SERVER_MODES, RiderServerMode } from "@/lib/mode/rider-mode";
 
 const multiVendorDemoCredentials: ILoginInitialValues = {
   username:
@@ -43,15 +40,6 @@ const multiVendorDemoCredentials: ILoginInitialValues = {
   password:
     process.env.EXPO_PUBLIC_MULTI_VENDOR_RIDER_DEMO_PASSWORD ??
     (__DEV__ ? "Rider@123" : ""),
-};
-
-const singleVendorDemoCredentials: ILoginInitialValues = {
-  username:
-    process.env.EXPO_PUBLIC_SINGLE_VENDOR_RIDER_DEMO_USERNAME ??
-    (__DEV__ ? "enategaRider@gmail.com" : ""),
-  password:
-    process.env.EXPO_PUBLIC_SINGLE_VENDOR_RIDER_DEMO_PASSWORD ??
-    (__DEV__ ? "Enatega@123" : ""),
 };
 
 const LoginScreen = () => {
@@ -63,14 +51,7 @@ const LoginScreen = () => {
   const client = useApolloClient();
   const { t } = useTranslation();
   const { onLogin, isLogging } = useLogin();
-  const { isModeToggleEnabled, mode, selectMode } = useRiderMode();
-  const loginInitialValues = useMemo(
-    () =>
-      mode === RIDER_SERVER_MODES.MULTI
-        ? multiVendorDemoCredentials
-        : singleVendorDemoCredentials,
-    [mode],
-  );
+  const loginInitialValues = useMemo(() => multiVendorDemoCredentials, []);
 
   // Handlers
   const onLoginHandler = async (creds: ILoginInitialValues) => {
@@ -91,11 +72,6 @@ const LoginScreen = () => {
       .catch((err) => __DEV__ && console.log("Apollo clearStore error:", err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const onModeSelected = async (nextMode: RiderServerMode) => {
-    if (isLogging) return;
-    await selectMode(nextMode);
-  };
 
   if (isLogging) {
     return (
@@ -127,70 +103,6 @@ const LoginScreen = () => {
             {({ handleChange, handleBlur, handleSubmit, values, errors }) => {
               return (
                 <View className="flex-1 items-center">
-                  {isModeToggleEnabled && (
-                    <View
-                      className="flex-row self-stretch"
-                      style={{
-                        minHeight: 56,
-                        borderBottomColor: appTheme.borderLineColor,
-                        borderBottomWidth: StyleSheet.hairlineWidth,
-                      }}
-                    >
-                      {(
-                        [
-                          [RIDER_SERVER_MODES.MULTI, t("Multi Vendor")],
-                          [RIDER_SERVER_MODES.SINGLE, t("Single Vendor")],
-                        ] as const
-                      ).map(([serverMode, label]) => {
-                        const selected = mode === serverMode;
-                        return (
-                          <TouchableOpacity
-                            key={serverMode}
-                            accessibilityRole="button"
-                            accessibilityState={{ selected }}
-                            disabled={isLogging}
-                            onPress={() => void onModeSelected(serverMode)}
-                            className="flex-1 flex-row items-center justify-center px-2"
-                            style={{
-                              backgroundColor: selected
-                                ? `${appTheme.primary}12`
-                                : "transparent",
-                              borderBottomColor: selected
-                                ? appTheme.primary
-                                : "transparent",
-                              borderBottomWidth: 2,
-                            }}
-                          >
-                            <FontAwesome6
-                              name={
-                                serverMode === RIDER_SERVER_MODES.MULTI
-                                  ? "grip"
-                                  : "store"
-                              }
-                              size={16}
-                              color={
-                                selected
-                                  ? appTheme.primary
-                                  : appTheme.fontSecondColor
-                              }
-                              style={{ marginRight: 8 }}
-                            />
-                            <Text
-                              className="text-sm font-semibold"
-                              style={{
-                                color: selected
-                                  ? appTheme.primary
-                                  : appTheme.fontSecondColor,
-                              }}
-                            >
-                              {label}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  )}
-
                   <View className="flex-1 w-full p-5 items-center justify-center gap-y-2">
                     <Image
                       accessibilityLabel={t("Rider app logo")}

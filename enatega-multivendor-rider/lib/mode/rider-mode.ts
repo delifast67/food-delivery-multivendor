@@ -19,10 +19,10 @@ export const DEFAULT_RIDER_SERVER_MODE: RiderServerMode =
   RIDER_SERVER_MODES.MULTI;
 
 export const getForcedRiderServerMode = (): RiderServerMode | null => {
-  const policy = process.env.EXPO_PUBLIC_VENDOR_MODE?.toUpperCase();
-  if (policy === RIDER_SERVER_MODES.SINGLE) return RIDER_SERVER_MODES.SINGLE;
-  if (policy === RIDER_SERVER_MODES.MULTI) return RIDER_SERVER_MODES.MULTI;
-  return null;
+  // Delifast uses the multivendor rider backend. Keep the mode constants and
+  // storage migration for existing installations, but do not let an old
+  // environment variable or persisted selection change the product flow.
+  return RIDER_SERVER_MODES.MULTI;
 };
 
 export const RIDER_SERVER_MODE_STORAGE_KEY =
