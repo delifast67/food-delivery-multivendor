@@ -27,3 +27,21 @@ Les tests utilisent uniquement MongoDB jetable et des commandes synthétiques : 
 Les lectures catalogue et l’insertion ne constituent pas une transaction multi-documents : une modification concurrente après la lecture serveur peut encore survenir avant l’insertion. Il n’existe ni réservation de stock ni gel transactionnel des prix ou horaires. L’empreinte ferme la fenêtre devis-client → nouveau calcul serveur, pas toute concurrence catalogue → insertion. Une réservation/transaction cohérente et sa compatibilité avec MongoDB nécessitent un lot séparé.
 
 Les tests JS, HTTP et bundles Expo ne remplacent pas une recette native sur appareils Android et iOS. Ce lot ne fusionne, ne déploie et n’active aucun paiement ni SMS réel.
+
+## Consommateurs internes et exceptions explicites
+
+Les quatre modules actifs sont la page Web `app/delifast/page.tsx`, son transport `lib/delifast/api.ts`, le contrôleur Expo `src/delifast/controller.js` et son transport `src/delifast/api.js`. Chaque nouvelle commande transporte exactement le `quoteHash` du devis serveur affiché. Les deux transports refusent avant réseau une empreinte omise ou mal formée ; le type TypeScript Web la rend également obligatoire. La seule exception est la sentinelle de récupération décrite plus haut, qui ne permet aucune insertion. Une réponse incertaine ne provoque aucun rejeu automatique : le client conserve la clé et le payload pour une reprise manuelle identique.
+
+La garde `node --test scripts/delifast-order-callers.test.mjs`, exécutée en CI Web et Expo, inventorie tous les fichiers applicatifs créant des commandes, ainsi que les recettes synthétiques dans `scripts/`. Toute nouvelle entrée exige une revue. Les tests comportementaux Web/Expo et la recette HTTP vérifient séparément le devis transmis, le refus de devis périmés, la confirmation manuelle et l’idempotence ; une recherche statique ne prouve pas à elle seule ces garanties.
+
+Les cinq fichiers historiques Enatega utilisent une autre mutation GraphQL à arguments séparés (`restaurant`, `orderInput`, paiement, coupon, taxation, adresse), pas `PlaceOrderInput` :
+
+- `enatega-multivendor-app/src/apollo/mutations.js` et `src/screens/Checkout/Checkout.js` ;
+- `enatega-multivendor-web/lib/api/graphql/mutations/orders/index.ts` et `lib/ui/screens/protected/order/checkout/index.tsx` ;
+- `enatega-multivendor-rider/lib/apollo/mutations/order.mutation.ts`.
+
+Ils ne sont pas migrés par ce lot et ne doivent pas être réactivés comme clients Delifast. Le point d’entrée client Expo et celui du livreur chargent exclusivement `src/delifast/App` ; le proxy Web redirige les anciennes routes vers `/delifast` sans option d’activation des écrans historiques. Aucun consommateur actif de création de commande n’existe dans les espaces admin, restaurant ou livreur Delifast.
+
+Les recettes `delifast-mobile-smoke.mjs` et `delifast-checkout-freshness-smoke.mjs` passent par le contrôleur Expo et sont donc gardées. `delifast-customer-orders-smoke.mjs` passe par le transport Expo et obtient explicitement un devis. Les appels GraphQL bruts des recettes `delifast-admin-acceptance.mjs`, `delifast-admin-smoke.mjs`, `delifast-catalog-smoke.mjs`, `delifast-operations-smoke.mjs`, `delifast-options-smoke.mjs`, `delifast-persistence.mjs`, `delifast-rider-smoke.mjs`, `delifast-smoke.mjs`, `delifast-store-smoke.mjs` et `delifast-web-riders-acceptance.mjs`, ainsi que des fixtures de tests API, conservent délibérément l’omission historique. Ils vérifient des opérations/snapshots sur des données synthétiques locales, pas un checkout utilisateur, et ne sont pas des consommateurs applicatifs. Les tests de fraîcheur vérifient explicitement aussi cette compatibilité nullable.
+
+Cette omission serveur est conservée pour éviter une rupture non autorisée du contrat public et permettre les intégrations externes non inventoriables dans ce dépôt. Un client externe direct peut donc toujours omettre le champ et accepter le prix courant recalculé sans détecter un ancien prix affiché. Les gardes des transports internes ne sont pas une protection universelle de l’endpoint public. Supprimer cette exception exige une migration/version du contrat et un inventaire des consommateurs externes ; ne pas réutiliser l’omission pour une nouvelle interface interne.

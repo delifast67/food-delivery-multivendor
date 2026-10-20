@@ -25,10 +25,46 @@ test('création conserve le mode invité, puis rattache les nouvelles commandes 
     headers.push(options.headers)
     return { ok: true, json: async () => ({ data: { placeOrder: { id: 'fixture' } } }) }
   } })
-  await client.placeOrder({ idempotencyKey: 'fixture-guest' })
+  await client.placeOrder({ idempotencyKey: 'fixture-guest', expectedQuoteHash: 'a'.repeat(64) })
   client.setCustomerToken('fixture-session-a')
-  await client.placeOrder({ idempotencyKey: 'fixture-auth' })
+  await client.placeOrder({ idempotencyKey: 'fixture-auth', expectedQuoteHash: 'b'.repeat(64) })
   client.setCustomerToken(null)
-  await client.placeOrder({ idempotencyKey: 'fixture-guest-again' })
+  await client.placeOrder({ idempotencyKey: 'fixture-guest-again', expectedQuoteHash: 'c'.repeat(64) })
   assert.deepEqual(headers.map(value => value.authorization), [undefined, 'Bearer fixture-session-a', undefined])
+})
+
+for (const expectedQuoteHash of [undefined, null, '', 'bad-hash', 'A'.repeat(64), 123]) {
+  test(`transport refuse un devis absent ou mal formé ${String(expectedQuoteHash)} avant tout réseau`, async () => {
+    let requests = 0
+    const client = createClient({ fetchImpl: async () => { requests++; throw new Error('Ne doit pas envoyer') } })
+    await assert.rejects(client.placeOrder({ idempotencyKey: 'guarded-key', expectedQuoteHash }),
+      error => error.kind === 'validation' && error.code === 'CHECKOUT_CHANGED')
+    assert.equal(requests, 0)
+  })
+}
+
+test('transport garde exactement le hash serveur et la clé lors d’une reprise manuelle', async () => {
+  const calls = []
+  const client = createClient({ fetchImpl: async (url, options) => {
+    calls.push(options)
+    if (calls.length === 1) throw new Error('Réponse perdue')
+    return { ok: true, json: async () => ({ data: { placeOrder: { id: 'original' } } }) }
+  } })
+  const payload = { restaurantId: 'r1', items: [{ menuItemId: 'm1', quantity: 1 }],
+    deliveryAddress: { landmark: 'Fixture' }, idempotencyKey: 'same-durable-key', expectedQuoteHash: 'd'.repeat(64) }
+  await assert.rejects(client.placeOrder(payload), error => error.kind === 'unavailable')
+  assert.equal(calls.length, 1, 'aucun rejeu automatique après réponse incertaine')
+  assert.deepEqual(await client.placeOrder(payload), { id: 'original' })
+  assert.deepEqual(calls[0], calls[1])
+  assert.equal(JSON.parse(calls[0].body).variables.input.expectedQuoteHash, payload.expectedQuoteHash)
+})
+
+test('transport transmet la sentinelle de récupération sans jamais lui substituer un nouveau devis', async () => {
+  let sent
+  const client = createClient({ fetchImpl: async (url, options) => {
+    sent = JSON.parse(options.body).variables.input
+    return { ok: true, json: async () => ({ data: { placeOrder: { id: 'old-order' } } }) }
+  } })
+  await client.placeOrder({ idempotencyKey: 'old-key', expectedQuoteHash: 'legacy-recovery-only' })
+  assert.deepEqual(sent, { idempotencyKey: 'old-key', expectedQuoteHash: 'legacy-recovery-only' })
 })

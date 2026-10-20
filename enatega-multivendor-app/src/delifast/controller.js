@@ -277,12 +277,13 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
     try {
       if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
       const requestPayload = { ...clone(attempt.payload), idempotencyKey: attempt.idempotencyKey }
-      // Les anciens pending n'ont pas de devis approuvé : le serveur ne doit
-      // les accepter que si la clé existe déjà (récupération idempotente).
+      // Les brouillons historiques sont récupérables idempotemment, mais la
+      // sentinelle ne peut pas créer une nouvelle commande côté serveur.
       if (requestPayload.expectedQuoteHash === undefined) requestPayload.expectedQuoteHash = 'legacy-recovery-only'
+      if (requestPayload.expectedQuoteHash !== 'legacy-recovery-only' && !validQuoteHash(requestPayload.expectedQuoteHash)) throw new Error('Devis approuvé manquant ; actualisez le panier et confirmez manuellement')
       const result = await api.placeOrder(requestPayload)
       if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
-      if (!validReference(result) || !validQuote(result.checkout)) throw new Error('Réponse de commande incomplète ; reprendre la même tentative')
+      if (!validReference(result) || !validQuote(result.checkout) || (requestPayload.expectedQuoteHash !== 'legacy-recovery-only' && result.checkout.quoteHash !== requestPayload.expectedQuoteHash)) throw new Error('Réponse de commande incohérente ; reprendre la même tentative')
       const reference = { id: result.id, accessToken: result.accessToken }
       const guestAttempt = (attempt.sessionScope == null || attempt.sessionScope === 'guest-legacy') && !attempt.customerId
       // Une commande authentifiée ne doit jamais devenir une référence invitée persistée.

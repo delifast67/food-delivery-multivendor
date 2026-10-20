@@ -217,6 +217,7 @@ describe("customer transport protocol", () => {
       restaurantId: "protocol-restaurant",
       items: [{ menuItemId: "protocol-item", quantity: 1 }],
       idempotencyKey: "protocol-idempotency-key",
+      expectedQuoteHash: "c".repeat(64),
       deliveryAddress: {
         ...address,
         id: "server-address-id",

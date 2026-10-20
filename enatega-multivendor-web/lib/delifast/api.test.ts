@@ -100,6 +100,45 @@ describe("Delifast helpers", () => {
       body: expect.stringContaining('"expectedQuoteHash":"' + "b".repeat(64) + '"'),
     }));
   });
+  it.each([undefined, null, "", "bad-hash", "A".repeat(64), 123])(
+    "rejects missing or malformed quote guard %s before any network call",
+    async (expectedQuoteHash) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(delifastApi.placeOrder({
+        restaurantId: "r1", items: [{ menuItemId: "m1", quantity: 1 }],
+        idempotencyKey: "blocked",
+        deliveryAddress: { recipientName: "A", phone: "+22670123456", city: "Ouagadougou", neighborhood: "Koulouba", landmark: "Mairie", instructions: "" },
+        // Deliberately exercise callers outside TypeScript's required-field check.
+        expectedQuoteHash: expectedQuoteHash as string,
+      })).rejects.toMatchObject({ kind: "validation", code: "CHECKOUT_CHANGED" });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+  it("preserves an exact guarded payload on explicit same-key retries", async () => {
+    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError("Lost response"))
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: { placeOrder: { id: "original" } } }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const input = {
+      restaurantId: "r1", items: [{ menuItemId: "m1", quantity: 1 }],
+      idempotencyKey: "stable", expectedQuoteHash: "d".repeat(64),
+      deliveryAddress: { recipientName: "A", phone: "+22670123456", city: "Ouagadougou", neighborhood: "Koulouba", landmark: "Mairie", instructions: "" },
+    };
+    await expect(delifastApi.placeOrder(input)).rejects.toMatchObject({ kind: "unavailable" });
+    expect(fetchMock).toHaveBeenCalledTimes(1); // never automatically replay
+    expect(await delifastApi.placeOrder(input)).toEqual({ id: "original" });
+    expect(fetchMock.mock.calls[1]).toEqual(fetchMock.mock.calls[0]);
+  });
+  it("passes the recovery-only sentinel unchanged, never upgrading it to a new quote", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: { placeOrder: { id: "recovered" } } }) });
+    vi.stubGlobal("fetch", fetchMock);
+    await delifastApi.placeOrder({
+      restaurantId: "r1", items: [{ menuItemId: "m1", quantity: 1 }],
+      idempotencyKey: "old", expectedQuoteHash: "legacy-recovery-only",
+      deliveryAddress: { recipientName: "A", phone: "+22670123456", city: "Ouagadougou", neighborhood: "Koulouba", landmark: "Mairie", instructions: "" },
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).variables.input.expectedQuoteHash).toBe("legacy-recovery-only");
+  });
   it("forwards staff Bearer tokens and expected status workflow variables", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

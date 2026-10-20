@@ -142,7 +142,15 @@ function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetc
     publicMenuPage: (restaurantId, search = '', categoryId = null, limit = 20, after = null) => field('publicMenuPage', { restaurantId, search, categoryId, limit, after }),
     publicMenuCategoryPage: (restaurantId, limit = 20, after = null) => field('publicMenuCategoryPage', { restaurantId, limit, after }),
     calculateCheckout: (input) => field('calculateCheckout', { input }),
-    placeOrder: (input) => field('placeOrder', { input }, true),
+    placeOrder: async (input) => {
+      // GraphQL's nullable field is external legacy compatibility, never an app bypass.
+      // The sentinel only recovers an existing order; the server forbids insertion.
+      const hash = input?.expectedQuoteHash
+      if (typeof hash !== 'string' || (!/^[a-f0-9]{64}$/.test(hash) && hash !== 'legacy-recovery-only')) {
+        throw new DelifastApiError('Rechargez le devis serveur avant de confirmer la commande.', 'validation', 'CHECKOUT_CHANGED')
+      }
+      return field('placeOrder', { input }, true)
+    },
     paymentSession: (orderId, accessToken) => field('paymentSession', { orderId, accessToken }),
     startPayment: (input) => field('startPayment', { input }),
     refreshPayment: (orderId, accessToken) => field('refreshPayment', { orderId, accessToken }),

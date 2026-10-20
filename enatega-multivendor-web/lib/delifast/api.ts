@@ -561,14 +561,27 @@ export const delifastApi = {
     items: CartLine[];
     idempotencyKey: string;
     deliveryAddress: DeliveryAddress;
-    expectedQuoteHash?: string;
-  }) =>
-    request<{ placeOrder: Order }>(PLACE_ORDER, {
+    expectedQuoteHash: string;
+  }) => {
+    // The nullable GraphQL field is external legacy compatibility, not an app bypass.
+    // The sentinel can only recover an existing order; the server rejects insertion.
+    if (
+      typeof input.expectedQuoteHash !== "string" ||
+      (!/^[a-f0-9]{64}$/.test(input.expectedQuoteHash) &&
+        input.expectedQuoteHash !== LEGACY_RECOVERY_QUOTE_HASH)
+    ) {
+      return Promise.reject(new DelifastApiError(
+        "Rechargez le devis serveur avant de confirmer la commande.",
+        "validation", undefined, "CHECKOUT_CHANGED",
+      ));
+    }
+    return request<{ placeOrder: Order }>(PLACE_ORDER, {
       input: {
         ...input,
         deliveryAddress: deliveryAddressInput(input.deliveryAddress),
       },
-    }).then((data) => data.placeOrder),
+    }).then((data) => data.placeOrder);
+  },
   order: (id: string, accessToken: string) =>
     request<{ order: Order | null }>(ORDER, { id, accessToken }).then(
       (data) => data.order,

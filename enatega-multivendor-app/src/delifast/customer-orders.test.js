@@ -7,7 +7,7 @@ const storage = (db = {}) => ({ db, getItem: async key => db[key] ?? null, setIt
 const deferred = () => { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j }); return { promise, resolve, reject } }
 const tick = () => new Promise(resolve => setImmediate(resolve))
 const session = { id: 'customer-a', phone: '+22670000000' }
-const order = (id, total = 1700) => ({ id, status: 'DELIVERED', paymentStatus: 'PAID', checkout: { currency: 'XOF', total, items: [{ menuItemId: 'dish', quantity: 1, name: 'Riz', total }] }, history: [] })
+const order = (id, total = 1700) => ({ id, status: 'DELIVERED', paymentStatus: 'PAID', checkout: { currency: 'XOF', quoteHash: 'a'.repeat(64), total, subtotal: total, deliveryFee: 0, serviceFee: 0, tax: 0, discount: 0, items: [{ menuItemId: 'dish', quantity: 1, name: 'Riz', total }] }, history: [] })
 const setup = (api, db = { [CUSTOMER_TOKEN_KEY]: 'token-a' }) => createController({ api, storage: storage(db), fingerprintSession: async () => 'a'.repeat(64) })
 const authApi = extra => ({ setCustomerToken: () => {}, customerMe: async () => session, customerAddresses: async () => [], ...extra })
 
@@ -70,7 +70,7 @@ test('double clic liste ne lance qu’une requête et les erreurs terminent le l
 test('reprend une tentative authentifiée uniquement dans la même session fingerprintée', async () => {
   const db = {
     [CUSTOMER_TOKEN_KEY]: 'token-a',
-    'delifast-order-attempt': JSON.stringify({ version: 1, customerId: session.id, sessionScope: 'a'.repeat(64), idempotencyKey: 'retry-auth-key', payload: { restaurantId: 'r1', items: [{ menuItemId: 'dish', quantity: 1 }], deliveryAddress: { recipientName: 'Nom', phone: '+22670000000', city: 'Ville', neighborhood: 'Quartier', landmark: 'Repere', instructions: '', point: { latitude: 12.3, longitude: -1.5 } } } })
+    'delifast-order-attempt': JSON.stringify({ version: 1, customerId: session.id, sessionScope: 'a'.repeat(64), idempotencyKey: 'retry-auth-key', payload: { restaurantId: 'r1', items: [{ menuItemId: 'dish', quantity: 1 }], deliveryAddress: { recipientName: 'Nom', phone: '+22670000000', city: 'Ville', neighborhood: 'Quartier', landmark: 'Repere', instructions: '', point: { latitude: 12.3, longitude: -1.5 } }, expectedQuoteHash: 'a'.repeat(64) } })
   }
   let sent = 0
   const controller = createController({
@@ -86,7 +86,7 @@ test('reprend une tentative authentifiée uniquement dans la même session finge
 })
 
 test('refuse une tentative authentifiée pour un autre compte, fingerprint ou après logout', async () => {
-  const attempt = { version: 1, customerId: session.id, sessionScope: 'a'.repeat(64), idempotencyKey: 'retry-auth-key', payload: { restaurantId: 'r1', items: [{ menuItemId: 'dish', quantity: 1 }], deliveryAddress: { recipientName: 'Nom', phone: '+22670000000', city: 'Ville', neighborhood: 'Quartier', landmark: 'Repere', instructions: '', point: { latitude: 12.3, longitude: -1.5 } } } }
+  const attempt = { version: 1, customerId: session.id, sessionScope: 'a'.repeat(64), idempotencyKey: 'retry-auth-key', payload: { restaurantId: 'r1', items: [{ menuItemId: 'dish', quantity: 1 }], deliveryAddress: { recipientName: 'Nom', phone: '+22670000000', city: 'Ville', neighborhood: 'Quartier', landmark: 'Repere', instructions: '', point: { latitude: 12.3, longitude: -1.5 } }, expectedQuoteHash: 'a'.repeat(64) } }
   for (const variant of ['owner', 'scope', 'logout']) {
     const db = { [CUSTOMER_TOKEN_KEY]: 'token-a', 'delifast-order-attempt': JSON.stringify(attempt) }
     const api = authApi({ placeOrder: async () => { throw new Error('must not send') }, customerMe: async () => variant === 'owner' ? { id: 'customer-b', phone: session.phone } : session })
@@ -105,7 +105,7 @@ test('ignore une réponse placeOrder arrivée après logout et ne ressuscite auc
   await controller.restoreCustomer()
   // Build a valid authenticated submission through the restored controller state.
   const state = controller.getState(); assert.equal(state.customer.id, session.id)
-  db['delifast-order-attempt'] = JSON.stringify({ version: 1, customerId: session.id, sessionScope: 'a'.repeat(64), idempotencyKey: 'stale-order-key', payload: { restaurantId: 'r1', items: [{ menuItemId: 'dish', quantity: 1 }], deliveryAddress: { recipientName: 'Nom', phone: '+22670000000', city: 'Ville', neighborhood: 'Quartier', landmark: 'Repere', instructions: '', point: { latitude: 12.3, longitude: -1.5 } } } })
+  db['delifast-order-attempt'] = JSON.stringify({ version: 1, customerId: session.id, sessionScope: 'a'.repeat(64), idempotencyKey: 'stale-order-key', payload: { restaurantId: 'r1', items: [{ menuItemId: 'dish', quantity: 1 }], deliveryAddress: { recipientName: 'Nom', phone: '+22670000000', city: 'Ville', neighborhood: 'Quartier', landmark: 'Repere', instructions: '', point: { latitude: 12.3, longitude: -1.5 } }, expectedQuoteHash: 'a'.repeat(64) } })
   await controller.restoreAttempt()
   const pending = controller.retryPending(); await tick(); assert.equal(sent, 1)
   await controller.logoutCustomer(); wait.resolve({ ...order('late'), accessToken: 'a'.repeat(16) })

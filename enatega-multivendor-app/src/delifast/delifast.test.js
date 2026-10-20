@@ -253,6 +253,48 @@ test('legacy pending is sent with a recovery sentinel and CHECKOUT_CHANGED unloc
   assert.equal(controller.getState().quote, null)
   assert.equal(db[ATTEMPT_KEY], undefined)
 })
+
+test('retry rejects a changed server checkout response and keeps the exact idempotent attempt', async () => {
+  let calls = 0
+  const { controller } = setup({ placeOrder: async payload => { calls++; return { ...result(), checkout: { ...checkout(), quoteHash: 'b'.repeat(64) } } } })
+  await seeded(controller)
+  await assert.rejects(controller.submit(address), /incohérente|reprendre/i)
+  assert.equal(calls, 1)
+  assert.equal(controller.getState().pending.payload.expectedQuoteHash, 'a'.repeat(64))
+  await assert.rejects(controller.retryPending(), /incohérente|reprendre/i)
+  assert.equal(calls, 2)
+  assert.equal(controller.getState().pending.idempotencyKey, 'key-test-0001')
+})
+for (const code of ['CHECKOUT_CHANGED', 'INVALID_OPTIONS', 'ITEM_UNAVAILABLE', 'RESTAURANT_CLOSED']) {
+  test(`${code}: invalide le devis puis attend actualisation et nouvelle confirmation manuelle`, async () => {
+    const sent = []
+    let fresh = false
+    const currentQuote = () => ({ ...checkout(), quoteHash: fresh ? 'b'.repeat(64) : 'a'.repeat(64) })
+    const db = {}
+    const { controller } = setup({
+      calculateCheckout: async () => currentQuote(),
+      placeOrder: async payload => {
+        sent.push(payload)
+        if (sent.length === 1) throw Object.assign(new Error('Catalogue modifié'), { kind: 'validation', code })
+        return { ...result(), checkout: currentQuote() }
+      }
+    }, db)
+    await seeded(controller)
+    await assert.rejects(controller.submit(address), /modifié/)
+    assert.equal(controller.getState().quote, null)
+    assert.equal(controller.getState().pending, null)
+    assert.equal(db[ATTEMPT_KEY], undefined)
+    await assert.rejects(controller.submit(address), /devis/i)
+    assert.equal(sent.length, 1)
+    fresh = true
+    await controller.refreshQuote()
+    assert.equal(controller.getState().quote.quoteHash, 'b'.repeat(64))
+    assert.equal(sent.length, 1, 'actualiser ne confirme ni ne soumet la commande')
+    await controller.submit(address)
+    assert.deepEqual(sent.map(input => input.expectedQuoteHash), ['a'.repeat(64), 'b'.repeat(64)])
+  })
+}
+
 test('pending attempt blocks cart, restaurant and submit modifications', async () => {
   const { controller } = setup({ placeOrder: async () => { throw Object.assign(new Error('offline'), { kind: 'unavailable' }) } })
   await seeded(controller)
@@ -273,7 +315,7 @@ test('certain validation error removes pending, invalidates quote, and permits c
 test('invalid order result is ambiguous and retained for retry', async () => {
   const { controller } = setup({ placeOrder: async () => ({ id: 'o', accessToken: 'short', checkout: checkout() }) })
   await seeded(controller)
-  await assert.rejects(controller.submit(address), /incomplète|invalide|ambig/i)
+  await assert.rejects(controller.submit(address), /incomplète|invalide|incohérente|ambig/i)
   assert.ok(controller.getState().pending)
 })
 test('success exposes order, lastOrder, and clears pending only after storage cleanup', async () => {
@@ -298,7 +340,7 @@ test('success remains visible and pending when final storage cleanup fails', asy
   assert.ok(controller.getState().pending)
 })
 test('restore exposes a valid pending attempt and retry works after restart', async () => {
-  const db = { [ATTEMPT_KEY]: JSON.stringify({ idempotencyKey: 'key-test-0001', payload: { restaurantId: 'r', items: [{ menuItemId: 'i', quantity: 1, selections: [] }], deliveryAddress: { ...address, instructions: '' } } }) }
+  const db = { [ATTEMPT_KEY]: JSON.stringify({ idempotencyKey: 'key-test-0001', payload: { restaurantId: 'r', items: [{ menuItemId: 'i', quantity: 1, selections: [] }], deliveryAddress: { ...address, instructions: '' }, expectedQuoteHash: 'a'.repeat(64) } }) }
   let sent
   const { controller } = setup({ placeOrder: async payload => { sent = payload; return result() } }, db)
   const restored = await controller.restoreAttempt()

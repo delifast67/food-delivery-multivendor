@@ -945,6 +945,29 @@ describe("Delifast quote freshness", () => {
     expect(localStorage.getItem(attemptStorageKey)).toBeNull();
   });
 
+  it.each(["INVALID_OPTIONS", "ITEM_UNAVAILABLE", "RESTAURANT_CLOSED"])(
+    "invalidates the displayed quote after %s and never resubmits unavailable items",
+    async (code) => {
+      const { DelifastApiError, attemptStorageKey } = await import("@/lib/delifast/api");
+      const place = vi.spyOn(delifastApi, "placeOrder").mockRejectedValue(
+        new DelifastApiError("Catalogue modifié", "validation", 200, code),
+      );
+      render(<DelifastPage />);
+      await prepareOrder();
+      vi.mocked(delifastApi.checkout).mockRejectedValue(
+        new DelifastApiError("Choix indisponible", "validation", 200, code),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Enregistrer la commande" }));
+      await waitFor(() => expect(delifastApi.checkout).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Enregistrer la commande" })).toBeDisabled());
+      expect(localStorage.getItem(attemptStorageKey)).toBeNull();
+      expect(place).toHaveBeenCalledTimes(1);
+      expect(place.mock.calls[0][0].expectedQuoteHash).toBe(checkout.quoteHash);
+      fireEvent.click(screen.getByRole("button", { name: "Enregistrer la commande" }));
+      expect(place).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("refreshes a rejected quote but requires a manual confirmation with the new hash", async () => {
     const { DelifastApiError, attemptStorageKey } = await import("@/lib/delifast/api");
     const fresh = { ...checkout, quoteHash: "b".repeat(64), total: 1500, subtotal: 1500 };

@@ -73,6 +73,7 @@ jobs:
       - name: Tester le contrat et compiler le web local
         run: |
           node --test scripts/delifast-client-multivendor.test.mjs
+          node --test scripts/delifast-order-callers.test.mjs
           node --test scripts/delifast-web-config.test.mjs
           node --test scripts/delifast-proxy-boundary.test.mjs
           node --test scripts/delifast-bounded-catalogues.test.mjs
@@ -131,6 +132,7 @@ jobs:
       - name: Tester le parcours mobile et son isolation
         run: |
           node --test scripts/delifast-client-multivendor.test.mjs
+          node --test scripts/delifast-order-callers.test.mjs
           node --test scripts/delifast-mobile-entry.test.mjs
           npm run test:delifast --prefix enatega-multivendor-app
           node scripts/delifast-mobile-contract.mjs

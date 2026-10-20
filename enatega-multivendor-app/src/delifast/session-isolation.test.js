@@ -5,7 +5,7 @@ const { createController, ATTEMPT_KEY, LAST_ORDER_KEY, CUSTOMER_TOKEN_KEY } = re
 
 const scopeA = 'a'.repeat(64)
 const address = { recipientName: 'Nom', phone: '+22670000000', city: 'Ville', neighborhood: 'Quartier', landmark: 'Repere', instructions: '', point: { latitude: 12.3, longitude: -1.5 } }
-const attempt = (customerId, sessionScope = scopeA) => ({ version: 1, customerId, sessionScope, idempotencyKey: 'session-key-1', payload: { restaurantId: 'r1', items: [{ menuItemId: 'dish', quantity: 1 }], deliveryAddress: address } })
+const attempt = (customerId, sessionScope = scopeA) => ({ version: 1, customerId, sessionScope, idempotencyKey: 'session-key-1', payload: { restaurantId: 'r1', items: [{ menuItemId: 'dish', quantity: 1 }], deliveryAddress: address, expectedQuoteHash: 'a'.repeat(64) } })
 const storage = (data = {}) => ({ data: { ...data }, async getItem(key) { return this.data[key] ?? null }, async setItem(key, value) { this.data[key] = value }, async removeItem(key) { delete this.data[key] } })
 const deferred = () => { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j }); return { promise, resolve, reject } }
 const apiFor = (customer, extra = {}) => ({
