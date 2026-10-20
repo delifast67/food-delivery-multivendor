@@ -253,7 +253,7 @@ describe("Catalogue admin pagination", () => {
   it("ignore la mutation setRestaurantOpen d'une ancienne session sans faux résultat ni rechargement", async () => {
     const oldMutation = deferred<Restaurant>();
     const fresh = restaurant("r1", "Session récente");
-    vi.spyOn(delifastApi, "operationsRestaurants").mockResolvedValue([fresh]);
+    vi.spyOn(delifastApi, "operationsRestaurantProfiles").mockResolvedValue([fresh]);
     vi.spyOn(delifastApi, "setRestaurantOpen")
       .mockImplementationOnce(() => oldMutation.promise)
       .mockResolvedValue(fresh);
@@ -293,7 +293,7 @@ describe("Catalogue admin pagination", () => {
     expect(
       screen.queryByText(/rechargées|rechargement a échoué/),
     ).not.toBeInTheDocument();
-    expect(delifastApi.operationsRestaurants).toHaveBeenCalledTimes(2);
+    expect(delifastApi.operationsRestaurantProfiles).toHaveBeenCalledTimes(2);
   });
 
   it("recharge un conflit hors première page en conservant la sélection et la nouvelle version", async () => {

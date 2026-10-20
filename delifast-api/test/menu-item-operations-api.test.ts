@@ -46,8 +46,8 @@ beforeAll(async () => {
 afterAll(async () => { await (await import("../src/db.js")).closeDb(); await mongo.stop(); });
 
 describe("operations menu item catalogue", () => {
-  it("parcourt plus de 120 plats par curseur et inclut les archivés", async () => {
-    const admin = await login("admin@menu-ops");
+  it.each(["admin", "restaurant"])("%s parcourt plus de 120 plats par curseur et inclut les archivés", async (role) => {
+    const admin = await login(`${role}@menu-ops`);
     const ids: string[] = [];
     let after: string | null = null;
     for (;;) {
@@ -62,7 +62,7 @@ describe("operations menu item catalogue", () => {
     expect(ids).toEqual([...ids].sort());
     expect(ids.some((id) => id === "menu-000")).toBe(true);
   });
-  it("applique exact ID, validation, isolation et refus des rôles non ADMIN", async () => {
+  it("applique exact ID, validation, isolation et refus des rôles non autorisés", async () => {
     const admin = await login("admin@menu-ops");
     const exact = await gql("query($id:ID){operationsMenuItemSummaries(restaurantId:\"restaurant-a\",menuItemId:$id){items{id} nextCursor}}", { id: "menu-042" }, admin);
     expect(exact.data.operationsMenuItemSummaries).toEqual({ items: [{ id: "menu-042" }], nextCursor: null });
@@ -71,9 +71,10 @@ describe("operations menu item catalogue", () => {
     expect((await gql("query{operationsMenuItem(restaurantId:\"restaurant-a\",id:\"same-id\"){id}}", {}, admin)).data.operationsMenuItem).toBeNull();
     const detail = await gql("query{operationsMenuItem(restaurantId:\"restaurant-a\",id:\"menu-000\"){id description optionGroups{id} archived version audit}}", {}, admin);
     expect(detail.errors?.[0]?.extensions?.code).toBe("GRAPHQL_VALIDATION_FAILED");
-    for (const role of [undefined, await login("restaurant@menu-ops"), await login("rider@menu-ops")]) {
-      expect(code(await gql("query{operationsMenuItemSummaries(restaurantId:\"restaurant-a\"){items{id}}}", {}, role))).toBe(role === undefined ? "UNAUTHENTICATED" : "FORBIDDEN");
-    }
+    expect(code(await gql("query{operationsMenuItemSummaries(restaurantId:\"restaurant-a\"){items{id}}}"))).toBe("UNAUTHENTICATED");
+    const restaurant = await login("restaurant@menu-ops");
+    expect((await gql("query{operationsMenuItemSummaries(restaurantId:\"restaurant-a\"){items{id}}}", {}, restaurant)).errors).toBeUndefined();
+    expect(code(await gql("query{operationsMenuItemSummaries(restaurantId:\"restaurant-a\"){items{id}}}", {}, await login("rider@menu-ops")))).toBe("FORBIDDEN");
   });
   it("utilise l’IXSCAN nommé sans tri large et lit au plus limit+1 documents", async () => {
     const filters = [
@@ -100,15 +101,18 @@ describe("operations menu item catalogue", () => {
     }
   });
 
-  it("ne lit aucun document avant le refus métier et refuse aussi les détails aux non-admins", async () => {
+  it("refuse les lectures hors portée avant Mongo et les rôles non autorisés", async () => {
     const forbiddenDb = { collection: () => { throw new Error("Mongo must not be called"); } } as any;
-    for (const role of ["RESTAURANT", "RIDER"]) {
-      const user = { id: "x", name: "X", role, restaurantId: "restaurant-a" } as any;
-      await expect(operationsMenuItemSummaries(forbiddenDb, user, "restaurant-a")).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
-      await expect(operationsMenuItem(forbiddenDb, user, "restaurant-a", "menu-001")).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
-      const token = await login(role.toLowerCase() + "@menu-ops");
-      expect(code(await gql('query{operationsMenuItem(restaurantId:"restaurant-a",id:"menu-001"){id}}', {}, token))).toBe("FORBIDDEN");
-    }
+    const restaurant = { id: "x", name: "X", role: "RESTAURANT", restaurantId: "restaurant-a" } as any;
+    const crossRestaurant = { ...restaurant, restaurantId: "restaurant-b" };
+    await expect(operationsMenuItemSummaries(forbiddenDb, crossRestaurant, "restaurant-a")).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    await expect(operationsMenuItem(forbiddenDb, crossRestaurant, "restaurant-a", "menu-001")).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    const restaurantToken = await login("restaurant@menu-ops");
+    expect(code(await gql('query{operationsMenuItem(restaurantId:"restaurant-a",id:"menu-001"){id}}', {}, restaurantToken))).toBeUndefined();
+    const rider = { id: "x", name: "X", role: "RIDER", restaurantId: "restaurant-a" } as any;
+    await expect(operationsMenuItemSummaries(forbiddenDb, rider, "restaurant-a")).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    await expect(operationsMenuItem(forbiddenDb, rider, "restaurant-a", "menu-001")).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(code(await gql('query{operationsMenuItem(restaurantId:"restaurant-a",id:"menu-001"){id}}', {}, await login("rider@menu-ops")))).toBe("FORBIDDEN");
     expect(code(await gql('query{operationsMenuItem(restaurantId:"restaurant-a",id:"menu-001"){id}}'))).toBe("UNAUTHENTICATED");
     const token = "synthetic-menu-customer-token";
     await db.collection("customers").insertOne({ id: "customer-menu", name: "Fixture", phone: "+22670000000", active: true });
@@ -148,6 +152,17 @@ describe("operations menu item catalogue", () => {
     }
     expect((await operationsMenuItemSummaries(db, user, "restaurant-a", 20, null, "same-id")).items).toEqual([]);
     expect((await operationsMenuItemSummaries(db, user, "missing")).items).toEqual([]);
+  });
+
+  it("refuse les deux lectures HTTP d'un autre restaurant et conserve le détail archivé propre", async () => {
+    const token = await login("restaurant@menu-ops");
+    for (const query of [
+      'query{operationsMenuItemSummaries(restaurantId:"restaurant-b"){items{id}}}',
+      'query{operationsMenuItem(restaurantId:"restaurant-b",id:"same-id"){id}}',
+    ]) expect(code(await gql(query, {}, token))).toBe("FORBIDDEN");
+    const own = await gql('query{operationsMenuItem(restaurantId:"restaurant-a",id:"menu-000"){id archived optionGroups{id}}}', {}, token);
+    expect(own.errors).toBeUndefined();
+    expect(own.data.operationsMenuItem).toMatchObject({ id: "menu-000", archived: true, optionGroups: [{ id: "g" }] });
   });
 
 });

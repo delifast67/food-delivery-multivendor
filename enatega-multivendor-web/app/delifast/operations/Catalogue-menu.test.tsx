@@ -7,7 +7,15 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from "vitest";
 import Catalogue from "./Catalogue";
 import {
   DelifastApiError,
@@ -20,6 +28,13 @@ import {
 
 const token = "t";
 const admin: StaffUser = { id: "a1", name: "Admin", role: "ADMIN" };
+const restaurantUser: StaffUser = {
+  id: "restaurant",
+  name: "Restaurant",
+  role: "RESTAURANT",
+  restaurantId: "r1",
+};
+let activeUser: StaffUser = admin;
 const deferred = <T,>() => {
   let resolve!: (v: T) => void;
   let reject!: (e?: unknown) => void;
@@ -76,7 +91,7 @@ const rs = (r = restaurant()): RestaurantSummary => ({
   open: true,
   version: r.version ?? 0,
 });
-let summaries: MockInstance<typeof delifastApi.operationsRestaurantSummaries>;
+let profiles: MockInstance<typeof delifastApi.operationsRestaurantProfiles>;
 let details: MockInstance<typeof delifastApi.operationsRestaurant>;
 let menuPages: MockInstance<typeof delifastApi.operationsMenuItemSummaries>;
 let menuDetails: MockInstance<typeof delifastApi.operationsMenuItem>;
@@ -84,16 +99,28 @@ let menuDetails: MockInstance<typeof delifastApi.operationsMenuItem>;
 beforeEach(() => {
   vi.restoreAllMocks();
   const r = restaurant();
-  summaries = vi
-    .spyOn(delifastApi, "operationsRestaurantSummaries")
+  vi.spyOn(delifastApi, "operationsRestaurantSummaries")
     .mockResolvedValue({ items: [rs(r)], nextCursor: null });
+  profiles = vi
+    .spyOn(delifastApi, "operationsRestaurantProfiles")
+    .mockResolvedValue([
+      {
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        open: r.open,
+        version: r.version,
+        menu: [],
+      },
+    ]);
   details = vi.spyOn(delifastApi, "operationsRestaurant").mockResolvedValue(r);
   vi.spyOn(delifastApi, "operationsMenuCategorySummaries").mockResolvedValue({
     items: r.categories || [],
     nextCursor: null,
   });
   vi.spyOn(delifastApi, "operationsMenuCategory").mockImplementation(
-    async (_t, _restaurantId, id) => r.categories?.find((c) => c.id === id) ?? null,
+    async (_t, _restaurantId, id) =>
+      r.categories?.find((c) => c.id === id) ?? null,
   );
   menuPages = vi
     .spyOn(delifastApi, "operationsMenuItemSummaries")
@@ -114,7 +141,7 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 async function renderAdmin() {
-  render(<Catalogue token={token} user={admin} />);
+  render(<Catalogue token={token} user={activeUser} />);
   await screen.findByText("Chez A", { selector: "strong" });
   await waitFor(() =>
     expect(menuPages).toHaveBeenCalledWith(token, "r1", null, null),
@@ -130,10 +157,21 @@ function fill(name = "Nouveau", description = "Texte", price = "1200") {
   });
 }
 
-describe("Catalogue admin — détail menu et écritures sûres", () => {
+describe.each([
+  ["ADMIN", admin],
+  ["RESTAURANT", restaurantUser],
+])("Catalogue %s — détail menu et écritures sûres", (_role, user) => {
+  beforeEach(() => {
+    activeUser = user;
+  });
   it("charge le metadata restaurant et les résumés, mais ne lazy-load le détail menu qu'après Modifier", async () => {
     await renderAdmin();
-    expect(details).toHaveBeenCalledWith(token, "r1");
+    if (activeUser.role === "RESTAURANT") {
+      expect(profiles).toHaveBeenCalledWith(token);
+      expect(details).not.toHaveBeenCalled();
+    } else {
+      expect(details).toHaveBeenCalledWith(token, "r1");
+    }
     expect(menuDetails).not.toHaveBeenCalled();
     fireEvent.click(
       screen.getAllByRole("button", { name: "Modifier" }).at(-1)!,
@@ -192,7 +230,7 @@ describe("Catalogue admin — détail menu et écritures sûres", () => {
     menuDetails
       .mockImplementationOnce(() => old.promise)
       .mockResolvedValueOnce(fullItem({ name: "Nouveau détail" }));
-    const { rerender } = render(<Catalogue token="old" user={admin} />);
+    const { rerender } = render(<Catalogue token="old" user={activeUser} />);
     await screen.findByText("Chez A", { selector: "strong" });
     fireEvent.click(
       screen.getAllByRole("button", { name: "Modifier" }).at(-1)!,
@@ -200,7 +238,7 @@ describe("Catalogue admin — détail menu et écritures sûres", () => {
     await waitFor(() =>
       expect(menuDetails).toHaveBeenCalledWith("old", "r1", "m1"),
     );
-    rerender(<Catalogue token="new" user={{ ...admin, id: "a2" }} />);
+    rerender(<Catalogue token="new" user={{ ...activeUser, id: "a2" }} />);
     await screen.findByText("Chez A", { selector: "strong" });
     await act(async () => old.resolve(fullItem({ name: "Ancien détail" })));
     expect(screen.queryByDisplayValue("Ancien détail")).not.toBeInTheDocument();
@@ -325,18 +363,20 @@ describe("Catalogue admin — détail menu et écritures sûres", () => {
     expect(
       screen.getAllByRole("button", { name: "Archiver" }).at(-1)!,
     ).toBeDisabled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Rechercher le restaurant" }),
-    );
-    await waitFor(() => expect(menuPages).toHaveBeenCalledTimes(3));
-    await waitFor(() =>
-      expect(
+    if (activeUser.role === "ADMIN") {
+      fireEvent.click(
         screen.getByRole("button", { name: "Rechercher le restaurant" }),
-      ).toBeEnabled(),
-    );
-    expect(
-      screen.getAllByRole("button", { name: "Archiver" }).at(-1)!,
-    ).toBeDisabled();
+      );
+      await waitFor(() => expect(menuPages).toHaveBeenCalledTimes(3));
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Rechercher le restaurant" }),
+        ).toBeEnabled(),
+      );
+      expect(
+        screen.getAllByRole("button", { name: "Archiver" }).at(-1)!,
+      ).toBeDisabled();
+    }
     expect(delifastApi.setMenuItemArchived).toHaveBeenCalledTimes(1);
     menuPages.mockRejectedValueOnce(new Error("lecture indisponible"));
     fireEvent.click(screen.getByRole("button", { name: "Actualiser" }));

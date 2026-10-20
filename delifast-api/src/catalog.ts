@@ -144,6 +144,11 @@ export type MenuItemSummaryPage = {
   }>;
   nextCursor: string | null;
 };
+function requireMenuOperationsAccess(user: Staff, restaurantId: string) {
+  if (user.role === "ADMIN") return;
+  if (user.role === "RESTAURANT" && user.restaurantId === restaurantId) return;
+  fail("FORBIDDEN", "Restaurant hors portée");
+}
 const menuSummaryProjection = {
   _id: 0,
   id: 1,
@@ -173,8 +178,8 @@ export async function operationsMenuItemSummaries(
   afterRaw?: unknown,
   menuItemIdRaw?: unknown,
 ): Promise<MenuItemSummaryPage> {
-  if (user.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants");
   const restaurantId = idOf(restaurantIdRaw, "restaurantId");
+  requireMenuOperationsAccess(user, restaurantId);
   const limit = limitRaw == null ? 20 : limitRaw;
   if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 50)
     fail("INVALID_INPUT", "Limite invalide");
@@ -229,8 +234,8 @@ export async function operationsMenuCategorySummaries(
   afterRaw?: unknown,
   categoryIdRaw?: unknown,
 ): Promise<MenuCategorySummaryPage> {
-  if (user.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants");
   const restaurantId = idOf(restaurantIdRaw, "restaurantId");
+  requireMenuOperationsAccess(user, restaurantId);
   const limit = limitRaw == null ? 20 : limitRaw;
   if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 50)
     fail("INVALID_INPUT", "Limite invalide");
@@ -256,8 +261,8 @@ export async function operationsMenuCategory(
   restaurantIdRaw: unknown,
   idRaw: unknown,
 ) {
-  if (user.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants");
   const restaurantId = idOf(restaurantIdRaw, "restaurantId");
+  requireMenuOperationsAccess(user, restaurantId);
   const id = idOf(idRaw, "id");
   const category = await db.collection("menu_categories").findOne(
     { restaurantId, id },
@@ -272,8 +277,8 @@ export async function operationsMenuItem(
   restaurantIdRaw: unknown,
   idRaw: unknown,
 ) {
-  if (user.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants");
   const restaurantId = idOf(restaurantIdRaw, "restaurantId");
+  requireMenuOperationsAccess(user, restaurantId);
   const id = idOf(idRaw, "id");
   const item = await db.collection("menu_items").findOne(
     { restaurantId, id },

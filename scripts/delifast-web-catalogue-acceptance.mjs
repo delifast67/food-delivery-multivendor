@@ -78,7 +78,7 @@ try {
   await db.collection('staff_users').deleteMany({});
   const accounts = [
     { id: 'staff-admin', name: 'Admin recette', email: 'admin@delifast.local', role: 'ADMIN', restaurantId: null, password: 'AdminDemo!2026' },
-    { id: 'staff-rest-1', name: 'Restaurant recette', email: 'restaurant1@delifast.local', role: 'RESTAURANT', restaurantId: 'rest-koudougou', password: 'RestaurantDemo!2026' },
+    { id: 'staff-rest-1', name: 'Restaurant recette', email: 'restaurant1@delifast.local', role: 'RESTAURANT', restaurantId: 'z-web-restaurant-064', password: 'RestaurantDemo!2026' },
     { id: 'staff-rider', name: 'Livreur démo', email: 'rider@delifast.local', role: 'RIDER', restaurantId: null, password: 'RiderDemo!2026' },
   ];
   await db.collection('staff_users').insertMany(accounts.map(({ password, ...u }) => ({ ...u, active: true, passwordHash: passwordHash(password) })));
@@ -108,7 +108,7 @@ try {
     available: i % 5 !== 0,
     archived: i % 11 === 0,
     version: 0,
-    categoryId: 'cat-web-064',
+    categoryId: i === 5 ? 'a-cat-000' : 'cat-web-064',
     optionGroups: [{ id: `group-${i}`, name: 'Accompagnement', minSelections: 1, maxSelections: 1, options: [{ id: `option-${i}`, name: 'Riz', priceXof: 0, available: true }] }],
     audit: [],
   }));
@@ -132,13 +132,15 @@ try {
   const edited = await db.collection('menu_items').findOne({ id: `${persisted.restaurantId}-item-001` });
   assert.equal(edited.version, 1); assert.equal(edited.categoryId, 'cat-web-064'); assert.equal(edited.optionGroups[0].name, 'Accompagnement'); assert.equal(edited.name, 'Plat 064 modifié');
   const editedCategory = await db.collection('menu_categories').findOne({ id: 'cat-web-064' });
-  assert.equal(editedCategory.version, 3); assert.equal(editedCategory.archived, false); assert.equal(editedCategory.name, 'Catégorie 064 renommée');
-  assert.equal(await db.collection('menu_categories').countDocuments({ restaurantId: persisted.restaurantId }), 47);
+  assert.equal(editedCategory.version, 6); assert.equal(editedCategory.archived, false); assert.equal(editedCategory.name, 'Catégorie 064 rôle');
+  assert.equal(await db.collection('menu_categories').countDocuments({ restaurantId: persisted.restaurantId }), 48);
   const restored = await db.collection('menu_items').findOne({ id: `${persisted.restaurantId}-item-002` });
   assert.equal(restored.archived, false); assert.equal(restored.version, 2);
   const lost = await db.collection('menu_items').findOne({ id: `${persisted.restaurantId}-item-003` });
   assert.equal(lost.archived, true); assert.equal(lost.version, 1);
-  assert.equal(await db.collection('menu_items').countDocuments({ restaurantId: persisted.restaurantId }), 131);
+  const restaurantEdited = await db.collection('menu_items').findOne({ id: `${persisted.restaurantId}-item-005` });
+  assert.equal(restaurantEdited.archived, false); assert.equal(restaurantEdited.version, 1); assert.equal(restaurantEdited.categoryId, 'a-cat-000');
+  assert.equal(await db.collection('menu_items').countDocuments({ restaurantId: persisted.restaurantId }), 132);
   assert.equal(await db.collection('orders').countDocuments(), 0);
   assert.equal(await db.collection('payment_sessions').countDocuments(), 0);
   console.log('SUCCÈS — catalogue restaurants Web isolé, pagination, détail vérifié et permissions; aucun appel externe ni commande.');

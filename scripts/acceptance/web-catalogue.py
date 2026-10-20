@@ -72,7 +72,12 @@ with sync_playwright() as p:
             assert payload['data']['operationsRestaurant'] is None or 'menu' not in payload['data']['operationsRestaurant']
             profiles.append(body); route.fulfill(response=response)
         elif re.search(r'\boperationsRestaurants\s*\{', query):
-            legacy.append(body); route.fallback()
+            assert 'menu' not in query and 'categories' not in query
+            response = route.fetch(); payload = response.json()
+            assert not payload.get('errors'), payload
+            assert len(payload['data']['operationsRestaurants']) <= 1
+            assert all(set(r) == {'id','name','description','open','version'} for r in payload['data']['operationsRestaurants'])
+            legacy.append(body); route.fulfill(response=response)
         elif 'operationsMenuItem(restaurantId:' in query:
             response = route.fetch(); payload = response.json()
             assert not payload.get('errors'), payload
@@ -114,7 +119,8 @@ with sync_playwright() as p:
     refresh = catalogue.get_by_role('button', name='Actualiser', exact=True)
     def settled():
         expect(refresh).to_be_enabled()
-        expect(catalogue.get_by_role('button', name='Rechercher le restaurant', exact=True)).to_be_enabled()
+        if catalogue.get_by_role('button', name='Rechercher le restaurant', exact=True).count():
+            expect(catalogue.get_by_role('button', name='Rechercher le restaurant', exact=True)).to_be_enabled()
     expect(select).to_be_enabled()
     def restaurant_ids():
         return select.locator('option').evaluate_all('(nodes) => nodes.map(n => n.value).filter(Boolean)')
@@ -286,17 +292,88 @@ with sync_playwright() as p:
     expect(page.get_by_role('heading', name='Connexion équipe', exact=True)).to_be_visible()
     counts = (len(summaries), len(menu_pages), len(menu_details), len(profiles))
     login('restaurant1@delifast.local', 'RestaurantDemo!2026')
-    expect(catalogue.locator('.df-catalogue-status strong')).to_have_text('Restaurant fixture catalogue')
+    expect(catalogue.locator('.df-catalogue-status strong')).to_have_text('Restaurant Web 064')
     expect(catalogue.get_by_label('Choisir un restaurant', exact=True)).to_have_count(0)
-    expect(catalogue.get_by_role('button', name='Fermer le restaurant', exact=True)).to_be_visible()
-    expect(row_for(page, 'Plat fixture catalogue')).to_be_visible()
-    assert (len(summaries), len(menu_pages), len(menu_details), len(profiles)) == counts
-    assert len(legacy) == 1
+    expect(catalogue.get_by_role('button', name='Ouvrir le restaurant', exact=True)).to_be_visible()
+    # Le compte RESTAURANT reçoit le même scope que l’admin, mais sans sélecteur
+    # global : vérifier ici les pages réelles (>20) et non un simple plat fixture.
+    restaurant_category_rows = catalogue.get_by_role('heading', name='Catégories', exact=True).locator('..').locator('article.df-catalogue-item')
+    restaurant_menu_next = catalogue.get_by_role('button', name='Plats suivants', exact=True)
+    restaurant_category_next = catalogue.get_by_role('button', name='Catégories suivantes', exact=True)
+    restaurant_menu_pages = 1
+    while restaurant_menu_next.is_enabled():
+        restaurant_menu_next.click(); settled(); restaurant_menu_pages += 1
+    assert restaurant_menu_pages == 7
+    catalogue.get_by_role('button', name='Plats précédents', exact=True).click(); settled()
+    restaurant_category_pages = 1
+    while restaurant_category_next.is_enabled():
+        restaurant_category_next.click(); settled(); restaurant_category_pages += 1
+    assert restaurant_category_pages >= 3
+    catalogue.get_by_role('button', name='Catégories précédentes', exact=True).click(); settled()
+    checked('Rôle RESTAURANT : 130 plats et 46 catégories parcourus par pages de 20')
+
+    # Une catégorie archivée, hors première page, doit rester sélectionnable lors
+    # de l’édition d’un plat (le détail est restaurant-scoped, sans menu embarqué).
+    restaurant_menu_select = catalogue.get_by_label('ID plat exact', exact=True)
+    restaurant_menu_select.fill('z-web-restaurant-064-item-005')
+    catalogue.get_by_role('button', name='Rechercher le plat', exact=True).click(); settled()
+    row_for(page, 'Plat z-web-restaurant-064 005').get_by_role('button', name='Modifier', exact=True).click()
+    expect(catalogue.get_by_role('heading', name='Modifier le plat', exact=True)).to_be_visible()
+    assert catalogue.get_by_label('Catégorie du plat', exact=True).input_value() == 'a-cat-000'
+    catalogue.get_by_role('button', name=re.compile(r'Enregistrer \(version')).click()
+    expect(catalogue.get_by_text('Plat modifié.', exact=True)).to_be_visible()
+    checked('Rôle RESTAURANT : édition d’un plat conserve une catégorie archivée hors page')
+
+    # CRUD de catégorie et d’article sous le scope RESTAURANT, avec CAS fourni
+    # par l’UI. Les mutations sont capturées par le même garde GraphQL que l’admin.
+    catalogue.get_by_role('button', name='Réinitialiser les catégories', exact=True).click(); settled()
+    category_section = catalogue.get_by_role('heading', name='Catégories', exact=True).locator('..')
+    category_section.get_by_label('Nom de la catégorie', exact=True).fill('Catégorie restaurant recette')
+    category_section.get_by_label('Ordre', exact=True).fill('91')
+    category_section.get_by_role('button', name='Créer la catégorie', exact=True).click()
+    expect(catalogue.get_by_text('Catégorie créée.', exact=True)).to_be_visible()
+    catalogue.get_by_label('ID catégorie exact', exact=True).fill('cat-web-064')
+    catalogue.get_by_role('button', name='Rechercher la catégorie', exact=True).click(); settled()
+    restaurant_category_rows.get_by_role('button', name='Modifier', exact=True).click()
+    catalogue.get_by_label('Nom de la catégorie', exact=True).fill('Catégorie 064 rôle')
+    catalogue.get_by_role('button', name='Enregistrer la catégorie', exact=True).click()
+    expect(catalogue.get_by_text('Catégorie modifiée.', exact=True)).to_be_visible()
+    restaurant_category_rows.get_by_role('button', name='Archiver', exact=True).click()
+    expect(catalogue.get_by_text('Catégorie archivée.', exact=True)).to_be_visible()
+    restaurant_category_rows.get_by_role('button', name='Restaurer', exact=True).click()
+    expect(catalogue.get_by_text('Catégorie restaurée.', exact=True)).to_be_visible()
+    checked('Rôle RESTAURANT : création, édition, archivage et restauration de catégorie')
+
+    catalogue.get_by_role('button', name='Réinitialiser les plats', exact=True).click(); settled()
+    catalogue.get_by_label('Nom', exact=True).fill('Plat restaurant recette')
+    catalogue.locator('textarea').fill('Créé puis archivé par le rôle restaurant')
+    catalogue.get_by_label('Prix (XOF)', exact=True).fill('3333')
+    catalogue.get_by_role('button', name='Créer le plat', exact=True).click()
+    expect(catalogue.get_by_text(re.compile('Plat créé|Issue de l’écriture incertaine'))).to_be_visible()
+    refresh.click(); settled()
+    created = row_for(page, 'Plat restaurant recette')
+    while created.count() == 0 and restaurant_menu_next.is_enabled():
+        restaurant_menu_next.click(); settled()
+        created = row_for(page, 'Plat restaurant recette')
+    expect(created).to_be_visible()
+    created.get_by_role('button', name='Archiver', exact=True).click()
+    expect(catalogue.get_by_text('Plat archivé.', exact=True)).to_be_visible()
+    created.get_by_role('button', name='Restaurer', exact=True).click()
+    expect(catalogue.get_by_text('Plat restauré.', exact=True)).to_be_visible()
+    checked('Rôle RESTAURANT : création, archivage et restauration de plat')
+    assert len(profiles) == counts[3]
+    assert len(legacy) >= 1
+    page.set_viewport_size({'width':390,'height':844})
+    catalogue.scroll_into_view_if_needed()
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    restaurant_screenshot = out / 'web-restaurant-catalogue-390.png'
+    page.screenshot(path=str(restaurant_screenshot), full_page=True)
+    checked('Catalogue RESTAURANT à 390 px sans débordement, profil sans menu/catégories')
     page.get_by_role('button', name='Se déconnecter', exact=True).click()
     expect(page.get_by_role('heading', name='Connexion équipe', exact=True)).to_be_visible()
-    checked('Rôle restaurant legacy et catalogue autorisé conservés, aucune API admin supplémentaire, logout')
+    checked('Rôle restaurant isolé et lectures bornées, aucune API admin globale, logout')
     assert not external, external
     assert not errors, errors
     checked('Aucun appel externe ni erreur JavaScript, aucune commande/paiement/SMS')
-    Path(result_path).write_text(json.dumps({'restaurantId': fixture['restaurantId'], 'checks': checks, 'restaurantPages': len(restaurant_pages), 'menuPages': len(menu_page_sets), 'menuDetails': len(menu_details), 'mutations': len(mutations), 'screenshots': [str(screenshot)]}, ensure_ascii=False, indent=2))
+    Path(result_path).write_text(json.dumps({'restaurantId': fixture['restaurantId'], 'checks': checks, 'restaurantPages': len(restaurant_pages), 'menuPages': len(menu_page_sets), 'menuDetails': len(menu_details), 'mutations': len(mutations), 'restaurantRoleMenuPages': restaurant_menu_pages, 'restaurantRoleCategoryPages': restaurant_category_pages, 'screenshots': [str(screenshot), str(restaurant_screenshot)]}, ensure_ascii=False, indent=2))
     browser.close()

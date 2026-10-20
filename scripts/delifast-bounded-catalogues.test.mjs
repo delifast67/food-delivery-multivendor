@@ -38,7 +38,7 @@ test('le catalogue admin Web ne recharge pas tous les plats depuis un profil ou 
   const toggle = api.match(/const SET_RESTAURANT_OPEN = `([^`]+)`/)[1];
   assert.doesNotMatch(profile, /\bmenu\s*\{/);
   assert.doesNotMatch(toggle, /\bmenu\s*\{/);
-  assert.match(ui, /const visibleMenu = isAdmin \? menuRows/);
+  assert.match(ui, /const visibleMenu = menuRows/);
   assert.match(ui, /delifastApi\.operationsMenuItem\(/);
 });
 
@@ -58,7 +58,7 @@ test('les résumés catégories sont bornés, projetés et utilisent le nouvel i
 test('les résumés des plats sont bornés et utilisent le nouvel index de portée', () => {
   const catalog = readFileSync(new URL('../delifast-api/src/catalog.ts', import.meta.url), 'utf8');
   const block = catalog.slice(catalog.indexOf('export async function operationsMenuItemSummaries('), catalog.indexOf('export async function operationsMenuItem('));
-  assert.match(block, /user\.role !== "ADMIN"/);
+  assert.match(block, /requireMenuOperationsAccess\(user, restaurantId\)/);
   assert.match(block, /projection: menuSummaryProjection, maxTimeMS: 2000/);
   assert.match(block, /hint\("menu_items_restaurant_id"\)/);
   assert.match(block, /limit\(\(limit as number\) \+ 1\)/);
@@ -67,4 +67,14 @@ test('les résumés des plats sont bornés et utilisent le nouvel index de port�
     assert.match(text, /restaurantId: 1, id: 1/);
     assert.match(text, /name: "menu_items_restaurant_id"/);
   }
+});
+
+test('le rôle restaurant ne recharge aucune collection imbriquée dans son profil', () => {
+  const api = readFileSync(new URL('../enatega-multivendor-web/lib/delifast/api.ts', import.meta.url), 'utf8');
+  const ui = readFileSync(new URL('../enatega-multivendor-web/app/delifast/operations/Catalogue.tsx', import.meta.url), 'utf8');
+  const profile = api.match(/const OPERATIONS_RESTAURANT_PROFILES = `([^`]+)`/)[1];
+  assert.doesNotMatch(profile, /\b(menu|categories)\s*\{/);
+  assert.match(ui, /delifastApi\.operationsRestaurantProfiles\(token\)/);
+  assert.doesNotMatch(ui, /delifastApi\.operationsRestaurants\(/);
+  assert.doesNotMatch(ui, /restaurant\?\.(menu|categories)/);
 });

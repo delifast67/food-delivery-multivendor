@@ -162,18 +162,18 @@ const resolvers: any = {
     operationsMenuItemSummaries: (_: any, { restaurantId, limit, after, menuItemId }: any, ctx: any) =>
       operationsMenuItemSummaries(
         getDb(),
-        requireRole(ctx, ["ADMIN"]),
+        requireRole(ctx, ["ADMIN", "RESTAURANT"]),
         restaurantId,
         limit,
         after,
         menuItemId,
       ),
     operationsMenuItem: (_: any, { restaurantId, id }: any, ctx: any) =>
-      operationsMenuItem(getDb(), requireRole(ctx, ["ADMIN"]), restaurantId, id),
+      operationsMenuItem(getDb(), requireRole(ctx, ["ADMIN", "RESTAURANT"]), restaurantId, id),
     operationsMenuCategorySummaries: (_: any, { restaurantId, limit, after, categoryId }: any, ctx: any) =>
-      operationsMenuCategorySummaries(getDb(), requireRole(ctx, ["ADMIN"]), restaurantId, limit, after, categoryId),
+      operationsMenuCategorySummaries(getDb(), requireRole(ctx, ["ADMIN", "RESTAURANT"]), restaurantId, limit, after, categoryId),
     operationsMenuCategory: (_: any, { restaurantId, id }: any, ctx: any) =>
-      operationsMenuCategory(getDb(), requireRole(ctx, ["ADMIN"]), restaurantId, id),
+      operationsMenuCategory(getDb(), requireRole(ctx, ["ADMIN", "RESTAURANT"]), restaurantId, id),
     calculateCheckout: (_: any, { input }: any) =>
       calculateCheckout(getDb(), normalizeCart(input)),
     order: (_: any, { id, accessToken }: any) =>

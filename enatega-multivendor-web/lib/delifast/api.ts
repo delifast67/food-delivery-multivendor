@@ -280,6 +280,7 @@ const ORDER_OPERATIONS_FIELDS = `id accessToken status paymentStatus createdAt u
 const STAFF_LOGIN = `mutation StaffLogin($email: String!, $password: String!) { staffLogin(email: $email, password: $password) { token user { id name role restaurantId } } }`;
 const OPERATIONS_ORDERS = `query OperationsOrders { operationsOrders { ${ORDER_OPERATIONS_FIELDS} } }`;
 const OPERATIONS_RESTAURANTS = `query OperationsRestaurants { operationsRestaurants { ${RESTAURANT_FIELDS} } }`;
+const OPERATIONS_RESTAURANT_PROFILES = `query OperationsRestaurantProfiles { operationsRestaurants { id name description open version } }`;
 const OPERATIONS_RESTAURANT_SUMMARIES = `query OperationsRestaurantSummaries($after: ID, $restaurantId: ID) { operationsRestaurantSummaries(limit: 20, after: $after, restaurantId: $restaurantId) { items { id name open version } nextCursor } }`;
 // Le profil admin n'embarque aucune collection non bornée.
 const OPERATIONS_RESTAURANT = `query OperationsRestaurant($id: ID!) { operationsRestaurant(id: $id) { id name description open version } }`;
@@ -672,6 +673,14 @@ export const delifastApi = {
         throw new DelifastApiError("Réponse plat incohérente", "unknown");
       return data.operationsMenuItem;
     }),
+  // Réservé au rôle restaurant : le serveur limite cette racine à son restaurant.
+  // L'export historique complet ci-dessous reste inchangé pour les autres clients.
+  operationsRestaurantProfiles: (token: string) =>
+    request<{
+      operationsRestaurants: Omit<Restaurant, "menu" | "categories">[];
+    }>(OPERATIONS_RESTAURANT_PROFILES, undefined, token).then((data) =>
+      data.operationsRestaurants.map((r) => ({ ...r, menu: [] as MenuItem[] })),
+    ),
   operationsRestaurants: (token: string) =>
     request<{ operationsRestaurants: Restaurant[] }>(
       OPERATIONS_RESTAURANTS,

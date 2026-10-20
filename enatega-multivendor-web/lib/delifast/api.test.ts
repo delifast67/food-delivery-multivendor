@@ -240,30 +240,100 @@ describe("Contrats catalogue admin paginé", () => {
     expect(openQuery).not.toMatch(/\bmenu\b/);
   });
 
-  it("demande les résumés catégories bornés à 20 avec curseur et filtre exact", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      response({ operationsMenuCategorySummaries: { items: [], nextCursor: "c20" } }),
-    );
+  it("sélectionne un profil restaurant léger tout en préservant le helper historique complet", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        response({
+          operationsRestaurants: [
+            {
+              id: "r1",
+              name: "Chez A",
+              description: "",
+              open: true,
+              version: 1,
+            },
+          ],
+        }),
+      );
     vi.stubGlobal("fetch", fetchMock);
-    await delifastApi.operationsMenuCategorySummaries("staff", "r1", "c0", "c99");
+    const profiles =
+      await delifastApi.operationsRestaurantProfiles("restaurant-token");
+    await delifastApi.operationsRestaurants("restaurant-token");
+    expect(profiles).toEqual([
+      {
+        id: "r1",
+        name: "Chez A",
+        description: "",
+        open: true,
+        version: 1,
+        menu: [],
+      },
+    ]);
+    expect(profiles[0]).not.toHaveProperty("categories");
+    const profileRequest = fetchMock.mock.calls[0][1];
+    expect(profileRequest.headers.authorization).toBe(
+      "Bearer restaurant-token",
+    );
+    expect(JSON.parse(profileRequest.body).query).not.toMatch(
+      /\b(menu|categories)\s*\{/,
+    );
+    const historicalQuery = JSON.parse(fetchMock.mock.calls[1][1].body).query;
+    expect(historicalQuery).toMatch(/\bmenu\s*\{/);
+    expect(historicalQuery).toMatch(/\bcategories\s*\{/);
+  });
+
+  it("demande les résumés catégories bornés à 20 avec curseur et filtre exact", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        response({
+          operationsMenuCategorySummaries: { items: [], nextCursor: "c20" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    await delifastApi.operationsMenuCategorySummaries(
+      "staff",
+      "r1",
+      "c0",
+      "c99",
+    );
     const request = fetchMock.mock.calls[0][1];
     const body = JSON.parse(request.body);
-    expect(body.variables).toEqual({ restaurantId: "r1", after: "c0", categoryId: "c99" });
+    expect(body.variables).toEqual({
+      restaurantId: "r1",
+      after: "c0",
+      categoryId: "c99",
+    });
     expect(body.query).toContain("limit: 20");
     expect(body.query).toContain("operationsMenuCategorySummaries");
     expect(body.query).not.toContain("menu {");
-    expect(request.headers).toEqual(expect.objectContaining({ authorization: "Bearer staff" }));
+    expect(request.headers).toEqual(
+      expect.objectContaining({ authorization: "Bearer staff" }),
+    );
   });
 
   it("demande le détail catégorie avec restaurantId/id et auth staff", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      response({ operationsMenuCategory: { id: "c1", name: "Plats", sortOrder: 1, archived: false, version: 2 } }),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        response({
+          operationsMenuCategory: {
+            id: "c1",
+            name: "Plats",
+            sortOrder: 1,
+            archived: false,
+            version: 2,
+          },
+        }),
+      );
     vi.stubGlobal("fetch", fetchMock);
     await delifastApi.operationsMenuCategory("staff", "r1", "c1");
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.variables).toEqual({ restaurantId: "r1", id: "c1" });
-    expect(body.query).toContain("operationsMenuCategory(restaurantId: $restaurantId, id: $id)");
+    expect(body.query).toContain(
+      "operationsMenuCategory(restaurantId: $restaurantId, id: $id)",
+    );
     expect(fetchMock.mock.calls[0][1].headers).toEqual(
       expect.objectContaining({ authorization: "Bearer staff" }),
     );

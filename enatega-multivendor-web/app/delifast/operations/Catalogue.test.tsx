@@ -52,7 +52,8 @@ const makeRestaurant = (overrides: Partial<Restaurant> = {}): Restaurant => ({
   menu: [item, archivedItem],
   ...overrides,
 });
-let restaurants: any;
+let profiles: any;
+let menuItemsByRestaurant: Record<string, any[]>;
 let summaries: any;
 let details: any;
 let menuSummaries: any;
@@ -74,9 +75,10 @@ const summary = (r: Restaurant): RestaurantSummary => ({
 
 beforeEach(() => {
   vi.restoreAllMocks();
-  restaurants = vi
-    .spyOn(delifastApi, "operationsRestaurants")
-    .mockResolvedValue([makeRestaurant()]);
+  profiles = vi
+    .spyOn(delifastApi, "operationsRestaurantProfiles")
+    .mockResolvedValue([makeRestaurant({ menu: [] })]);
+  menuItemsByRestaurant = { r1: [item, archivedItem] };
   const adminRestaurant = makeRestaurant();
   summaries = vi
     .spyOn(delifastApi, "operationsRestaurantSummaries")
@@ -84,15 +86,16 @@ beforeEach(() => {
   menuSummaries = vi
     .spyOn(delifastApi, "operationsMenuItemSummaries")
     .mockImplementation(async (_token, id) => ({
-      items: (id === "r1" ? [item, archivedItem] : []).map(menuSummary),
+      items: (menuItemsByRestaurant[id] ?? []).map(menuSummary),
       nextCursor: null,
     }));
   vi.spyOn(delifastApi, "operationsMenuItem").mockImplementation(
     async (_token, restaurantId, id) => {
+      const source = menuItemsByRestaurant[restaurantId] ?? [];
       const r =
         restaurantId === "r1"
-          ? makeRestaurant()
-          : makeRestaurant({ id: restaurantId });
+          ? makeRestaurant({ menu: source })
+          : makeRestaurant({ id: restaurantId, menu: source });
       return r.menu.find((m) => m.id === id) ?? null;
     },
   );
@@ -110,11 +113,10 @@ beforeEach(() => {
   vi.spyOn(delifastApi, "operationsMenuCategory").mockImplementation(
     async (_token, _restaurantId, id) => makeRestaurant().categories?.find((c) => c.id === id) ?? null,
   );
-  vi.spyOn(delifastApi, "createMenuItem").mockResolvedValue({
-    ...item,
-    id: "m3",
-    name: "Poulet",
-    version: 1,
+  vi.spyOn(delifastApi, "createMenuItem").mockImplementation(async (_token, restaurantId, input) => {
+    const created = { ...item, ...input, id: "m3", name: input.name, version: 1 };
+    menuItemsByRestaurant[restaurantId] = [created, ...(menuItemsByRestaurant[restaurantId] ?? [])];
+    return created as any;
   });
   vi.spyOn(delifastApi, "updateMenuItem").mockResolvedValue({
     ...item,
@@ -169,14 +171,14 @@ function fill(name = "Poulet", description = "Poulet braisé", price = "2500") {
 describe("Catalogue", () => {
   it("ignore une réponse de catalogue arrivée après un changement de contexte", async () => {
     let resolveOld: (value: Restaurant[]) => void = () => undefined;
-    restaurants.mockImplementationOnce(
+    profiles.mockImplementationOnce(
       () => new Promise((resolve) => (resolveOld = resolve)),
     );
     const { rerender } = render(
       <Catalogue token={token} user={restaurantUser} />,
     );
-    restaurants.mockResolvedValue([
-      makeRestaurant({ id: "r2", name: "Chez B" }),
+    profiles.mockResolvedValue([
+      makeRestaurant({ id: "r2", name: "Chez B", menu: [] }),
     ]);
     rerender(
       <Catalogue
@@ -195,12 +197,12 @@ describe("Catalogue", () => {
     });
     expect(screen.queryByText("Plat périmé")).not.toBeInTheDocument();
     expect(screen.getByText("Chez B")).toBeInTheDocument();
-    expect(restaurants).toHaveBeenCalledTimes(2);
+    expect(profiles).toHaveBeenCalledTimes(2);
   });
 
   it("ignore une erreur tardive de l’ancienne session catalogue", async () => {
     let rejectOld: (reason: Error) => void = () => undefined;
-    restaurants.mockImplementationOnce(
+    profiles.mockImplementationOnce(
       () => new Promise((_resolve, reject) => (rejectOld = reject)),
     );
     const { rerender } = render(
@@ -245,7 +247,10 @@ describe("Catalogue", () => {
 
   it("met à jour avec la version attendue affichée", async () => {
     await renderCatalogue();
-    fireEvent.click(screen.getByRole("button", { name: "Modifier" }));
+    fireEvent.click(
+      screen.getByText("Riz").closest("article")!.querySelector("button.df-secondary")!,
+    );
+    await screen.findByRole("button", { name: "Enregistrer (version 4)" });
     fill("Riz épicé", "Riz relevé", "1200");
     fireEvent.click(
       screen.getByRole("button", { name: "Enregistrer (version 4)" }),
@@ -307,7 +312,9 @@ describe("Catalogue", () => {
 
   it("archive puis restaure une liste avec expectedVersion", async () => {
     await renderCatalogue();
-    fireEvent.click(screen.getByRole("button", { name: "Archiver" }));
+    fireEvent.click(
+      screen.getByText("Riz").closest("article")!.querySelector("button.df-danger")!,
+    );
     await screen.findByText("Plat archivé.");
     expect(delifastApi.setMenuItemArchived).toHaveBeenCalledWith(
       token,
@@ -366,17 +373,22 @@ describe("Catalogue", () => {
         "CONCURRENT_MODIFICATION",
       ),
     );
-    restaurants
-      .mockResolvedValueOnce([makeRestaurant()])
-      .mockResolvedValueOnce([
-        makeRestaurant({ menu: [{ ...item, version: 9 }, archivedItem] }),
-      ]);
+    profiles.mockResolvedValue([makeRestaurant({ menu: [] })]);
+    menuSummaries.mockResolvedValueOnce({
+      items: [menuSummary(item), menuSummary(archivedItem)],
+      nextCursor: null,
+    }).mockResolvedValueOnce({
+      items: [menuSummary({ ...item, version: 9 }), menuSummary(archivedItem)],
+      nextCursor: null,
+    });
     await renderCatalogue();
-    fireEvent.click(screen.getByRole("button", { name: "Archiver" }));
+    fireEvent.click(
+      screen.getByText("Riz").closest("article")!.querySelector("button.df-danger")!,
+    );
     await screen.findByRole("alert");
     expect(screen.getByRole("alert")).toHaveTextContent("modifié ailleurs");
     expect(delifastApi.setMenuItemArchived).toHaveBeenCalledTimes(1);
-    expect(restaurants).toHaveBeenCalledTimes(2);
+    expect(profiles).toHaveBeenCalledTimes(2);
     expect(screen.getByText(/version 9/)).toBeInTheDocument();
   });
 
@@ -417,7 +429,7 @@ describe("Catalogue", () => {
     expect(screen.getByLabelText("Choisir un restaurant")).toBeInTheDocument();
     unmount();
     // The page-level permission is asserted through the rendered catalogue's role contract: riders cannot select restaurants.
-    const before = restaurants.mock.calls.length;
+    const before = profiles.mock.calls.length;
     render(
       <Catalogue
         token={token}
@@ -427,7 +439,7 @@ describe("Catalogue", () => {
     expect(
       screen.queryByText("Aucun restaurant accessible."),
     ).toBeInTheDocument();
-    expect(restaurants.mock.calls.length).toBe(before);
+    expect(profiles.mock.calls.length).toBe(before);
     expect(
       screen.queryByLabelText("Choisir un restaurant"),
     ).not.toBeInTheDocument();
@@ -495,7 +507,7 @@ describe("Catalogue catégories et options", () => {
     );
   });
   it("crée des groupes et options avec identifiants stables, prix et disponibilité", async () => {
-    restaurants.mockResolvedValue([makeRestaurant({ categories: [category] })]);
+    vi.mocked(delifastApi.operationsMenuCategorySummaries).mockResolvedValue({ items: [category], nextCursor: null });
     await renderCatalogue();
     fill();
     fireEvent.change(screen.getByLabelText("Catégorie du plat"), {
@@ -539,11 +551,13 @@ describe("Catalogue catégories et options", () => {
     expect(input.optionGroups?.[0].options[1].available).toBe(false);
   });
   it("supprime explicitement le dernier groupe existant au lieu de le préserver", async () => {
-    restaurants.mockResolvedValue([
-      makeRestaurant({ menu: [{ ...item, optionGroups }] }),
-    ]);
+    menuItemsByRestaurant.r1 = [{ ...item, optionGroups }];
+    menuSummaries.mockImplementation(async (_token, id) => ({ items: (menuItemsByRestaurant[id] ?? []).map(menuSummary), nextCursor: null }));
     await renderCatalogue();
-    fireEvent.click(screen.getByRole("button", { name: "Modifier" }));
+    fireEvent.click(
+      screen.getByText("Riz").closest("article")!.querySelector("button.df-secondary")!,
+    );
+    await screen.findByRole("button", { name: "Enregistrer (version 4)" });
     fireEvent.click(screen.getByRole("button", { name: "Supprimer groupe 1" }));
     fireEvent.click(
       screen.getByRole("button", { name: "Enregistrer (version 4)" }),
@@ -564,7 +578,7 @@ describe("Catalogue catégories et options", () => {
     await renderCatalogue(adminUser);
     await screen.findByText("Riz");
     fireEvent.click(
-      screen.getByText("Riz").closest("article")!.querySelector("button")!,
+      screen.getByText("Riz").closest("article")!.querySelector("button.df-secondary")!,
     );
     fireEvent.change(screen.getByLabelText("Nom de la catégorie"), {
       target: { value: "Brouillon" },

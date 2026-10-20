@@ -46,8 +46,8 @@ beforeAll(async () => {
 afterAll(async () => { await (await import("../src/db.js")).closeDb(); await mongo.stop(); });
 
 describe("operations menu category catalogue", () => {
-  it("parcourt toutes les catégories par curseur stable, y compris les archivées", async () => {
-    const admin = await login("admin@category-ops");
+  it.each(["admin", "restaurant"])("%s parcourt toutes les catégories par curseur stable, y compris les archivées", async (role) => {
+    const admin = await login(`${role}@category-ops`);
     const ids: string[] = [];
     let after: string | null = null;
     for (;;) {
@@ -106,17 +106,35 @@ describe("operations menu category catalogue", () => {
     expect(publicView.data.restaurant.categories).toHaveLength(all.filter((c: any) => !c.archived).length);
     expect(publicView.data.restaurant.categories.every((c: any) => !c.archived)).toBe(true);
     expect((await gql('{operationsMenuCategory(restaurantId:"restaurant-a",id:"cat-other"){id}}', {}, admin)).data.operationsMenuCategory).toBeNull();
-    for (const token of [undefined, await login("restaurant@category-ops"), await login("rider@category-ops")])
-      expect(code(await gql('{operationsMenuCategory(restaurantId:"restaurant-a",id:"cat-001"){id}}', {}, token))).toBe(token ? "FORBIDDEN" : "UNAUTHENTICATED");
+    expect(code(await gql('query{operationsMenuCategory(restaurantId:"restaurant-a",id:"cat-001"){id}}'))).toBe("UNAUTHENTICATED");
+    const restaurant = await login("restaurant@category-ops");
+    expect((await gql('query{operationsMenuCategory(restaurantId:"restaurant-a",id:"cat-001"){id}}', {}, restaurant)).errors).toBeUndefined();
+    expect(code(await gql('query{operationsMenuCategory(restaurantId:"restaurant-a",id:"cat-001"){id}}', {}, await login("rider@category-ops")))).toBe("FORBIDDEN");
   });
 
-  it("refuse anon, restaurant, rider et compte staff inactif avant Mongo", async () => {
-    for (const role of [undefined, await login("restaurant@category-ops"), await login("rider@category-ops")]) {
-      expect(code(await gql("query{operationsMenuCategorySummaries(restaurantId:\"restaurant-a\"){items{id}}}", {}, role))).toBe(role === undefined ? "UNAUTHENTICATED" : "FORBIDDEN");
-    }
+  it("refuse anon, restaurant hors portée, rider et compte staff inactif avant Mongo", async () => {
+    expect(code(await gql("query{operationsMenuCategorySummaries(restaurantId:\"restaurant-a\"){items{id}}}"))).toBe("UNAUTHENTICATED");
+    const restaurant = await login("restaurant@category-ops");
+    expect((await gql("query{operationsMenuCategorySummaries(restaurantId:\"restaurant-a\"){items{id}}}", {}, restaurant)).errors).toBeUndefined();
+    expect(code(await gql("query{operationsMenuCategorySummaries(restaurantId:\"restaurant-a\"){items{id}}}", {}, await login("rider@category-ops")))).toBe("FORBIDDEN");
     expect(code(await gql("mutation{staffLogin(email:\"inactive@category-ops\",password:\"Test!123\"){token}}"))).toBe("UNAUTHENTICATED");
     const forbiddenDb = { collection: () => { throw new Error("Mongo must not be called"); } } as any;
     await expect(operationsMenuCategorySummaries(forbiddenDb, { id: "x", role: "RESTAURANT" } as any, "restaurant-a")).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
     await expect(operationsMenuCategory(forbiddenDb, { id: "x", role: "RIDER" } as any, "restaurant-a", "cat-001")).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
+  it("refuse les deux lectures HTTP d'un restaurant étranger, mais donne l'archive propre", async () => {
+    const token = await login("restaurant@category-ops");
+    for (const query of [
+      'query{operationsMenuCategorySummaries(restaurantId:"restaurant-b"){items{id}}}',
+      'query{operationsMenuCategory(restaurantId:"restaurant-b",id:"cat-other"){id}}',
+    ]) expect(code(await gql(query, {}, token))).toBe("FORBIDDEN");
+    const own = await gql('query{operationsMenuCategory(restaurantId:"restaurant-a",id:"cat-000"){id archived}}', {}, token);
+    expect(own.errors).toBeUndefined();
+    expect(own.data.operationsMenuCategory).toEqual({ id: "cat-000", archived: true });
+    const forbiddenDb = { collection: () => { throw new Error("Mongo must not be called"); } } as any;
+    const actor = { id: "owner", role: "RESTAURANT", restaurantId: "restaurant-a" } as any;
+    await expect(operationsMenuCategorySummaries(forbiddenDb, actor, "restaurant-b")).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    await expect(operationsMenuCategory(forbiddenDb, actor, "restaurant-b", "cat-other")).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+
 });
