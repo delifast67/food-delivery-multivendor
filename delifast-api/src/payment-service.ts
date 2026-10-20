@@ -3,7 +3,7 @@ import type { Db } from "mongodb";
 import { customerOrder } from "./orders.js";
 import { fail } from "./validation.js";
 
-import { validProviderPayment, type PaymentProvider, type PaymentChannel, type ProviderStatus } from "./payment-provider.js";
+import { PaymentNotificationUnavailable, validProviderPayment, type PaymentProvider, type PaymentChannel, type ProviderStatus } from "./payment-provider.js";
 export type { PaymentChannel, ProviderStatus } from "./payment-provider.js";
 /** Compatibility alias for existing server injection points, not a second contract. */
 export type CheckoutGateway = PaymentProvider;
@@ -260,7 +260,8 @@ export class PaymentService {
       );
     let checked: { status: ProviderStatus };
     try {
-      // The adapter checks hash AND token, amount, mode, merchant metadata.
+      // The adapter authenticates and binds its canonical result to the durable
+      // context/initialization receipt using its documented protocol.
       // IPN fields and return URLs are never a settlement authority.
       checked = await gateway.queryStatus({
         reference: p.token,
@@ -351,9 +352,11 @@ export class PaymentService {
     for (const gateway of candidates) {
       let reference: string;
       try {
-        reference = gateway.parseNotification(data).reference;
+        reference = (await gateway.parseNotification(data)).reference;
         if (typeof reference !== "string" || !/^[a-zA-Z0-9_-]{1,256}$/.test(reference)) continue;
-      } catch {
+      } catch (error) {
+        if (error instanceof PaymentNotificationUnavailable)
+          fail("PAYMENT_UNAVAILABLE", "Vérification de notification indisponible");
         continue;
       }
       const order = await orders.findOne({

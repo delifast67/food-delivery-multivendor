@@ -37,7 +37,7 @@ export interface PaymentProvider {
    * A browser return or notification payload alone is never settlement evidence. */
   queryStatus(input: PaymentContext & { reference: string }): Promise<{ status: ProviderStatus }>;
   /** Only authenticates/parses a hint. The service MUST subsequently queryStatus. */
-  parseNotification(data: unknown): { reference: string };
+  parseNotification(data: unknown): { reference: string } | Promise<{ reference: string }>;
   mobileValidation?: {
     /** Secrets are transient: never store/log OTP, PIN or authorization code. */
     submit(input: PaymentContext & {
@@ -56,6 +56,10 @@ export interface PaymentProvider {
       refundAmount: number;
     }): Promise<{ reference: string; status: "pending" | "refunded" | "failed" }>;
   };
+}
+/** Retryable verification infrastructure failure, never an authentication verdict. */
+export class PaymentNotificationUnavailable extends Error {
+  constructor() { super("Payment notification verification unavailable"); }
 }
 export function supportsMobileValidation(provider: PaymentProvider): boolean {
   return provider.capabilities.mobileValidation && typeof provider.mobileValidation?.submit === "function";

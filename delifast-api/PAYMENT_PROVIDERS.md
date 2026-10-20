@@ -4,7 +4,7 @@
 
 ## Une frontière serveur commune
 
-`src/payment-provider.ts` définit `PaymentProvider` : contexte de commande, tentative, montant entier XOF, pays BF, référence opaque, action et statut normalisé. `src/paydunya-provider.ts` adapte le client HTTP PayDunya à ce contrat ; `payment-gateway.ts` porte seulement le registre et la configuration (avec réexport compatible de l’adaptateur). Les factures, opérateurs distants et hash ne sortent pas de l’adaptateur.
+`src/payment-provider.ts` définit `PaymentProvider` : contexte de commande, tentative, montant entier XOF, pays BF, référence opaque, action et statut normalisé. `src/paydunya-provider.ts` et `src/cinetpay-provider.ts` adaptent leurs protocoles HTTP à ce contrat ; `payment-gateway.ts` porte seulement le registre et la configuration (avec réexport compatible de l’adaptateur). Les factures, opérateurs distants et hash ne sortent pas de l’adaptateur.
 
 `CheckoutGateway` est seulement un alias de compatibilité. `DemoPaymentContract` désigne la simulation locale séparée, jamais un prestataire externe ni une preuve de paiement.
 
@@ -16,7 +16,7 @@ Le montant affiché provient du snapshot de commande serveur ; aucun montant n�
 
 ## Changer de prestataire sans changer les applications
 
-`paymentProviderFactories` est le registre serveur. Pour ajouter CinetPay ou un autre prestataire, il faut **une première implémentation de son adaptateur**, son usine de configuration et son raccordement webhook si nécessaire, après validation de sa documentation et de son accès marchand. CinetPay n’est pas implémenté dans ce lot ; aucun test fictif n’est présenté comme une intégration CinetPay.
+`paymentProviderFactories` enregistre désormais PayDunya et CinetPay, tous deux désactivés dans les exemples. Le protocole CinetPay v1 et son webhook JSON sont implémentés avec transport stub uniquement ; cela ne constitue ni un compte activé ni une intégration homologuée. Tout autre prestataire demande encore un premier adaptateur. Voir [le contrat CinetPay](CINETPAY_CONTRACT.md), notamment les profils clients obligatoires manquants et la limite du GET sans montant/devise.
 
 Une fois l’adaptateur enregistré et compatible avec le parcours de redirection actuel, la bascule des **nouvelles tentatives** se fait par `PAYMENT_PROVIDER`, sans modifier commandes, états, montants, schéma GraphQL ou applications. Les secrets, le mode et les moyens réellement activés restent propres à chaque prestataire. Ajouter un nouveau moyen métier (par exemple carte) ou un parcours avec challenge peut nécessiter une évolution produit ; ce n’est pas promis comme une simple configuration.
 
@@ -25,7 +25,7 @@ Une fois l’adaptateur enregistré et compatible avec le parcours de redirectio
 - `gateway` : seul adaptateur autorisé à créer une nouvelle tentative ;
 - `reconciliationProviders` : adaptateurs conservés uniquement pour relire et solder des tentatives existantes.
 
-La variable `PAYMENT_RECONCILIATION_PROVIDERS` contient une liste de noms enregistrés séparés par des virgules, vide par défaut. Exemple de **future bascule, non activable aujourd’hui tant que l’adaptateur CinetPay n’existe pas** :
+La variable `PAYMENT_RECONCILIATION_PROVIDERS` contient une liste de noms enregistrés séparés par des virgules, vide par défaut. Exemple de **future sélection, à ne pas activer avant autorisation et satisfaction des prérequis du contrat CinetPay** :
 
 ```dotenv
 PAYMENT_PROVIDER=cinetpay
@@ -48,7 +48,7 @@ Les IPN répétées peuvent déclencher plusieurs lectures authentifiées, mais 
 
 ## Activation fermée et secrets serveur
 
-`PAYMENT_PROVIDER` et `PAYMENT_RECONCILIATION_PROVIDERS` restent vides dans `.env.example`. PayDunya exige une sélection ou conservation explicite, `PAYDUNYA_ENABLED=true`, mode explicite, clés et URL HTTPS valides. Le mode live exige en plus `PAYDUNYA_LIVE_AUTHORIZED=true`. Ces variables ne prouvent pas l’accord commercial ni l’autorisation de production. Le verrou `NODE_ENV=production` reste inchangé.
+`PAYMENT_PROVIDER` et `PAYMENT_RECONCILIATION_PROVIDERS` restent vides dans `.env.example`. PayDunya exige une sélection ou conservation explicite, `PAYDUNYA_ENABLED=true`, mode explicite, clés et URL HTTPS valides. Le mode live exige en plus `PAYDUNYA_LIVE_AUTHORIZED=true`. CinetPay exige également sa sélection/conservation explicite, `CINETPAY_ENABLED=true`, son mode, ses identifiants serveur v1, des URL HTTPS ≤120 caractères et, en live, `CINETPAY_LIVE_AUTHORIZED=true`. Un profil client réel complet doit exister côté serveur avant création. Ces variables ne prouvent pas l’accord commercial ni l’autorisation de production. Le verrou `NODE_ENV=production` reste inchangé.
 
 Toute configuration non vide de sélection ou de rapprochement bloque la simulation locale, même invalide. La simulation reste désactivée par défaut et interdite pour toute commande ayant déjà une tentative externe.
 
@@ -58,11 +58,11 @@ Selon la [documentation officielle PayDunya](https://developers.paydunya.com/doc
 
 | Capacité | Contrat | Disponibilité actuelle |
 |---|---|---|
-| Redirection hébergée | `redirect` vers HTTPS | Adaptateur PayDunya, URL/mode/jeton contrôlés |
-| Notification | `parseNotification`, puis `queryStatus` obligatoire | IPN PayDunya formulaire, hash SHA-512, confirmation authentifiée |
+| Redirection hébergée | `redirect` vers HTTPS | PayDunya et CinetPay, URL/origine/mode contrôlés |
+| Notification | `parseNotification`, puis `queryStatus` obligatoire | PayDunya formulaire/hash ; CinetPay JSON/jeton par paiement ; puis GET authentifié obligatoire |
 | Statut serveur | `queryStatus` lié au contexte persisté | Obligatoire pour le parcours actuel |
 | Validation mobile / attente | `mobile_validation`, `wait` | Types réservés, pas de flux client exécuté |
-| Remboursement | Extension optionnelle, capacités vérifiées | Aucun remboursement exécutable ; PayDunya déclare `false` |
+| Remboursement | Extension optionnelle, capacités vérifiées | Aucun remboursement exécutable ; les deux déclarent `false` |
 
 Une capacité absente est refusée avant tout appel. Une réponse inattendue après création potentielle devient `UNKNOWN`. `REFUND_PENDING` reste un besoin métier, pas un remboursement effectué. Aucun PIN, OTP ou code d’autorisation n’est stocké ni journalisé par ce parcours.
 
@@ -72,6 +72,6 @@ Dans `delifast-api` : `npm run typecheck`, `npm run build`, `npm test`. Les test
 
 La recette `node scripts/delifast-payment-smoke.mjs` (après compilation de l’API) exerce le contrat GraphQL par HTTP et MongoDB éphémère, uniquement avec un adaptateur local : montant serveur, concurrence, reprise, erreurs, attente, sandbox non payant et indisponibilité. Elle ferme ses serveurs et connexions avant de terminer ; aucun accès marchand ni appel PayDunya n’est nécessaire. Elle est incluse dans la CI locale.
 
-Les erreurs publiques restent neutres : `PAYMENT_DISABLED` (création indisponible), `PAYMENT_NOT_ALLOWED`, `IDEMPOTENCY_CONFLICT`, `PAYMENT_IN_PROGRESS`, `PAYMENT_REVIEW_REQUIRED`, `PAYMENT_UNAVAILABLE`, `INVALID_IPN`. Les erreurs du transport n’exposent ni clés ni réponse fournisseur brute. La route PayDunya conserve 400 pour IPN invalide, 503 pour confirmation indisponible, 415 pour mauvais format.
+Les erreurs publiques restent neutres : `PAYMENT_DISABLED` (création indisponible), `PAYMENT_NOT_ALLOWED`, `IDEMPOTENCY_CONFLICT`, `PAYMENT_IN_PROGRESS`, `PAYMENT_REVIEW_REQUIRED`, `PAYMENT_UNAVAILABLE`, `INVALID_IPN`. Les erreurs du transport n’exposent ni clés ni réponse fournisseur brute. Les routes PayDunya et CinetPay répondent 400 pour IPN invalide, 503 pour confirmation indisponible, 415 pour mauvais format ; le webhook CinetPay est limité à 16 Kio. CinetPay authentifie la notification par comparaison en temps constant du digest de `notify_token`, jamais par ancien HMAC `X-TOKEN`. Son registre privé lie l’initialisation authentifiée au snapshot car le GET documenté n’atteste pas indépendamment montant/devise.
 
-Ce code n’est pas une homologation : aucun appel PayDunya observé, aucun droit marchand vérifié, aucun paiement réel, aucune fusion ni aucun déploiement.
+Ce code n’est pas une homologation : aucun appel PayDunya ou CinetPay effectué, aucun droit marchand vérifié, aucun paiement réel, aucune fusion ni aucun déploiement.

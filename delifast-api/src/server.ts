@@ -350,6 +350,27 @@ export async function createApp(
   await apollo.start();
   const app = express();
   app.disable("x-powered-by");
+  app.post(
+    "/payments/cinetpay/ipn",
+    rateLimit(),
+    (req, res, next) => {
+      if (!req.is("application/json")) {
+        res.status(415).json({ error: "INVALID_IPN" });
+        return;
+      }
+      next();
+    },
+    express.json({ limit: 16_384, strict: true }),
+    async (req, res) => {
+      try {
+        await payments.notification("cinetpay", req.body);
+        res.status(200).json({ received: true });
+      } catch (error: any) {
+        const status = error?.extensions?.code === "INVALID_IPN" ? 400 : 503;
+        res.status(status).json({ error: status === 400 ? "INVALID_IPN" : "PAYMENT_UNAVAILABLE" });
+      }
+    },
+  );
   app.use(express.json({ limit: config.maxBody }));
   const ipnParserOptions = {
     extended: true,

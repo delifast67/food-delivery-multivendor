@@ -1,5 +1,9 @@
 import { loadPayDunyaConfig, PayDunyaClient } from "./paydunya.js";
 import { payDunyaProvider } from "./paydunya-provider.js";
+import { CinetPayClient, loadCinetPayConfig } from "./cinetpay.js";
+import { cinetPayProvider } from "./cinetpay-provider.js";
+import { mongoCinetPayStore } from "./cinetpay-store.js";
+import { getDb } from "./db.js";
 import type { PaymentProvider } from "./payment-provider.js";
 
 // Compatibility export: the adapter itself lives outside the provider registry.
@@ -11,6 +15,10 @@ export const paymentProviderFactories: Readonly<Record<string, PaymentProviderFa
   paydunya: (env) => {
     const config = loadPayDunyaConfig(env);
     return config.enabled ? payDunyaProvider(new PayDunyaClient(config)) : undefined;
+  },
+  cinetpay: (env) => {
+    const config = loadCinetPayConfig(env);
+    return config.enabled ? cinetPayProvider(new CinetPayClient(config), mongoCinetPayStore(getDb)) : undefined;
   },
 });
 
