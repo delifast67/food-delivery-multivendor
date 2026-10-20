@@ -52,10 +52,17 @@ function session(order: any) {
 }
 
 export class PaymentService {
+  private readonly providers: readonly PaymentProvider[];
+
   constructor(
     private readonly db: Db,
     private readonly gateway?: CheckoutGateway,
-  ) {}
+    historicalProviders: readonly PaymentProvider[] = [],
+  ) {
+    // The current gateway is the only provider allowed to create a new
+    // attempt. Historical adapters are only a reconciliation registry.
+    this.providers = gateway ? [gateway, ...historicalProviders] : [...historicalProviders];
+  }
 
   private enabled(): CheckoutGateway {
     if (!this.gateway)
@@ -63,12 +70,23 @@ export class PaymentService {
         "PAYMENT_DISABLED",
         "Paiement indisponible : configuration serveur requise",
       );
+    if (this.resolve(this.gateway.id, this.gateway.mode) !== this.gateway)
+      fail("PAYMENT_REVIEW_REQUIRED", "Configuration prestataire ambiguë");
     return this.gateway;
   }
+  private resolve(provider: unknown, mode: unknown): PaymentProvider | undefined {
+    const matches = this.providers.filter(
+      (candidate) => candidate.id === provider && candidate.mode === mode,
+    );
+    // Duplicate identities are deliberately ambiguous: never guess an
+    // adapter, even when implementations happen to be equivalent.
+    return matches.length === 1 ? matches[0] : undefined;
+  }
   private bound(attempt: any): PaymentProvider {
-    const gateway = this.enabled();
     // Legacy unbound attempts require manual reconciliation, never inference.
-    if (!attempt || attempt.provider !== gateway.id || attempt.mode !== gateway.mode)
+    if (this.providers.length === 0) this.enabled();
+    const gateway = this.resolve(attempt?.provider, attempt?.mode);
+    if (!gateway)
       fail("PAYMENT_REVIEW_REQUIRED", "Prestataire de la tentative non disponible : rapprochement requis");
     return gateway;
   }
@@ -80,19 +98,18 @@ export class PaymentService {
   }
   async getSession(orderId: string, accessToken: string) {
     const order = await this.owned(orderId, accessToken);
-    // A disabled gateway must not continue offering a stale checkout link.
-    this.enabled();
+    // An old checkout is usable only while its original adapter is retained.
     if (order.paymentAttempt) this.bound(order.paymentAttempt);
+    else this.enabled();
     return order.paymentAttempt ? session(order) : null;
   }
-  private replay(order: any, input: PaymentInput, gateway: CheckoutGateway) {
+  private replay(order: any, input: PaymentInput) {
     const p = order.paymentAttempt;
     this.bound(p);
     if (
       !p ||
       p.key !== input.idempotencyKey ||
-      p.channel !== input.channel ||
-      p.mode !== gateway.mode
+      p.channel !== input.channel
     )
       fail(
         "IDEMPOTENCY_CONFLICT",
@@ -118,8 +135,8 @@ export class PaymentService {
       !/^[a-zA-Z0-9_-]{8,128}$/.test(input.idempotencyKey)
     )
       fail("INVALID_INPUT", "Canal ou clé de paiement invalide");
+    if (order.paymentAttempt) return this.replay(order, input);
     const gateway = this.enabled();
-    if (order.paymentAttempt) return this.replay(order, input, gateway);
     // Existing client contract is redirect-only. Other flows remain extension points.
     if (!gateway.capabilities.redirect || !gateway.capabilities.statusQuery ||
       !gateway.capabilities.channels.includes(input.channel))
@@ -165,7 +182,7 @@ export class PaymentService {
     if (!claimed) {
       const concurrent = await this.owned(input.orderId, input.accessToken);
       if (concurrent.paymentAttempt)
-        return this.replay(concurrent, input, gateway);
+        return this.replay(concurrent, input);
       fail("CONCURRENT_MODIFICATION", "Commande modifiée, rechargez son état");
     }
     try {
@@ -319,22 +336,35 @@ export class PaymentService {
     return this.reconcile(await this.owned(orderId, accessToken));
   }
   async notification(providerId: string, data: unknown) {
-    const gateway = this.enabled();
-    if (providerId !== gateway.id || !gateway.capabilities.notification || !gateway.capabilities.statusQuery)
+    // A provider id is not a mode. Parse with every registered adapter for
+    // that id, then let the durable attempt's provider+mode identify exactly
+    // one adapter. This supports old live/test attempts without guessing.
+    if (this.providers.length === 0) this.enabled();
+    const candidates = this.providers.filter(
+      (provider) => provider.id === providerId &&
+        provider.capabilities.notification && provider.capabilities.statusQuery,
+    );
+    if (candidates.length === 0)
       fail("INVALID_IPN", "Notification non disponible");
-    let reference: string;
-    try {
-      reference = gateway.parseNotification(data).reference;
-      if (typeof reference !== "string" || !/^[a-zA-Z0-9_-]{1,256}$/.test(reference)) throw new Error();
-    } catch {
-      fail("INVALID_IPN", "Notification invalide");
+    const orders = this.db.collection<any>("orders");
+    const matches: any[] = [];
+    for (const gateway of candidates) {
+      let reference: string;
+      try {
+        reference = gateway.parseNotification(data).reference;
+        if (typeof reference !== "string" || !/^[a-zA-Z0-9_-]{1,256}$/.test(reference)) continue;
+      } catch {
+        continue;
+      }
+      const order = await orders.findOne({
+        "paymentAttempt.token": reference,
+        "paymentAttempt.provider": gateway.id,
+        "paymentAttempt.mode": gateway.mode,
+      });
+      if (order) matches.push(order);
     }
-    const order = await this.db.collection<any>("orders").findOne({
-      "paymentAttempt.token": reference,
-      "paymentAttempt.provider": gateway.id,
-      "paymentAttempt.mode": gateway.mode,
-    });
-    if (!order) fail("INVALID_IPN", "Notification non reconnue");
+    if (matches.length !== 1) fail("INVALID_IPN", "Notification non reconnue");
+    const order = matches[0];
     // Notifications are hints, including authenticated ones: always re-query.
     await this.reconcile(order);
     return true;

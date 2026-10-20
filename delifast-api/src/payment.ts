@@ -15,6 +15,7 @@ export function getPaymentProvider(): DemoPaymentContract | undefined {
   return process.env.DELIFAST_DEMO_PAYMENTS === "true" &&
     process.env.NODE_ENV !== "production" &&
     !process.env.PAYMENT_PROVIDER &&
+    !process.env.PAYMENT_RECONCILIATION_PROVIDERS &&
     process.env.PAYDUNYA_ENABLED !== "true"
     ? new DemoPaymentProvider()
     : undefined;

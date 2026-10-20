@@ -2,9 +2,9 @@
 
 ## Ce qui est prêt — et ce qui ne l’est pas
 
-Le [contrat neutre PaymentProvider](PAYMENT_PROVIDERS.md) sépare désormais le métier des détails PayDunya. Toute activation exige une sélection explicite `PAYMENT_PROVIDER=paydunya` en plus des variables ci-dessous ; ce nom ne constitue pas le choix recommandé ou définitif. Les tentatives historiques sans `provider` exigent un rapprochement avant réutilisation.
+Le [contrat neutre PaymentProvider](PAYMENT_PROVIDERS.md) sépare le métier des détails PayDunya. Hilton a choisi PayDunya comme premier prestataire, sans exclusivité : un autre adaptateur enregistré pourra être sélectionné par configuration serveur, sans changer les commandes ni les applications. L’activation reste interdite dans ce lot. Les tentatives historiques sans `provider` exigent un rapprochement avant réutilisation.
 
-Cette intégration est une option technique préparée, pas une obligation de prestataire ou de paiement exclusivement numérique. Le choix des moyens de paiement et la gouvernance des comptes administrateurs ne sont pas imposés par ce contrat.
+Cette intégration ne constitue pas une obligation de prestataire ou de paiement exclusivement numérique. Le choix des moyens de paiement et la gouvernance des comptes administrateurs ne sont pas imposés par ce contrat.
 
 Le backend sait préparer un checkout PayDunya pour une commande en XOF, retrouver la même tentative après une coupure, recevoir une IPN et revérifier la facture côté serveur. Les deux canaux ciblent le Burkina Faso : `orange-money-burkina` et `moov-burkina-faso`. Le client ne calcule pas le montant à encaisser et ne reçoit aucune clé marchand.
 
@@ -62,11 +62,11 @@ Les variables figurent dans [`.env.example`](.env.example), sans valeur secrète
 
 Pour une future activation, il faudra un compte PayDunya Business activé, la confirmation des canaux Burkina effectivement disponibles, les clés propres au mode choisi et trois URL HTTPS contrôlées par Delifast. Les clés doivent être collectées via le formulaire sécurisé Cue puis installées seulement sur le serveur, jamais dans le chat, Git, Expo ou Next.js public. Ne pas demander ces secrets pour exécuter les mocks : ils sont inutiles à ce stade.
 
-`PAYMENT_PROVIDER=paydunya` et `PAYDUNYA_ENABLED=true`, avec une configuration complète, sont nécessaires ensemble pour activer cet adaptateur. Aucune de ces valeurs ne doit être activée pour ce lot. Le mode live exige en plus `PAYDUNYA_LIVE_AUTHORIZED=true`, qui est un verrou de configuration, pas une preuve d’autorisation commerciale. Ne pas les activer sans accord. La simulation locale est interdite si un `PAYMENT_PROVIDER` non vide est configuré ou si PayDunya est activé, si l’environnement est de production, ou si la commande porte déjà une tentative fournisseur.
+`PAYMENT_PROVIDER=paydunya` et `PAYDUNYA_ENABLED=true`, avec une configuration complète, sont nécessaires ensemble pour créer via cet adaptateur. Après une future bascule, `PAYMENT_RECONCILIATION_PROVIDERS=paydunya` permet de conserver l’adaptateur pour les anciennes tentatives seulement, avec ses accès et son mode d’origine. Aucun adaptateur conservé n’est un fallback de création. Ces sélections restent vides et PayDunya désactivé pour ce lot. Le mode live exige en plus `PAYDUNYA_LIVE_AUTHORIZED=true`, verrou technique et non preuve d’autorisation commerciale. La simulation locale est interdite si une sélection ou liste de rapprochement non vide est configurée, si PayDunya est activé, en production ou pour une commande ayant une tentative fournisseur.
 
 Avant toute recette sandbox externe, demander une nouvelle autorisation : aucun endpoint de création, même test, ne doit être appelé dans le cadre du présent lot. Avant la production, il faut aussi une autorisation de déploiement et de paiement réel, la préparation d’un environnement serveur durci et une recette de bout en bout. Le retrait du verrou `NODE_ENV=production` n’est pas réalisé ici.
 
-Si l’option PayDunya est retenue, le reversement aux restaurants/livreurs, les commissions, les remboursements, les frais effectifs et la responsabilité du compte collecteur restent à valider avec PayDunya et Hilton. Aucun retrait ni reversement n’est implémenté ; aucune hypothèse de disponibilité de l’API de redistribution n’est faite.
+PayDunya étant retenu comme premier prestataire, le reversement aux restaurants/livreurs, les commissions, les remboursements, les frais effectifs et la responsabilité du compte collecteur restent à valider avec PayDunya et Hilton. Aucun retrait ni reversement n’est implémenté ; aucune hypothèse de disponibilité de l’API de redistribution n’est faite.
 
 ## Vérification locale
 

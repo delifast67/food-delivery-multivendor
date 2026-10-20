@@ -1,6 +1,6 @@
 # Delifast API v1
 
-API GraphQL locale autonome, sans appel Enatega. Les montants sont des entiers XOF. Aucun prestataire n’est choisi par défaut. Le [contrat neutre PaymentProvider](PAYMENT_PROVIDERS.md) décrit les capacités, la persistance et les options encore ouvertes. PayDunya reste désactivé par défaut ; ce lot n’a créé aucun paiement, même sandbox. Le [contrat PayDunya](PAYDUNYA_CONTRACT.md) décrit l’adaptateur Orange Money/Moov Money Burkina, les sources officielles, les garanties et les autorisations encore nécessaires. L’API conserve son verrou anti-production.
+API GraphQL locale autonome, sans appel Enatega. Les montants sont des entiers XOF. **PayDunya est choisi comme premier prestataire, mais reste désactivé par défaut.** Le [contrat neutre PaymentProvider](PAYMENT_PROVIDERS.md) décrit le registre extensible et la bascule par configuration vers un futur adaptateur, sans changer les commandes ni les applications. Les anciennes tentatives gardent leur prestataire pour leur confirmation. Ce lot n’a créé aucun paiement, même sandbox. Le [contrat PayDunya](PAYDUNYA_CONTRACT.md) décrit les sources officielles, les garanties et les autorisations encore nécessaires. L’API conserve son verrou anti-production.
 
 ## Démarrage
 
@@ -29,11 +29,11 @@ SDL versionnée : [`schema/v1.graphql`](schema/v1.graphql). HTTP : `POST /graphq
 
 ## Paiement de démonstration
 
-`simulateDemoPayment` est disponible uniquement pour un admin lorsque `DELIFAST_DEMO_PAYMENTS=true`, hors production, sans `PAYMENT_PROVIDER` sélectionné, avec PayDunya désactivé et sans tentative fournisseur sur la commande. `DemoPaymentContract` et `DemoPaymentProvider` sont dans [`src/payment.ts`](src/payment.ts). Cette simulation locale ne contacte aucun fournisseur et ne prouve aucun encaissement.
+`simulateDemoPayment` est disponible uniquement pour un admin lorsque `DELIFAST_DEMO_PAYMENTS=true`, hors production, sans sélection ni liste `PAYMENT_RECONCILIATION_PROVIDERS` configurée, avec PayDunya désactivé et sans tentative fournisseur sur la commande. `DemoPaymentContract` et `DemoPaymentProvider` sont dans [`src/payment.ts`](src/payment.ts). Cette simulation locale ne contacte aucun fournisseur et ne prouve aucun encaissement.
 
 ## Paiement PayDunya (préparation, désactivée)
 
-L’adaptateur exige `PAYMENT_PROVIDER=paydunya` en plus de sa configuration complète ; aucune activation n’est effectuée ici. `startPayment`, `paymentSession` et `refreshPayment` exigent le jeton client de la commande. `POST /payments/paydunya/ipn` reçoit les notifications en formulaire et les fait revérifier par l’API authentifiée avant toute confirmation financière. Une création ambiguë n’est jamais réessayée automatiquement. Une confirmation en mode test ne passe jamais la commande en `PAID`. Aucun écran checkout n’est encore relié au web/mobile. Voir le [contrat complet et les limites](PAYDUNYA_CONTRACT.md).
+L’adaptateur exige `PAYMENT_PROVIDER=paydunya` et sa configuration complète pour les nouvelles créations ; aucune activation n’est effectuée ici. `PAYMENT_RECONCILIATION_PROVIDERS=paydunya` permet de le conserver pour les seules anciennes tentatives après une future bascule. `startPayment`, `paymentSession` et `refreshPayment` exigent le jeton client de la commande. `POST /payments/paydunya/ipn` reçoit les notifications en formulaire et les fait revérifier par l’API authentifiée avant toute confirmation financière. Une création ambiguë n’est jamais réessayée automatiquement. Une confirmation en mode test ne passe jamais la commande en `PAID`. Aucun écran checkout n’est encore relié au web/mobile. Voir le [contrat complet et les limites](PAYDUNYA_CONTRACT.md).
 
 ## Vérification
 

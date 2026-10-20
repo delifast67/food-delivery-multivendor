@@ -140,6 +140,30 @@ afterAll(async () => {
 });
 
 describe("payment GraphQL API", () => {
+  it("retains PayDunya HTTP notifications after selecting a different local fixture adapter", async () => {
+    await call(startMutation, { i: startInput() });
+    const current = new GatewayMock("live");
+    Object.defineProperty(current, "id", { value: "alternative-fixture" });
+    const switched = await (await import("../src/server.js")).createApp(current, undefined, [gateway]);
+    gateway.confirmStatus = "completed";
+    const form = new URLSearchParams({
+      "data[hash]": "valid-fixture-hash",
+      "data[invoice][token]": "provider-token-fixture",
+      "data[status]": "failed", // A hint must never override authenticated status.
+    });
+    for (let i = 0; i < 2; i++) {
+      const response = await request(switched).post("/payments/paydunya/ipn").type("form").send(form.toString());
+      expect(response.status).toBe(200);
+    }
+    expect(gateway.confirms).toHaveLength(2);
+    expect(current.confirms).toHaveLength(0);
+    expect(current.creates).toHaveLength(0);
+    const stored = await db.collection("orders").findOne({ id: ORDER });
+    expect(stored?.paymentStatus).toBe("PAID");
+    expect(stored?.history).toHaveLength(1);
+    expect(stored?.paymentAttempt.provider).toBe("paydunya");
+  });
+
   it("rejects a bad startPayment token as ORDER_NOT_FOUND", async () => {
     const response = await call(startMutation, {
       i: startInput({ accessToken: "wrong-access-token-123456" }),

@@ -8,7 +8,7 @@ import { connect, getDb } from "./db.js";
 import { config } from "./config.js";
 import { normalizeAddress, normalizeCart } from "./validation.js";
 import { PaymentService, type CheckoutGateway } from "./payment-service.js";
-import { createPaymentGateway } from "./payment-gateway.js";
+import { createPaymentGateway, createPaymentConfiguration } from "./payment-gateway.js";
 import { calculateCheckout } from "./pricing.js";
 import {
   placeOrder,
@@ -308,9 +308,10 @@ const resolvers: any = {
 export async function createApp(
   gateway: CheckoutGateway | undefined = createPaymentGateway(),
   otpProvider: SmsProvider = createSmsProvider(),
+  reconciliationProviders: readonly CheckoutGateway[] = createPaymentConfiguration().reconciliationProviders,
 ) {
   await connect();
-  const payments = new PaymentService(getDb(), gateway);
+  const payments = new PaymentService(getDb(), gateway, reconciliationProviders);
   const apollo = new ApolloServer({
     typeDefs,
     resolvers,

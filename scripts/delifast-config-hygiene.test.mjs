@@ -48,7 +48,7 @@ test('examples contain no populated server credentials or enabled real providers
       if (/(?:SECRET|PASSWORD|PRIVATE_KEY|MASTER_KEY|TOKEN|HASH_KEY|CLIENT_ID)$/.test(key)) {
         assert.ok(value === '', `${path}: ${key} must be empty`);
       }
-      if (/^(?:PAYMENT_PROVIDER|SMS_PROVIDER)$/.test(key)) assert.ok(value === '', `${path}: provider must be unset`);
+      if (/^(?:PAYMENT_PROVIDER|PAYMENT_RECONCILIATION_PROVIDERS|SMS_PROVIDER)$/.test(key)) assert.ok(value === '', `${path}: provider must be unset`);
       if (/^(?:PAYDUNYA_ENABLED|PAYDUNYA_LIVE_AUTHORIZED|ORANGE_SMS_ENABLED|DELIFAST_DEMO_PAYMENTS)$/.test(key)) {
         assert.ok(value === 'false', `${path}: ${key} must be disabled`);
       }

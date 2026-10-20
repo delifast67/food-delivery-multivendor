@@ -208,4 +208,16 @@ describe("payment provider boundary (fixtures mémoire uniquement)", () => {
     expect(validProviderPayment({ reference: "tok", action: { kind: "wait" } })).toBe(false);
     expect(validProviderPayment({ reference: "tok", action: { kind: "mobile_validation", challengeReference: "c", expiresAt: "x" } })).toBe(false);
   });
+
+  it("rejette pays, devise ou canal incompatibles avant le moindre transport", async () => {
+    const transport = vi.fn(async () => response({}));
+    const provider = payDunyaProvider(new PayDunyaClient(loadPayDunyaConfig(completeEnv()), transport));
+    for (const patch of [{ currency: "USD" }, { country: "SN" }, { channel: "CARD" }]) {
+      await expect(provider.createPayment({ ...paymentContext, channel: "ORANGE_MONEY_BF", ...patch } as any)).rejects.toThrow("Invalid payment context");
+    }
+    for (const patch of [{ currency: "USD" }, { country: "SN" }]) {
+      await expect(provider.queryStatus({ ...paymentContext, reference: "tok", ...patch } as any)).rejects.toThrow("Invalid payment context");
+    }
+    expect(transport).not.toHaveBeenCalled();
+  });
 });

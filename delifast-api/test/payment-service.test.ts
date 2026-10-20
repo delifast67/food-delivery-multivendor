@@ -31,7 +31,7 @@ const input = (extra: any = {}) => ({
 
 // Non-paying in-process transport; this fixture never accesses a provider API.
 class GatewayMock implements CheckoutGateway {
-  readonly id: string = "paydunya";
+  readonly id: string;
   readonly capabilities = {
     channels: ["ORANGE_MONEY_BF", "MOOV_MONEY_BF"] as const,
     redirect: true, mobileValidation: false, notification: true,
@@ -54,8 +54,9 @@ class GatewayMock implements CheckoutGateway {
   confirms: any[] = [];
   createImpl?: (x: any) => Promise<any>;
   confirmImpl: (x: any) => Promise<any> = async () => ({ status: "pending" });
-  constructor(mode: "test" | "live" = "test") {
+  constructor(mode: "test" | "live" = "test", id = "paydunya") {
     this.mode = mode;
+    this.id = id;
   }
   async createInvoice(x: any) {
     this.creates.push(x);
@@ -350,6 +351,70 @@ describe("PaymentService — refresh, CAS and IPN", () => {
 
 
 describe("PaymentProvider — provider binding and fail-closed capabilities", () => {
+  it("solde l'ancien prestataire sans autoriser de nouvelles créations", async () => {
+    const retained = new GatewayMock("live", "old-provider");
+    await new PaymentService(db, retained).start(input());
+    const service = new PaymentService(db, undefined, [retained]);
+    expect(await service.getSession(ORDER, TOKEN)).toMatchObject({ phase: "READY" });
+    expect(await service.start(input())).toMatchObject({ phase: "READY" });
+    expect(await service.refresh(ORDER, TOKEN)).toMatchObject({ paymentStatus: "PENDING" });
+    retained.confirmImpl = async () => ({ status: "completed" });
+    await service.notification("old-provider", {
+      hash: "valid-fixture-hash", invoice: { token: "provider-token-1" },
+    });
+    expect((await db.collection("orders").findOne({ id: ORDER }))!.paymentStatus).toBe("PAID");
+    await db.collection("orders").insertOne(base({ id: "order-payment-2" }));
+    expect(await code(service.start(input({ orderId: "order-payment-2" })))).toBe("PAYMENT_DISABLED");
+    expect(retained.creates).toHaveLength(1);
+  });
+
+  it("refuse une identité ambiguë avant toute réservation de nouvelle tentative", async () => {
+    const selected = new GatewayMock();
+    const service = new PaymentService(db, selected, [new GatewayMock()]);
+    expect(await code(service.start(input()))).toBe("PAYMENT_REVIEW_REQUIRED");
+    expect(selected.creates).toHaveLength(0);
+    expect((await db.collection("orders").findOne({ id: ORDER }))!.paymentAttempt).toBeUndefined();
+  });
+
+  it("sélectionne le gateway courant pour une nouvelle commande sans rebinder l'ancienne", async () => {
+    const oldProvider = new GatewayMock("live", "old-provider");
+    await new PaymentService(db, oldProvider).start(input());
+    await db.collection("orders").insertOne(base({ id: "order-payment-2" }));
+    const current = new GatewayMock("live", "new-provider");
+    const service = new PaymentService(db, current, [oldProvider]);
+    expect((await service.start(input())).mode).toBe("live");
+    expect(oldProvider.creates).toHaveLength(1);
+    await service.start(input({ orderId: "order-payment-2" }));
+    expect(current.creates).toHaveLength(1);
+    expect(current.creates[0].orderId).toBe("order-payment-2");
+  });
+
+  it("reconfirme les anciennes notifications via leur adaptateur d'origine et reste idempotent", async () => {
+    const oldProvider = new GatewayMock("live", "old-provider");
+    await new PaymentService(db, oldProvider).start(input());
+    oldProvider.confirmImpl = async () => ({ status: "completed" });
+    const current = new GatewayMock("live", "new-provider");
+    const service = new PaymentService(db, current, [oldProvider]);
+    const notification = { hash: "valid-fixture-hash", invoice: { token: "provider-token-1" } };
+    await expect(service.notification("old-provider", notification)).resolves.toBe(true);
+    await expect(service.notification("old-provider", notification)).resolves.toBe(true);
+    expect(oldProvider.confirms).toHaveLength(2);
+    expect(current.confirms).toHaveLength(0);
+    expect((await db.collection("orders").findOne({ id: ORDER }))!.paymentStatus).toBe("PAID");
+  });
+
+  it("refuse le mauvais mode et toute identité provider+mode ambiguë", async () => {
+    const live = new GatewayMock("live", "old-provider");
+    await new PaymentService(db, live).start(input());
+    const wrongMode = new PaymentService(db, new GatewayMock("live", "new-provider"), [new GatewayMock("test", "old-provider")]);
+    expect(await code(wrongMode.refresh(ORDER, TOKEN))).toBe("PAYMENT_REVIEW_REQUIRED");
+    const duplicate = new PaymentService(db, live, [new GatewayMock("live", "old-provider")]);
+    expect(await code(duplicate.refresh(ORDER, TOKEN))).toBe("PAYMENT_REVIEW_REQUIRED");
+    expect(await code(duplicate.notification("old-provider", {
+      hash: "valid-fixture-hash", invoice: { token: "provider-token-1" },
+    }))).toBe("INVALID_IPN");
+  });
+
   it("persiste provider/mode/devise avant transport et reprend après redémarrage", async () => {
     const g = new GatewayMock();
     g.createImpl = async () => {
