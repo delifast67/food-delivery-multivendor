@@ -67,6 +67,11 @@ beforeEach(() => {
   details = vi
     .spyOn(delifastApi, "operationsRestaurant")
     .mockImplementation(async (_t, id) => restaurant(id, id));
+  vi.spyOn(delifastApi, "operationsMenuCategorySummaries").mockResolvedValue({
+    items: [],
+    nextCursor: null,
+  });
+  vi.spyOn(delifastApi, "operationsMenuCategory").mockResolvedValue(null);
   menuSummaries = vi
     .spyOn(delifastApi, "operationsMenuItemSummaries")
     .mockResolvedValue({ items: [], nextCursor: null });

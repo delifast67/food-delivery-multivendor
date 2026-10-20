@@ -101,6 +101,15 @@ beforeEach(() => {
     .mockImplementation(async (_token, id) =>
       id === "r1" ? makeRestaurant() : null,
     );
+  vi.spyOn(delifastApi, "operationsMenuCategorySummaries").mockImplementation(
+    async (_token, id) => ({
+      items: id === "r1" ? [{ id: "cat1", name: "Plats fictifs", sortOrder: 2, archived: false, version: 3 }] : [],
+      nextCursor: null,
+    }),
+  );
+  vi.spyOn(delifastApi, "operationsMenuCategory").mockImplementation(
+    async (_token, _restaurantId, id) => makeRestaurant().categories?.find((c) => c.id === id) ?? null,
+  );
   vi.spyOn(delifastApi, "createMenuItem").mockResolvedValue({
     ...item,
     id: "m3",
@@ -270,7 +279,7 @@ describe("Catalogue", () => {
       nextCursor: null,
     }));
     await renderCatalogue(adminUser);
-    fireEvent.click(screen.getByRole("button", { name: "Modifier" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Modifier" }).at(-1)!);
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Enregistrer (version 4)" }),

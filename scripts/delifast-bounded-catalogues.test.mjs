@@ -42,6 +42,19 @@ test('le catalogue admin Web ne recharge pas tous les plats depuis un profil ou 
   assert.match(ui, /delifastApi\.operationsMenuItem\(/);
 });
 
+test('les résumés catégories sont bornés, projetés et utilisent le nouvel index de portée', () => {
+  const catalog = readFileSync(new URL('../delifast-api/src/catalog.ts', import.meta.url), 'utf8');
+  const block = catalog.slice(catalog.indexOf('export async function operationsMenuCategorySummaries('), catalog.indexOf('export async function operationsMenuCategory('));
+  assert.match(block, /projection: menuCategorySummaryProjection, maxTimeMS: 2000/);
+  assert.match(block, /hint\("menu_categories_restaurant_id"\)/);
+  assert.match(block, /limit\(\(limit as number\) \+ 1\)/);
+  for (const file of ['src/db.ts', 'migrations/index.ts']) {
+    const text = readFileSync(new URL('../delifast-api/' + file, import.meta.url), 'utf8');
+    assert.match(text, /name: "menu_categories_restaurant_id"/);
+    assert.match(text, /collection\("menu_categories"\)/);
+  }
+});
+
 test('les résumés des plats sont bornés et utilisent le nouvel index de portée', () => {
   const catalog = readFileSync(new URL('../delifast-api/src/catalog.ts', import.meta.url), 'utf8');
   const block = catalog.slice(catalog.indexOf('export async function operationsMenuItemSummaries('), catalog.indexOf('export async function operationsMenuItem('));

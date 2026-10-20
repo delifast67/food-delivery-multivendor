@@ -194,6 +194,78 @@ export async function operationsMenuItemSummaries(
   const items = rows.slice(0, limit as number).map(menuSummary);
   return { items, nextCursor: rows.length > (limit as number) ? items[items.length - 1].id : null };
 }
+export type MenuCategorySummaryPage = {
+  items: Array<{
+    id: string;
+    name: string;
+    sortOrder: number;
+    archived: boolean;
+    version: number;
+  }>;
+  nextCursor: string | null;
+};
+const menuCategorySummaryProjection = {
+  _id: 0,
+  id: 1,
+  name: 1,
+  sortOrder: 1,
+  archived: 1,
+  version: 1,
+};
+function menuCategorySummary(category: any) {
+  return {
+    id: category.id,
+    name: category.name,
+    sortOrder: category.sortOrder,
+    archived: category.archived === true,
+    version: Number.isInteger(category.version) ? category.version : 0,
+  };
+}
+export async function operationsMenuCategorySummaries(
+  db: Db,
+  user: Staff,
+  restaurantIdRaw: unknown,
+  limitRaw: unknown = 20,
+  afterRaw?: unknown,
+  categoryIdRaw?: unknown,
+): Promise<MenuCategorySummaryPage> {
+  if (user.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants");
+  const restaurantId = idOf(restaurantIdRaw, "restaurantId");
+  const limit = limitRaw == null ? 20 : limitRaw;
+  if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 50)
+    fail("INVALID_INPUT", "Limite invalide");
+  const after = afterRaw == null ? null : idOf(afterRaw, "after");
+  const categoryId = categoryIdRaw == null ? null : idOf(categoryIdRaw, "categoryId");
+  const filter: any = { restaurantId };
+  if (categoryId != null && after != null)
+    filter.$and = [{ id: categoryId }, { id: { $gt: after } }];
+  else if (categoryId != null) filter.id = categoryId;
+  else if (after != null) filter.id = { $gt: after };
+  const rows = await db.collection("menu_categories")
+    .find(filter, { projection: menuCategorySummaryProjection, maxTimeMS: 2000 })
+    .sort({ id: 1 })
+    .hint("menu_categories_restaurant_id")
+    .limit((limit as number) + 1)
+    .toArray();
+  const items = rows.slice(0, limit as number).map(menuCategorySummary);
+  return { items, nextCursor: rows.length > (limit as number) ? items[items.length - 1].id : null };
+}
+export async function operationsMenuCategory(
+  db: Db,
+  user: Staff,
+  restaurantIdRaw: unknown,
+  idRaw: unknown,
+) {
+  if (user.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants");
+  const restaurantId = idOf(restaurantIdRaw, "restaurantId");
+  const id = idOf(idRaw, "id");
+  const category = await db.collection("menu_categories").findOne(
+    { restaurantId, id },
+    { projection: { _id: 0, id: 1, name: 1, sortOrder: 1, archived: 1, version: 1 }, maxTimeMS: 2000 },
+  );
+  return category ? categoryView(category) : null;
+}
+
 export async function operationsMenuItem(
   db: Db,
   user: Staff,

@@ -88,6 +88,13 @@ beforeEach(() => {
     .spyOn(delifastApi, "operationsRestaurantSummaries")
     .mockResolvedValue({ items: [rs(r)], nextCursor: null });
   details = vi.spyOn(delifastApi, "operationsRestaurant").mockResolvedValue(r);
+  vi.spyOn(delifastApi, "operationsMenuCategorySummaries").mockResolvedValue({
+    items: r.categories || [],
+    nextCursor: null,
+  });
+  vi.spyOn(delifastApi, "operationsMenuCategory").mockImplementation(
+    async (_t, _restaurantId, id) => r.categories?.find((c) => c.id === id) ?? null,
+  );
   menuPages = vi
     .spyOn(delifastApi, "operationsMenuItemSummaries")
     .mockResolvedValue({ items: [summaryOf(fullItem())], nextCursor: null });

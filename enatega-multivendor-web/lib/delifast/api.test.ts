@@ -211,12 +211,12 @@ describe("Contrats catalogue admin paginé", () => {
     expect(body.query).toContain("description");
     expect(body.query).toContain("optionGroups");
   });
-  it("retourne un profil operationsRestaurant sans menu et transmet setRestaurantOpen sans menu", async () => {
+  it("retourne un profil operationsRestaurant sans menu ni catégories et transmet setRestaurantOpen sans menu", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
         response({
-          operationsRestaurant: { id: "r1", name: "Chez A", categories: [] },
+          operationsRestaurant: { id: "r1", name: "Chez A" },
         }),
       )
       .mockResolvedValueOnce(
@@ -233,9 +233,39 @@ describe("Contrats catalogue admin paginé", () => {
     const profile = await delifastApi.operationsRestaurant("staff", "r1");
     await delifastApi.setRestaurantOpen("staff", "r1", 1, false);
     expect(profile).toEqual(expect.objectContaining({ id: "r1", menu: [] }));
+    expect(profile).not.toHaveProperty("categories");
     const profileQuery = JSON.parse(fetchMock.mock.calls[0][1].body).query;
     const openQuery = JSON.parse(fetchMock.mock.calls[1][1].body).query;
     expect(profileQuery).not.toMatch(/\bmenu\b/);
     expect(openQuery).not.toMatch(/\bmenu\b/);
+  });
+
+  it("demande les résumés catégories bornés à 20 avec curseur et filtre exact", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      response({ operationsMenuCategorySummaries: { items: [], nextCursor: "c20" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await delifastApi.operationsMenuCategorySummaries("staff", "r1", "c0", "c99");
+    const request = fetchMock.mock.calls[0][1];
+    const body = JSON.parse(request.body);
+    expect(body.variables).toEqual({ restaurantId: "r1", after: "c0", categoryId: "c99" });
+    expect(body.query).toContain("limit: 20");
+    expect(body.query).toContain("operationsMenuCategorySummaries");
+    expect(body.query).not.toContain("menu {");
+    expect(request.headers).toEqual(expect.objectContaining({ authorization: "Bearer staff" }));
+  });
+
+  it("demande le détail catégorie avec restaurantId/id et auth staff", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      response({ operationsMenuCategory: { id: "c1", name: "Plats", sortOrder: 1, archived: false, version: 2 } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await delifastApi.operationsMenuCategory("staff", "r1", "c1");
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.variables).toEqual({ restaurantId: "r1", id: "c1" });
+    expect(body.query).toContain("operationsMenuCategory(restaurantId: $restaurantId, id: $id)");
+    expect(fetchMock.mock.calls[0][1].headers).toEqual(
+      expect.objectContaining({ authorization: "Bearer staff" }),
+    );
   });
 });

@@ -69,6 +69,15 @@ function CatalogueSession({ token, user }: Props) {
     [menuPrevious, setMenuPrevious] = useState<Array<string | null>>([]),
     [menuFilter, setMenuFilter] = useState(""),
     [menuApplied, setMenuApplied] = useState(""),
+    [categoryRows, setCategoryRows] = useState<MenuCategory[]>([]),
+    [categoryNext, setCategoryNext] = useState<string | null>(null),
+    [categoryAfter, setCategoryAfter] = useState<string | null>(null),
+    [categoryPrevious, setCategoryPrevious] = useState<Array<string | null>>(
+      [],
+    ),
+    [categoryFilter, setCategoryFilter] = useState(""),
+    [categoryApplied, setCategoryApplied] = useState(""),
+    [pinnedCategory, setPinnedCategory] = useState<MenuCategory | null>(null),
     [uncertain, setUncertain] = useState(false),
     [draft, setDraft] = useState<MenuItemInput>(empty),
     [editing, setEditing] = useState<MenuItem | null>(null),
@@ -87,6 +96,7 @@ function CatalogueSession({ token, user }: Props) {
   const allowed = isAdmin || isRestaurant;
   const clearDrafts = useCallback(() => {
     setEditing(null);
+    setPinnedCategory(null);
     setDraft(empty);
     setGroups([]);
     setEditingCategory(null);
@@ -104,6 +114,12 @@ function CatalogueSession({ token, user }: Props) {
         previous: Array<string | null>;
         input: string;
       },
+      categoryNavigation?: {
+        after: string | null;
+        exact: string;
+        previous: Array<string | null>;
+        input: string;
+      },
     ) => {
       const request = ++loadVersion.current;
       const isCurrent = () => request === loadVersion.current;
@@ -113,6 +129,12 @@ function CatalogueSession({ token, user }: Props) {
       setNotice("");
       clearDrafts();
       setDetail(null);
+      setCategoryRows([]);
+      setCategoryNext(null);
+      setCategoryAfter(categoryNavigation?.after ?? null);
+      setCategoryPrevious(categoryNavigation?.previous ?? []);
+      setCategoryFilter(categoryNavigation?.input ?? "");
+      setCategoryApplied(categoryNavigation?.exact ?? "");
       setMenuRows([]);
       setMenuNext(null);
       setMenuAfter(menuNavigation?.after ?? null);
@@ -147,13 +169,19 @@ function CatalogueSession({ token, user }: Props) {
           selectedRef.current = id;
           setSelectedId(id);
           if (id) {
-            const [value, menuPage] = await Promise.all([
+            const [value, menuPage, categoryPage] = await Promise.all([
               delifastApi.operationsRestaurant(token, id),
               delifastApi.operationsMenuItemSummaries(
                 token,
                 id,
                 menuNavigation?.after ?? null,
                 menuNavigation?.exact || null,
+              ),
+              delifastApi.operationsMenuCategorySummaries(
+                token,
+                id,
+                categoryNavigation?.after ?? null,
+                categoryNavigation?.exact || null,
               ),
             ]);
             if (!isCurrent()) return false;
@@ -162,6 +190,8 @@ function CatalogueSession({ token, user }: Props) {
                 "Le détail du restaurant est introuvable ou incohérent.",
               );
             setDetail(value);
+            setCategoryRows(categoryPage.items);
+            setCategoryNext(categoryPage.nextCursor);
             setMenuRows(menuPage.items.map(summaryOf));
             setMenuNext(menuPage.nextCursor);
           }
@@ -189,6 +219,12 @@ function CatalogueSession({ token, user }: Props) {
     selectedRef.current = id;
     setSelectedId(id);
     setDetail(null);
+    setCategoryRows([]);
+    setCategoryNext(null);
+    setCategoryAfter(null);
+    setCategoryPrevious([]);
+    setCategoryFilter("");
+    setCategoryApplied("");
     setMenuRows([]);
     setMenuNext(null);
     setMenuAfter(null);
@@ -201,9 +237,10 @@ function CatalogueSession({ token, user }: Props) {
     if (!isAdmin || !summaries.some((s) => s.id === id)) return;
     setBusy("detail");
     try {
-      const [value, menuPage] = await Promise.all([
+      const [value, menuPage, categoryPage] = await Promise.all([
         delifastApi.operationsRestaurant(token, id),
         delifastApi.operationsMenuItemSummaries(token, id),
+        delifastApi.operationsMenuCategorySummaries(token, id),
       ]);
       if (!isCurrent()) return;
       if (!value || value.id !== id)
@@ -211,6 +248,8 @@ function CatalogueSession({ token, user }: Props) {
           "Le détail du restaurant est introuvable ou incohérent.",
         );
       setDetail(value);
+      setCategoryRows(categoryPage.items);
+      setCategoryNext(categoryPage.nextCursor);
       setMenuRows(menuPage.items.map(summaryOf));
       setMenuNext(menuPage.nextCursor);
     } catch (e) {
@@ -224,7 +263,15 @@ function CatalogueSession({ token, user }: Props) {
     : isAdmin
       ? detail
       : restaurants.find((r) => r.id === selectedId);
-  const categories = restaurant?.categories || [];
+  const categories = isAdmin ? categoryRows : restaurant?.categories || [];
+  const categoryOptions =
+    pinnedCategory && !categories.some((c) => c.id === pinnedCategory.id)
+      ? [...categories, pinnedCategory]
+      : categories;
+  const invalidCategoryAssignment = categoryOptions.some(
+    (c) =>
+      c.id === draft.categoryId && c.archived && c.id !== editing?.categoryId,
+  );
   const visibleMenu = isAdmin ? menuRows : restaurant?.menu || [];
   const active = visibleMenu.filter((i) => !i.archived);
   const archived = visibleMenu.filter((i) => i.archived);
@@ -268,9 +315,25 @@ function CatalogueSession({ token, user }: Props) {
         throw new Error(
           "Ce plat est archivé. Actualisez la liste avant de continuer.",
         );
+      let selectedCategory: MenuCategory | null = null;
+      if (value.categoryId) {
+        selectedCategory =
+          categories.find((c) => c.id === value.categoryId) ??
+          (await delifastApi.operationsMenuCategory(
+            token,
+            restaurant.id,
+            value.categoryId,
+          ));
+        if (request !== loadVersion.current) return;
+        if (!selectedCategory || selectedCategory.id !== value.categoryId)
+          throw new Error(
+            "La catégorie du plat est introuvable ou incohérente. Actualisez avant de modifier.",
+          );
+      }
       setMenuRows((rows) =>
         rows.map((row) => (row.id === value.id ? summaryOf(value) : row)),
       );
+      setPinnedCategory(selectedCategory);
       showEditor(value);
     } catch (e) {
       if (request === loadVersion.current) setError(errorText(e));
@@ -311,17 +374,61 @@ function CatalogueSession({ token, user }: Props) {
       if (request === loadVersion.current) setBusy("");
     }
   };
+  // Une seule page partagée entre gestion et choix; le choix courant reste épinglé.
+  const loadCategories = async (
+    after: string | null,
+    exactId: string,
+    previous: Array<string | null>,
+  ) => {
+    if (!restaurant || busy || mutationLock.current) return;
+    const request = ++loadVersion.current;
+    setBusy("category-list");
+    setError("");
+    setNotice("");
+    setCategoryRows([]);
+    setCategoryNext(null);
+    setCategoryAfter(after);
+    setCategoryPrevious(previous);
+    setCategoryApplied(exactId);
+    try {
+      const page = await delifastApi.operationsMenuCategorySummaries(
+        token,
+        restaurant.id,
+        after,
+        exactId || null,
+      );
+      if (request !== loadVersion.current) return;
+      setCategoryRows(page.items);
+      setCategoryNext(page.nextCursor);
+    } catch (e) {
+      if (request === loadVersion.current) setError(errorText(e));
+    } finally {
+      if (request === loadVersion.current) setBusy("");
+    }
+  };
   const conflict = async (e: unknown) => {
     if (codeOf(e) !== "CONCURRENT_MODIFICATION") {
       setError(errorText(e));
       return;
     }
-    const ok = await load(false, currentAfter, appliedFilter, false, {
-      after: menuAfter,
-      exact: menuApplied,
-      previous: menuPrevious,
-      input: menuFilter,
-    });
+    const ok = await load(
+      false,
+      currentAfter,
+      appliedFilter,
+      false,
+      {
+        after: menuAfter,
+        exact: menuApplied,
+        previous: menuPrevious,
+        input: menuFilter,
+      },
+      {
+        after: categoryAfter,
+        exact: categoryApplied,
+        previous: categoryPrevious,
+        input: categoryFilter,
+      },
+    );
     clearDrafts();
     setError(
       ok
@@ -362,7 +469,7 @@ function CatalogueSession({ token, user }: Props) {
   };
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!restaurant) return;
+    if (!restaurant || invalidCategoryAssignment) return;
     await mutate("save", async (current) => {
       const input: MenuItemInput = {
         ...draft,
@@ -449,12 +556,30 @@ function CatalogueSession({ token, user }: Props) {
             categoryDraft,
           );
       if (!current()) return;
-      patchRestaurant(restaurant.id, (r) => ({
-        ...r,
-        categories: editingCategory
-          ? (r.categories || []).map((x) => (x.id === c.id ? c : x))
-          : [...(r.categories || []), c],
-      }));
+      if (isAdmin) {
+        if (editingCategory) {
+          setCategoryRows((rows) => rows.map((x) => (x.id === c.id ? c : x)));
+          setPinnedCategory((old) => (old?.id === c.id ? c : old));
+        } else {
+          setCategoryRows([]);
+          setCategoryNext(null);
+          const page = await delifastApi.operationsMenuCategorySummaries(
+            token,
+            restaurant.id,
+            categoryAfter,
+            categoryApplied || null,
+          );
+          if (!current()) return;
+          setCategoryRows(page.items);
+          setCategoryNext(page.nextCursor);
+        }
+      } else
+        patchRestaurant(restaurant.id, (r) => ({
+          ...r,
+          categories: editingCategory
+            ? (r.categories || []).map((x) => (x.id === c.id ? c : x))
+            : [...(r.categories || []), c],
+        }));
       setCategoryDraft(emptyCategory);
       setEditingCategory(null);
       setNotice(editingCategory ? "Catégorie modifiée." : "Catégorie créée.");
@@ -476,6 +601,16 @@ function CatalogueSession({ token, user }: Props) {
           x.id === updated.id ? updated : x,
         ),
       }));
+      if (isAdmin) {
+        setCategoryRows((rows) =>
+          rows.map((x) => (x.id === updated.id ? updated : x)),
+        );
+        setPinnedCategory((old) => (old?.id === updated.id ? updated : old));
+      }
+      if (editingCategory?.id === updated.id) {
+        setEditingCategory(null);
+        setCategoryDraft(emptyCategory);
+      }
       setNotice(
         updated.archived ? "Catégorie archivée." : "Catégorie restaurée.",
       );
@@ -513,12 +648,24 @@ function CatalogueSession({ token, user }: Props) {
         <button
           className="df-secondary"
           onClick={() =>
-            void load(true, currentAfter, appliedFilter, true, {
-              after: menuAfter,
-              exact: menuApplied,
-              previous: menuPrevious,
-              input: menuFilter,
-            })
+            void load(
+              true,
+              currentAfter,
+              appliedFilter,
+              true,
+              {
+                after: menuAfter,
+                exact: menuApplied,
+                previous: menuPrevious,
+                input: menuFilter,
+              },
+              {
+                after: categoryAfter,
+                exact: categoryApplied,
+                previous: categoryPrevious,
+                input: categoryFilter,
+              },
+            )
           }
           disabled={busy !== ""}
         >
@@ -651,6 +798,75 @@ function CatalogueSession({ token, user }: Props) {
           </div>
           <section className="df-menu-admin">
             <h3>Catégories</h3>
+            {isAdmin && (
+              <section aria-label="Pagination des catégories">
+                <p className="df-muted">
+                  20 catégories maximum par page, archives comprises, triées par
+                  ID stable. Parcourez toutes les pages ou recherchez un ID
+                  exact pour choisir une catégorie. Le choix du plat reste
+                  conservé hors page.
+                </p>
+                <form
+                  className="df-assign"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void loadCategories(null, categoryFilter.trim(), []);
+                  }}
+                >
+                  <label>
+                    ID catégorie exact
+                    <input
+                      aria-label="ID catégorie exact"
+                      maxLength={128}
+                      value={categoryFilter}
+                      onChange={(e) => setCategoryFilter(e.target.value)}
+                    />
+                  </label>
+                  <button className="df-secondary" disabled={busy !== ""}>
+                    Rechercher la catégorie
+                  </button>
+                  <button
+                    type="button"
+                    className="df-clear"
+                    disabled={busy !== ""}
+                    onClick={() => {
+                      setCategoryFilter("");
+                      void loadCategories(null, "", []);
+                    }}
+                  >
+                    Réinitialiser les catégories
+                  </button>
+                </form>
+                <div className="df-catalogue-actions">
+                  <button
+                    className="df-secondary"
+                    disabled={!categoryPrevious.length || busy !== ""}
+                    onClick={() => {
+                      void loadCategories(
+                        categoryPrevious.at(-1) ?? null,
+                        categoryApplied,
+                        categoryPrevious.slice(0, -1),
+                      );
+                    }}
+                  >
+                    Catégories précédentes
+                  </button>
+                  <button
+                    className="df-secondary"
+                    disabled={!categoryNext || busy !== ""}
+                    onClick={() => {
+                      if (categoryNext)
+                        void loadCategories(categoryNext, categoryApplied, [
+                          ...categoryPrevious,
+                          categoryAfter,
+                        ]);
+                    }}
+                  >
+                    Catégories suivantes
+                  </button>
+                </div>
+              </section>
+            )}
             <form className="df-catalogue-form" onSubmit={saveCategory}>
               <label>
                 Nom de la catégorie
@@ -700,42 +916,42 @@ function CatalogueSession({ token, user }: Props) {
             {!categories.length && (
               <p className="df-muted">Aucune catégorie.</p>
             )}
-            {categories
-              .slice()
-              .sort((a, b) => a.sortOrder - b.sortOrder)
-              .map((c) => (
-                <article className="df-catalogue-item" key={c.id}>
-                  <div>
-                    <strong>{c.name}</strong>
-                    <span>
-                      ordre {c.sortOrder} · version {c.version}
-                      {c.archived ? " · archivée" : ""}
-                    </span>
-                  </div>
-                  <div className="df-catalogue-actions">
-                    <button
-                      className="df-secondary"
-                      disabled={busy !== "" || uncertain}
-                      onClick={() => {
-                        setEditingCategory(c);
-                        setCategoryDraft({
-                          name: c.name,
-                          sortOrder: c.sortOrder,
-                        });
-                      }}
-                    >
-                      Modifier
-                    </button>
-                    <button
-                      className={c.archived ? "df-primary" : "df-danger"}
-                      onClick={() => void archiveCategory(c)}
-                      disabled={busy !== "" || uncertain}
-                    >
-                      {c.archived ? "Restaurer" : "Archiver"}
-                    </button>
-                  </div>
-                </article>
-              ))}
+            {(isAdmin
+              ? categories
+              : categories.slice().sort((a, b) => a.sortOrder - b.sortOrder)
+            ).map((c) => (
+              <article className="df-catalogue-item" key={c.id}>
+                <div>
+                  <strong>{c.name}</strong>
+                  <span>
+                    ID {c.id} · ordre {c.sortOrder} · version {c.version}
+                    {c.archived ? " · archivée" : ""}
+                  </span>
+                </div>
+                <div className="df-catalogue-actions">
+                  <button
+                    className="df-secondary"
+                    disabled={busy !== "" || uncertain}
+                    onClick={() => {
+                      setEditingCategory(c);
+                      setCategoryDraft({
+                        name: c.name,
+                        sortOrder: c.sortOrder,
+                      });
+                    }}
+                  >
+                    Modifier
+                  </button>
+                  <button
+                    className={c.archived ? "df-primary" : "df-danger"}
+                    onClick={() => void archiveCategory(c)}
+                    disabled={busy !== "" || uncertain}
+                  >
+                    {c.archived ? "Restaurer" : "Archiver"}
+                  </button>
+                </div>
+              </article>
+            ))}
           </section>
           <form className="df-catalogue-form" onSubmit={save}>
             <h3>{editing ? "Modifier le plat" : "Nouveau plat"}</h3>
@@ -774,21 +990,41 @@ function CatalogueSession({ token, user }: Props) {
               <select
                 aria-label="Catégorie du plat"
                 value={draft.categoryId || ""}
-                onChange={(e) =>
-                  setDraft({ ...draft, categoryId: e.target.value || null })
-                }
+                disabled={busy !== "" || uncertain}
+                onChange={(e) => {
+                  setPinnedCategory(
+                    categoryOptions.find((c) => c.id === e.target.value) ??
+                      null,
+                  );
+                  setDraft({ ...draft, categoryId: e.target.value || null });
+                }}
               >
                 <option value="">Sans catégorie</option>
-                {categories
-                  .filter((c) => !c.archived || c.id === draft.categoryId)
+                {categoryOptions
+                  .filter(
+                    (c) =>
+                      !c.archived ||
+                      c.id === draft.categoryId ||
+                      c.id === editing?.categoryId,
+                  )
                   .map((c) => (
-                    <option key={c.id} value={c.id}>
+                    <option
+                      key={c.id}
+                      value={c.id}
+                      disabled={c.archived && c.id !== editing?.categoryId}
+                    >
                       {c.name}
                       {c.archived ? " (archivée)" : ""}
                     </option>
                   ))}
               </select>
             </label>
+            {invalidCategoryAssignment && (
+              <p className="df-error" role="alert">
+                Cette catégorie est archivée. Choisissez une catégorie active ou
+                « Sans catégorie » avant de créer le plat.
+              </p>
+            )}
             <label className="df-check">
               <input
                 type="checkbox"
@@ -802,7 +1038,10 @@ function CatalogueSession({ token, user }: Props) {
             <fieldset disabled={busy !== ""}>
               <OptionEditor groups={groups} setGroups={setGroups} />
             </fieldset>
-            <button className="df-primary" disabled={busy !== "" || uncertain}>
+            <button
+              className="df-primary"
+              disabled={busy !== "" || uncertain || invalidCategoryAssignment}
+            >
               {busy === "save"
                 ? "Enregistrement…"
                 : editing
@@ -827,8 +1066,8 @@ function CatalogueSession({ token, user }: Props) {
             <section aria-label="Pagination des plats">
               <p className="df-muted">
                 20 plats maximum par page, actifs et archivés confondus.
-                Descriptions et options au clic sur Modifier. Les catégories ne
-                sont pas paginées.
+                Descriptions et options au clic sur Modifier. Les catégories
+                disposent de leur propre navigation ci-dessus.
               </p>
               <form
                 className="df-assign"
@@ -1131,7 +1370,9 @@ function MenuList({
             <span>
               {formatXof(i.priceXof)} ·{" "}
               {categories.find((c) => c.id === i.categoryId)?.name ||
-                "Sans catégorie"}{" "}
+                (i.categoryId
+                  ? `Catégorie ${i.categoryId}`
+                  : "Sans catégorie")}{" "}
               ·{" "}
               {"optionGroups" in i
                 ? `${i.optionGroups?.length || 0} groupe(s) · `

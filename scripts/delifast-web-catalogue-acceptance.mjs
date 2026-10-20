@@ -90,6 +90,15 @@ try {
   await db.collection('restaurants').insertMany(restaurants);
   const targetId = 'z-web-restaurant-064';
   await db.collection('menu_categories').insertOne({ id: 'cat-web-064', restaurantId: targetId, name: 'Catégorie 064', sortOrder: 1, archived: false, version: 0, audit: [] });
+  await db.collection('menu_categories').insertMany(Array.from({ length: 45 }, (_, i) => ({
+    id: `a-cat-${String(i).padStart(3, '0')}`,
+    restaurantId: targetId,
+    name: `Catégorie A ${String(i).padStart(3, '0')}`,
+    sortOrder: i + 2,
+    archived: i % 7 === 0,
+    version: 0,
+    audit: [],
+  })));
   const targetItems = Array.from({ length: 130 }, (_, i) => ({
     id: `${targetId}-item-${String(i).padStart(3, '0')}`,
     restaurantId: targetId,
@@ -122,6 +131,9 @@ try {
   const saved = await db.collection('restaurants').findOne({ id: persisted.restaurantId }); assert.equal(saved.open, false); assert.equal(saved.version, 1);
   const edited = await db.collection('menu_items').findOne({ id: `${persisted.restaurantId}-item-001` });
   assert.equal(edited.version, 1); assert.equal(edited.categoryId, 'cat-web-064'); assert.equal(edited.optionGroups[0].name, 'Accompagnement'); assert.equal(edited.name, 'Plat 064 modifié');
+  const editedCategory = await db.collection('menu_categories').findOne({ id: 'cat-web-064' });
+  assert.equal(editedCategory.version, 3); assert.equal(editedCategory.archived, false); assert.equal(editedCategory.name, 'Catégorie 064 renommée');
+  assert.equal(await db.collection('menu_categories').countDocuments({ restaurantId: persisted.restaurantId }), 47);
   const restored = await db.collection('menu_items').findOne({ id: `${persisted.restaurantId}-item-002` });
   assert.equal(restored.archived, false); assert.equal(restored.version, 2);
   const lost = await db.collection('menu_items').findOne({ id: `${persisted.restaurantId}-item-003` });

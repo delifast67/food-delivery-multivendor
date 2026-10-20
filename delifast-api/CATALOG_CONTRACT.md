@@ -24,7 +24,7 @@ La limite est un entier de 1 à 50 (l’interface fixe 20). Le serveur lit au pl
 
 `operationsRestaurant(id: ID!): Restaurant` est également exclusivement ADMIN et charge un seul profil à la demande, avec les normalisations historiques et les archives de menu de la vue opérations. Un identifiant valide inconnu renvoie `null`. L’édition garde ses versions CAS et ses protections contre le rejeu. Aucun nouveau rôle ni compte n’est accordé.
 
-**Audit restant :** la requête historique `operationsRestaurants` reste non bornée pour compatibilité avec les clients existants, mais l’admin local ne l’appelle plus. La liste publique `restaurants`, les menus/catégories par restaurant, la liste des zones et celle des livreurs n’acquièrent pas de pagination dans ce lot. Les zones globales utilisent un autre tri (`priority/id`) et alimentent l’affectation partagée ; une modification sûre nécessite un contrat distinct plutôt qu’une troncature silencieuse. Un détail individuel très volumineux peut encore rencontrer la borne de réponse du client. Ce changement ne prétend donc pas borner tout le catalogue.
+**Audit restant :** la requête historique `operationsRestaurants` reste non bornée pour compatibilité avec les clients existants, mais l’admin local ne l’appelle plus. La liste publique `restaurants`, les menus/catégories publics et du rôle RESTAURANT ainsi que la liste des zones restent non bornés. Les interfaces ADMIN Web utilisent désormais des pages distinctes pour les plats, catégories et livreurs. Les zones globales utilisent un autre tri (`priority/id`) et alimentent l’affectation partagée ; une modification sûre nécessite un contrat distinct plutôt qu’une troncature silencieuse. Un détail individuel très volumineux peut encore rencontrer la borne de réponse du client. Ce changement ne prétend donc pas borner tout le catalogue.
 
 ## Horaires restaurant
 
@@ -61,3 +61,25 @@ Le prix unitaire est `prix de base + somme des suppléments sélectionnés` ; le
 Une reprise de commande renvoie le snapshot original avant tout recalcul de catalogue. Réordonner groupes/options ou lignes ne change pas l’empreinte des nouvelles commandes. Les empreintes historiques sans sélection restent reconnues dans leur ordre original reconstitué depuis le snapshot ; ajouter des choix ou changer quantité/adresse reste un conflit. Il n’existe pas de rapprochement approximatif ou de suppression silencieuse des options.
 
 Erreurs supplémentaires : `INVALID_OPTIONS`, `CATEGORY_NOT_FOUND`. Les prix de seed et de recettes sont entièrement fictifs. Aucune intégration de paiement n’est ajoutée.
+
+## Catégories admin paginées et sélecteur complet
+
+`operationsMenuCategorySummaries(restaurantId: ID!, limit: Int = 20, after: ID, categoryId: ID): MenuCategorySummaryPage!` est une API additive exclusivement ADMIN. La page contient `items { id name sortOrder archived version }` et `nextCursor`. La limite va de 1 à 50 ; le Web fixe 20. Toutes les catégories du restaurant, actives et archivées, sont parcourues par ID ascendant stable, indépendamment de leur nom ou ordre d’affichage. La recherche `categoryId` est exacte, trimée et intersectée avec `after` lorsqu’ils sont fournis ensemble. Les IDs sont non vides et bornés à 128 caractères. Aucun offset, regex ni comptage global n’est ajouté. Les identifiants et comptes existants ne sont pas modifiés.
+
+MongoDB lit au plus `limit + 1` documents, avec projection par inclusion sans audit et délai de 2 secondes. L’index `menu_categories_restaurant_id` sur `(restaurantId,id)` est créé de manière réexécutable à la connexion et par la migration. Les tests `executionStats` vérifient des parcours IXSCAN sans tri bloquant ni COLLSCAN et au plus 21 documents examinés pour une page Web. Comme les autres catalogues, les pages ne constituent pas un snapshot transactionnel.
+
+`operationsMenuCategory(restaurantId: ID!, id: ID!): MenuCategory` charge un seul détail, y compris archivé, avec la même autorisation et portée. Un ID inconnu ou appartenant à un autre restaurant retourne `null`. Le profil ADMIN Web ne demande plus `categories` ni `menu` : ces collections passent uniquement par leurs pages dédiées.
+
+Le Web partage une page de catégories entre la gestion et le sélecteur du plat. Précédent, Suivant, recherche explicite par ID et réinitialisation rendent toutes les catégories accessibles, sans chargement intégral ou troncature silencieuse. Les IDs sont affichés dans la liste. Une catégorie sélectionnée reste épinglée dans le sélecteur quand la page change. L’édition d’un plat charge sa catégorie hors page à la demande avant d’ouvrir le formulaire ; un détail absent ou incohérent bloque l’édition plutôt que de détacher le plat. Une catégorie archivée déjà affectée reste conservable ; aucune nouvelle affectation vers une archive n’est permise. Si une catégorie sélectionnée pour une création est archivée dans cette session, le choix demeure visible mais la création est bloquée jusqu’à un choix valide explicite.
+
+Les mutations existantes et leurs versions CAS sont inchangées. Une création de catégorie relit la page serveur au lieu d’ajouter une 21e ligne ; les éditions et archivages remplacent seulement leur ligne. Les brouillons de plats survivent à la navigation des catégories. Les réponses d’une session obsolète sont ignorées. Une erreur de page retire les anciennes lignes sans effacer le choix épinglé ; elle ne réarme jamais une écriture incertaine. Après réponse d’écriture perdue ou échec de relecture, aucun rejeu automatique : une actualisation réussie est nécessaire.
+
+### Audit des consommateurs et compatibilité
+
+- Web ADMIN : `app/delifast/operations/Catalogue.tsx` était l’unique sélecteur Delifast de gestion des catégories ; liste et sélecteur ont été migrés ensemble.
+- Web RESTAURANT : le même composant conserve `operationsRestaurants` et toutes ses catégories, afin de ne pas modifier son contrat ni sa portée. Ses mutations restent identiques.
+- Web public : `app/delifast/page.tsx` groupe les plats à partir de `Restaurant.categories` ; il garde la liste active complète, ordonnée par `sortOrder/id`.
+- Client mobile : `src/delifast/api.js`, `discovery.js` et `App.js` utilisent les catégories publiques pour grouper et filtrer le menu. Aucune limitation silencieuse n’y est introduite.
+- Admin séparé, Store et Rider : aucun consommateur runtime des catégories Delifast ni sélecteur `MenuCategory` identifié ; leurs catégories multivendeurs historiques relèvent d’un autre contrat et ne sont pas modifiées.
+
+`Restaurant.categories`, `categoriesFor`, les mutations et les scripts de compatibilité restent donc inchangés. Ce lot borne la gestion ADMIN Web, pas l’ensemble des listes publiques/restaurant. Aucun déploiement, fusion, achat, envoi de SMS, paiement réel ni changement Orange/About n’est associé à cette modification.

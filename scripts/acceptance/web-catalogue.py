@@ -14,7 +14,7 @@ def checked(label):
     print('OK — ' + label, flush=True)
 
 def rows(page):
-    # Les catégories restent explicitement hors pagination de ce lot.
+    # Les plats et catégories ont des conteneurs distincts et leurs propres pages.
     return page.locator('div.df-menu-admin > article.df-catalogue-item')
 
 def row_for(page, text):
@@ -24,7 +24,7 @@ with sync_playwright() as p:
     browser = p.chromium.launch(headless=True, executable_path=executable or None,
         args=['--no-sandbox', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--no-first-run'])
     context = browser.new_context(viewport={'width':1280,'height':900}, service_workers='block')
-    external, errors, summaries, menu_pages, menu_details, profiles, legacy, mutations = [], [], [], [], [], [], [], []
+    external, errors, summaries, category_pages, category_details, menu_pages, menu_details, profiles, legacy, mutations = [], [], [], [], [], [], [], [], [], []
     state = {'fail_create_read': False, 'lost_archive': False, 'conflict': False}
     def guard(route):
         if route.request.url.startswith(base + '/') or route.request.url.startswith(('data:', 'blob:')):
@@ -47,6 +47,13 @@ with sync_playwright() as p:
             assert all(set(item) == {'id','name','open','version'} for item in value['items'])
             assert 'menu' not in query and 'categories' not in query
             summaries.append((body, value)); route.fulfill(response=response)
+        elif 'operationsMenuCategorySummaries(' in query:
+            response = route.fetch(); payload = response.json()
+            assert not payload.get('errors'), payload
+            value = payload['data']['operationsMenuCategorySummaries']
+            assert len(value['items']) <= 20
+            assert all(set(item) == {'id','name','sortOrder','archived','version'} for item in value['items'])
+            category_pages.append((body, value)); route.fulfill(response=response)
         elif 'operationsMenuItemSummaries(' in query:
             if state['fail_create_read']:
                 state['fail_create_read'] = False
@@ -72,8 +79,14 @@ with sync_playwright() as p:
             value = payload['data']['operationsMenuItem']
             assert value is None or {'id','name','description','priceXof','available','archived','version','categoryId','optionGroups'} <= set(value)
             menu_details.append((body, value)); route.fulfill(response=response)
+        elif 'operationsMenuCategory(restaurantId:' in query:
+            response = route.fetch(); payload = response.json()
+            assert not payload.get('errors'), payload
+            value = payload['data']['operationsMenuCategory']
+            assert value is None or {'id','name','sortOrder','archived','version'} <= set(value)
+            category_details.append((body, value)); route.fulfill(response=response)
         else:
-            if any(name in query for name in ('setRestaurantOpen(', 'setMenuItemArchived(', 'updateMenuItem(', 'createMenuItem(')):
+            if any(name in query for name in ('setRestaurantOpen(', 'setMenuItemArchived(', 'updateMenuItem(', 'createMenuItem(', 'createMenuCategory(', 'updateMenuCategory(', 'setMenuCategoryArchived(')):
                 mutations.append(body)
                 if 'setRestaurantOpen(' in query: assert 'menu' not in query
                 if 'createMenuItem(' in query: state['fail_create_read'] = True
@@ -127,6 +140,47 @@ with sync_playwright() as p:
     catalogue.get_by_role('button', name='Fermer le restaurant', exact=True).click()
     expect(catalogue.get_by_text('Restaurant fermé.', exact=True)).to_be_visible()
     checked('Recherche restaurant exacte sans appel pendant la saisie, profil et ouverture sans menu embarqué')
+    category_section = catalogue.get_by_role('heading', name='Catégories', exact=True).locator('..')
+    category_rows = category_section.locator('article.df-catalogue-item')
+    def category_ids():
+        return category_rows.locator('span').evaluate_all("nodes => nodes.map(n => (n.textContent.match(/ID ([^ ]+)/) || [])[1]).filter(Boolean)")
+    catalogue.get_by_label('Nom de la catégorie', exact=True).fill('Catégorie créée recette')
+    catalogue.get_by_label('Ordre', exact=True).fill('90')
+    catalogue.get_by_role('button', name='Créer la catégorie', exact=True).click()
+    expect(catalogue.get_by_text('Catégorie créée.', exact=True)).to_be_visible()
+    assert len([m for m in mutations if 'createMenuCategory(' in m['query']]) == 1
+    first_categories = set(category_ids()); assert len(first_categories) == 20
+    category_page_sets = [first_categories]
+    category_next = catalogue.get_by_role('button', name='Catégories suivantes', exact=True)
+    category_prev = catalogue.get_by_role('button', name='Catégories précédentes', exact=True)
+    while category_next.is_enabled():
+        category_next.click(); settled()
+        current = set(category_ids()); assert 0 < len(current) <= 20
+        assert set.union(*category_page_sets).isdisjoint(current); category_page_sets.append(current)
+    assert len(set.union(*category_page_sets)) >= 46
+    category_prev.click(); settled(); assert set(category_ids()) == category_page_sets[-2]
+    exact_category = catalogue.get_by_label('ID catégorie exact', exact=True)
+    before = len(category_pages); exact_category.fill('cat-web-064'); assert len(category_pages) == before
+    catalogue.get_by_role('button', name='Rechercher la catégorie', exact=True).click(); settled()
+    expect(category_rows).to_have_count(1); assert category_ids() == ['cat-web-064']
+    assert category_pages[-1][0]['variables']['categoryId'] == 'cat-web-064'
+    category_rows.get_by_role('button', name='Modifier', exact=True).click()
+    catalogue.get_by_label('Nom de la catégorie', exact=True).fill('Catégorie 064 renommée')
+    catalogue.get_by_role('button', name='Enregistrer la catégorie', exact=True).click()
+    expect(catalogue.get_by_text('Catégorie modifiée.', exact=True)).to_be_visible()
+    category_update = [m for m in mutations if 'updateMenuCategory(' in m['query']][-1]
+    assert category_update['variables']['expectedVersion'] == 0
+    category_rows.get_by_role('button', name='Archiver', exact=True).click()
+    expect(catalogue.get_by_text('Catégorie archivée.', exact=True)).to_be_visible()
+    category_archive = [m for m in mutations if 'setMenuCategoryArchived(' in m['query']][-1]
+    assert category_archive['variables']['expectedVersion'] == 1
+    category_rows.get_by_role('button', name='Restaurer', exact=True).click()
+    expect(catalogue.get_by_text('Catégorie restaurée.', exact=True)).to_be_visible()
+    category_restore = [m for m in mutations if 'setMenuCategoryArchived(' in m['query']][-1]
+    assert category_restore['variables']['expectedVersion'] == 2
+    catalogue.get_by_role('button', name='Réinitialiser les catégories', exact=True).click(); settled()
+    expect(category_rows).to_have_count(20)
+    checked('46 catégories minimum parcourues par pages de 20, archives comprises, retour, exact lookup hors page et CAS edit/archive/restauration')
     menu_select = catalogue.get_by_label('ID plat exact', exact=True)
     menu_next = catalogue.get_by_role('button', name='Plats suivants', exact=True)
     menu_prev = catalogue.get_by_role('button', name='Plats précédents', exact=True)

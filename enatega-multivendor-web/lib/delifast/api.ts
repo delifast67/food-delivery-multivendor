@@ -281,8 +281,10 @@ const STAFF_LOGIN = `mutation StaffLogin($email: String!, $password: String!) { 
 const OPERATIONS_ORDERS = `query OperationsOrders { operationsOrders { ${ORDER_OPERATIONS_FIELDS} } }`;
 const OPERATIONS_RESTAURANTS = `query OperationsRestaurants { operationsRestaurants { ${RESTAURANT_FIELDS} } }`;
 const OPERATIONS_RESTAURANT_SUMMARIES = `query OperationsRestaurantSummaries($after: ID, $restaurantId: ID) { operationsRestaurantSummaries(limit: 20, after: $after, restaurantId: $restaurantId) { items { id name open version } nextCursor } }`;
-// Le profil admin conserve les catégories nécessaires au formulaire, jamais tous les plats.
-const OPERATIONS_RESTAURANT = `query OperationsRestaurant($id: ID!) { operationsRestaurant(id: $id) { id name description open version categories { ${CATEGORY_FIELDS} } } }`;
+// Le profil admin n'embarque aucune collection non bornée.
+const OPERATIONS_RESTAURANT = `query OperationsRestaurant($id: ID!) { operationsRestaurant(id: $id) { id name description open version } }`;
+const CATEGORY_SUMMARIES = `query OperationsMenuCategorySummaries($restaurantId: ID!, $after: ID, $categoryId: ID) { operationsMenuCategorySummaries(restaurantId: $restaurantId, limit: 20, after: $after, categoryId: $categoryId) { items { ${CATEGORY_FIELDS} } nextCursor } }`;
+const CATEGORY_DETAIL = `query OperationsMenuCategory($restaurantId: ID!, $id: ID!) { operationsMenuCategory(restaurantId: $restaurantId, id: $id) { ${CATEGORY_FIELDS} } }`;
 const MENU_ITEM_FIELDS = `id name description priceXof available archived version categoryId optionGroups { ${GROUP_FIELDS} }`;
 const MENU_SUMMARY_FIELDS = `id name priceXof available archived version categoryId`;
 const MENU_SUMMARIES = `query OperationsMenuItemSummaries($restaurantId: ID!, $after: ID, $menuItemId: ID) { operationsMenuItemSummaries(restaurantId: $restaurantId, limit: 20, after: $after, menuItemId: $menuItemId) { items { ${MENU_SUMMARY_FIELDS} } nextCursor } }`;
@@ -620,6 +622,31 @@ export const delifastApi = {
         throw new DelifastApiError("Réponse restaurant incohérente", "unknown");
       }
       return restaurant ? { ...restaurant, menu: [] as MenuItem[] } : null;
+    }),
+  operationsMenuCategorySummaries: (
+    token: string,
+    restaurantId: string,
+    after: string | null = null,
+    categoryId: string | null = null,
+  ) =>
+    request<{
+      operationsMenuCategorySummaries: {
+        items: MenuCategory[];
+        nextCursor: string | null;
+      };
+    }>(CATEGORY_SUMMARIES, { restaurantId, after, categoryId }, token).then(
+      (data) => data.operationsMenuCategorySummaries,
+    ),
+  operationsMenuCategory: (token: string, restaurantId: string, id: string) =>
+    request<{ operationsMenuCategory: MenuCategory | null }>(
+      CATEGORY_DETAIL,
+      { restaurantId, id },
+      token,
+    ).then((data) => {
+      const category = data.operationsMenuCategory;
+      if (category && category.id !== id)
+        throw new DelifastApiError("Réponse catégorie incohérente", "unknown");
+      return category;
     }),
   operationsMenuItemSummaries: (
     token: string,
