@@ -96,9 +96,6 @@ const useEmailOtp = (isPhoneExists) => {
         email: data.createUser.email,
         type: 'email'
       })
-      if (__DEV__) {
-        console.log('onCreateUserCompleted data:', data, configuration?.skipMobileVerification, data?.createUser?.token)
-      }
       if (isMobileVerificationSkipped && data?.createUser?.token) {
         await setTokenAsync(data.createUser.token)
         navigation.reset({
@@ -120,7 +117,7 @@ const useEmailOtp = (isPhoneExists) => {
         token: data?.createUser?.token
       })
     } catch (e) {
-      console.log(e)
+      console.warn('Account creation completion failed')
     }
   }
 
@@ -147,7 +144,7 @@ const useEmailOtp = (isPhoneExists) => {
           notificationToken = (await Notifications.getExpoPushTokenAsync({ projectId: Constants.expoConfig.extra.eas.projectId })).data
         }
         } catch (error) {
-          console.log('Error catched in notificationToken:', error)
+          console.warn('Notification registration failed')
         }
       }
       if (__DEV__) console.log('mutation variables: create user', isPhoneExists)
@@ -164,7 +161,7 @@ const useEmailOtp = (isPhoneExists) => {
         }
       })
     } catch (error) {
-      console.log('Error catched in mutateRegister:', error)
+      console.warn('Account registration failed')
       FlashMessage({ message: t('somethingWentWrong') })
     }
   }

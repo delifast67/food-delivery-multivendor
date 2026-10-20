@@ -268,7 +268,7 @@ export default function OrderDetailScreen() {
   const handleRouteError = useCallback(
     (label: string) => (error: unknown) => {
       if (__DEV__) {
-        console.log(`${label} route error:`, error);
+        console.log(`${label} route calculation failed`);
       }
 
       if (String(error).includes("NOT_FOUND")) {
@@ -351,7 +351,7 @@ export default function OrderDetailScreen() {
       }
     } catch (error) {
       // Added global error handling
-      console.log("Error opening maps:", error);
+      console.log("Error opening maps");
       Alert.alert(
         t("Navigation Error"),
         t("An error occurred when trying to open maps"),
@@ -371,7 +371,7 @@ export default function OrderDetailScreen() {
   // instead of re-animating on a timer to often-identical positions
   useEffect(() => {
     if (!locationPin?.location || !isValidCoordinate(locationPin.location)) {
-      console.warn("Location pin is invalid or missing:", locationPin);
+      console.warn("Location pin is invalid or missing");
       return;
     }
 

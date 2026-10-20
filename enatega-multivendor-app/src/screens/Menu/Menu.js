@@ -176,8 +176,6 @@ function Menu({ route, props }) {
 
   const restaurantsCuisinsVariables = isShopType ? { latitude: location.latitude || null, longitude: location.longitude || null, shopType: collection } : {}
 
-  console.log('restaurantsCuisinsVariables::', restaurantsCuisinsVariables)
-
   const { data: cuisinesData, refetch: refetchCuisines, error: cuisinesError } = useQuery(isShopType ? GET_RESTAURANTS_CUISINES : GET_CUISINES, { variables: restaurantsCuisinsVariables })
 
   // const allCuisines = useRef(isShopType ? { cuisines: cuisinesData?.nearByRestaurantsCuisines } : cuisinesData).current
@@ -188,8 +186,6 @@ function Menu({ route, props }) {
     }
     return cuisinesData ?? { cuisines: [] }
   }, [isShopType, cuisinesData])
-
-  console.log('allCuisines::restaurants cuisins', cuisinesData?.nearByRestaurantsCuisines, allCuisines, cuisinesError)
 
   const { onScroll /* Event handler */, containerPaddingTop /* number */, scrollIndicatorInsetTop /* number */ } = useCollapsibleSubHeader()
 
@@ -315,7 +311,7 @@ function Menu({ route, props }) {
   }
 
   function onError(error) {
-    console.log(error)
+    console.warn('Menu request failed')
   }
 
   const addressIcons = {
@@ -372,7 +368,6 @@ function Menu({ route, props }) {
   // }, [routeData, allCuisines])
 
   const collectionData = useMemo(() => {
-    console.log('allCuisines collection', allCuisines?.cuisines, isShopType)
     if (isShopType) {
       return allCuisines?.cuisines
     }
@@ -419,7 +414,7 @@ function Menu({ route, props }) {
     const { error, coords } = await getCurrentLocation()
 
     if (!coords || !coords.latitude || !coords.longitude) {
-      console.error('Invalid coordinates:', coords)
+      console.error('Invalid coordinates')
       setBusy(false)
       return
     }
@@ -448,7 +443,7 @@ function Menu({ route, props }) {
         setBusy(false)
       }
     } catch (fetchError) {
-      console.error('Error fetching address using Google Maps API:', fetchError.message)
+      console.error('Address lookup failed')
     }
   }
   // const setCurrentLocation = async () => {

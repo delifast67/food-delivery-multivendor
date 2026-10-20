@@ -19,12 +19,10 @@ firebase.initializeApp({
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
-  console.log('📩 Background Notification Received:', payload);
-
   const { title, body, redirectUrl } = payload.data;
 
   if (!title || !body) {
-    console.error('🚨 Missing notification payload:', payload);
+    console.error('Missing notification title or body');
     return;
   }
 
