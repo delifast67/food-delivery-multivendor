@@ -2,7 +2,7 @@ import { createSmsProvider, type SmsProvider } from "./sms-provider.js";
 import express, { Request, Response, NextFunction } from "express";
 import { ApolloServer } from "@apollo/server";
 import { expressMiddleware } from "@as-integrations/express4";
-import { GraphQLError, ValidationContext, ASTNode, Kind } from "graphql";
+import { complexityRule } from "./graphql-complexity.js";
 import { readFile } from "node:fs/promises";
 import { connect, getDb } from "./db.js";
 import { config } from "./config.js";
@@ -89,34 +89,6 @@ const knownCodes = new Set([
   "ADDRESS_NOT_FOUND",
   "DELIVERY_POINT_REQUIRED",
 ]);
-function complexityRule(context: ValidationContext) {
-  let depth = 0,
-    fields = 0,
-    aliases = 0,
-    operations = 0;
-  const enter = (node: ASTNode) => {
-    if (node.kind === Kind.OPERATION_DEFINITION && ++operations > 1)
-      context.reportError(
-        new GraphQLError("Une seule opération est autorisée", {
-          extensions: { code: "QUERY_TOO_COMPLEX" },
-        }),
-      );
-    if (node.kind === Kind.FIELD) {
-      depth++;
-      fields++;
-      if (fields > 100 || depth > 10 || (node.alias && ++aliases > 100))
-        context.reportError(
-          new GraphQLError("Requête trop complexe", {
-            extensions: { code: "QUERY_TOO_COMPLEX" },
-          }),
-        );
-    }
-  };
-  const leave = (node: ASTNode) => {
-    if (node.kind === Kind.FIELD) depth--;
-  };
-  return { Field: { enter, leave }, OperationDefinition: { enter, leave } };
-}
 function rateLimit() {
   const buckets = new Map<string, { start: number; count: number }>();
   return (req: Request, res: Response, next: NextFunction) => {

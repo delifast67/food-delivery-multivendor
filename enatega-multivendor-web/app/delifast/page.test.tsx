@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -266,6 +267,16 @@ describe("Delifast recovery", () => {
 });
 
 describe("Delifast suivi opérationnel", () => {
+  function deferred<T>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+  }
+
   function rememberOrder() {
     localStorage.setItem(
       "delifast-order-attempt",
@@ -348,6 +359,126 @@ describe("Delifast suivi opérationnel", () => {
       JSON.parse(localStorage.getItem("delifast-order-attempt")!).order
         .accessToken,
     ).toBe(order.accessToken);
+  });
+
+  it("ignore une réponse de suivi plus ancienne lorsqu’un polling concurrent finit d’abord", async () => {
+    rememberOrder();
+    const firstRefresh = deferred<Order | null>();
+    const secondRefresh = deferred<Order | null>();
+    vi.mocked(delifastApi.order)
+      .mockResolvedValueOnce(order)
+      .mockReturnValueOnce(firstRefresh.promise)
+      .mockReturnValueOnce(secondRefresh.promise);
+    vi.useFakeTimers();
+    render(<DelifastPage />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("heading", {
+      name: "Votre commande est en attente de paiement.",
+    })).toBeInTheDocument();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Actualiser le suivi" }));
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(delifastApi.order).toHaveBeenCalledTimes(3);
+      await act(async () => {
+        secondRefresh.resolve({ ...order, status: "DELIVERED", paymentStatus: "PAID" });
+        await Promise.resolve();
+      });
+      expect(screen.getByRole("heading", {
+        name: "Votre commande a été livrée (démo).",
+      })).toBeInTheDocument();
+      await act(async () => {
+        firstRefresh.resolve(order);
+        await Promise.resolve();
+      });
+      expect(
+        screen.getByRole("heading", { name: "Votre commande a été livrée (démo)." }),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignore l’erreur tardive d’un refresh remplacé par un état plus récent", async () => {
+    rememberOrder();
+    const firstRefresh = deferred<Order | null>();
+    const secondRefresh = deferred<Order | null>();
+    vi.mocked(delifastApi.order)
+      .mockResolvedValueOnce(order)
+      .mockReturnValueOnce(firstRefresh.promise)
+      .mockReturnValueOnce(secondRefresh.promise);
+    vi.useFakeTimers();
+    render(<DelifastPage />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("heading", {
+      name: "Votre commande est en attente de paiement.",
+    })).toBeInTheDocument();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Actualiser le suivi" }));
+      await vi.advanceTimersByTimeAsync(30000);
+      await act(async () => {
+        secondRefresh.resolve({ ...order, status: "DELIVERED", paymentStatus: "PAID" });
+        await Promise.resolve();
+      });
+      expect(screen.getByRole("heading", {
+        name: "Votre commande a été livrée (démo).",
+      })).toBeInTheDocument();
+      await act(async () => {
+        firstRefresh.reject(new Error("Réseau interrompu"));
+        await Promise.resolve();
+      });
+      expect(screen.queryByText("Actualisation impossible : Réseau interrompu")).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Votre commande a été livrée (démo)." })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("n’applique pas une restauration arrivée après le démontage", async () => {
+    rememberOrder();
+    const restoration = deferred<Order | null>();
+    vi.mocked(delifastApi.order).mockReturnValue(restoration.promise);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const view = render(<DelifastPage />);
+    await screen.findByText("Chez A");
+    view.unmount();
+    restoration.resolve(order);
+    await Promise.resolve();
+    expect(consoleError).not.toHaveBeenCalledWith(
+      expect.stringContaining("unmounted"),
+    );
+    consoleError.mockRestore();
+  });
+
+  it("n’applique pas un ancien refresh après le retour aux restaurants et une nouvelle commande", async () => {
+    rememberOrder();
+    const staleRefresh = deferred<Order | null>();
+    const nextOrder = { ...order, id: "o2" };
+    vi.mocked(delifastApi.order)
+      .mockResolvedValueOnce(order)
+      .mockReturnValueOnce(staleRefresh.promise);
+    vi.spyOn(delifastApi, "placeOrder").mockResolvedValue(nextOrder);
+    render(<DelifastPage />);
+    await screen.findByRole("heading", {
+      name: "Votre commande est en attente de paiement.",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Actualiser le suivi" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retour aux restaurants" }));
+    await prepareOrder();
+    fireEvent.click(screen.getByRole("button", { name: "Enregistrer la commande" }));
+    await screen.findByText("COMMANDE ENREGISTRÉE");
+    expect(screen.getByRole("button", { name: "Actualiser le suivi" })).toBeEnabled();
+    await act(async () => {
+      staleRefresh.resolve({ ...order, status: "DELIVERED" });
+      await Promise.resolve();
+    });
+    expect(screen.getByText("o2")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Votre commande est en attente de paiement." })).toBeInTheDocument();
   });
 });
 

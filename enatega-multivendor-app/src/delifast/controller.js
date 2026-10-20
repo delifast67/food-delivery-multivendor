@@ -292,8 +292,9 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
       if (epoch !== authEpoch) return null
       if (!token) return null
       api.setCustomerToken(token)
+      let customer
       try {
-        const customer = await api.customerMe()
+        customer = await api.customerMe()
         if (epoch !== authEpoch) return null
         if (!customer || typeof customer.id !== 'string' || typeof customer.phone !== 'string') throw new Error('Session client invalide')
         const addresses = api.customerAddresses ? await api.customerAddresses() : []
@@ -302,8 +303,14 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
         return clone(customer)
       } catch (error) {
         if (epoch !== authEpoch) return null
+        // A temporary outage must not turn a still-valid session into a logout.
+        // Keep the identity when customerMe succeeded so the user can retry the
+        // address-book request without losing their private session.
+        if (error.kind === 'unavailable') {
+          if (customer) set({ customer: clone(customer), addresses: [] })
+          throw error
+        }
         api.setCustomerToken(null); await storage.removeItem(CUSTOMER_TOKEN_KEY); set({ customer: null, addresses: [] })
-        if (error.kind === 'unavailable') throw error
         return null
       }
     },

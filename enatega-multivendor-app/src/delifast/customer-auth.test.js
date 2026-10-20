@@ -188,6 +188,22 @@ test('une panne réseau du carnet ne supprime pas la session client', async () =
   assert.deepEqual(controller.getState().addresses, [{ id: 'old' }])
 })
 
+test('une panne réseau pendant la restauration du carnet conserve la session et l’identité', async () => {
+  const store = storage({ [CUSTOMER_TOKEN_KEY]: 'valid-restore-token' }); let token = null
+  const customer = { id: 'c', phone: '+22670000000' }
+  const unavailable = Object.assign(new Error('Connexion interrompue'), { kind: 'unavailable' })
+  const controller = createController({ storage: store, api: {
+    setCustomerToken: value => { token = value },
+    customerMe: async () => customer,
+    customerAddresses: async () => { throw unavailable }
+  } })
+  await assert.rejects(controller.restoreCustomer(), /Connexion interrompue/)
+  assert.equal(token, 'valid-restore-token')
+  assert.equal(store.db[CUSTOMER_TOKEN_KEY], 'valid-restore-token')
+  assert.deepEqual(controller.getState().customer, customer)
+  assert.deepEqual(controller.getState().addresses, [])
+})
+
 for (const status of [401, 403]) {
   test(`le client HTTP classe le statut ${status} en refus d'authentification`, async () => {
     const api = createClient({ fetchImpl: async () => ({ ok: false, status, json: async () => ({ errors: [{ message: 'Accès refusé' }] }) }) })

@@ -222,3 +222,18 @@ it("rejects multi-operation queries and does not expose internal details", async
   expect(response.status).toBe(400);
   expect(response.body.errors[0].extensions.code).toBe("QUERY_TOO_COMPLEX");
 });
+
+it("rejects fragment-amplified queries before executing resolvers", async () => {
+  const fields = Array.from({ length: 40 }, (_, i) => `r${i}:restaurants{...Details}`).join(" ");
+  const response = await call(`{${fields}} fragment Details on Restaurant { id name description }`);
+  expect(response.status).toBe(400);
+  expect(response.body.data).toBeUndefined();
+  expect(response.body.errors[0].extensions.code).toBe("QUERY_TOO_COMPLEX");
+});
+
+it("continues accepting normal fragment-based queries", async () => {
+  const response = await call("{ restaurants { ...Details } } fragment Details on Restaurant { id name }");
+  expect(response.status).toBe(200);
+  expect(response.body.errors).toBeUndefined();
+  expect(response.body.data.restaurants).toHaveLength(2);
+});

@@ -105,6 +105,7 @@ export default function DelifastPage() {
   } | null>(null);
   const [draftSelections, setDraftSelections] = useState<OptionSelection[]>([]);
   const submittingRef = useRef(false);
+  const trackingRequestRef = useRef(0);
   const locked = !!attempt && !order;
 
   useEffect(() => {
@@ -126,6 +127,7 @@ export default function DelifastPage() {
     };
   }, [point]);
   useEffect(() => {
+    let cancelled = false;
     try {
       const raw = localStorage.getItem(attemptStorageKey);
       if (!raw) return;
@@ -136,12 +138,15 @@ export default function DelifastPage() {
       if (saved.order)
         delifastApi
           .order(saved.order.id, saved.order.accessToken)
-          .then((value) => value && setOrder(value))
-          .catch(() =>
-            setNotice(
-              "La commande précédente n'a pas pu être récupérée. La tentative reste verrouillée.",
-            ),
-          );
+          .then((value) => {
+            if (!cancelled && value) setOrder(value);
+          })
+          .catch(() => {
+            if (!cancelled)
+              setNotice(
+                "La commande précédente n'a pas pu être récupérée. La tentative reste verrouillée.",
+              );
+          });
       else
         setNotice(
           "Tentative non résolue restaurée. Reprenez-la sans modifier le panier ni l'adresse.",
@@ -153,6 +158,9 @@ export default function DelifastPage() {
         /* storage unavailable */
       }
     }
+    return () => {
+      cancelled = true;
+    };
   }, []);
   useEffect(() => {
     if (!attempt || !restaurants.length || selected) return;
@@ -169,9 +177,11 @@ export default function DelifastPage() {
   }, [attempt, restaurants, selected]);
   const refreshOrder = async () => {
     if (!order) return;
+    const requestId = ++trackingRequestRef.current;
     setTrackingLoading(true);
     try {
       const fresh = await delifastApi.order(order.id, order.accessToken);
+      if (requestId !== trackingRequestRef.current) return;
       if (fresh) {
         setOrder(fresh);
         setNotice("");
@@ -180,9 +190,10 @@ export default function DelifastPage() {
           "La commande n’a pas été retrouvée. Le dernier statut connu reste affiché.",
         );
     } catch (e) {
+      if (requestId !== trackingRequestRef.current) return;
       setNotice(`Actualisation impossible : ${messageFor(e)}`);
     } finally {
-      setTrackingLoading(false);
+      if (requestId === trackingRequestRef.current) setTrackingLoading(false);
     }
   };
   useEffect(() => {
@@ -434,6 +445,8 @@ export default function DelifastPage() {
     }
   };
   const resetForNewOrder = () => {
+    trackingRequestRef.current += 1;
+    setTrackingLoading(false);
     setOrder(null);
     setAttempt(null);
     setCart([]);
@@ -677,7 +690,7 @@ export default function DelifastPage() {
           </div>
           {locked && (
             <div className="df-notice">
-              Tentative verrouillée : aucune modification n'est permise.
+              Tentative verrouillée : aucune modification n&apos;est permise.
             </div>
           )}
           {!cart.length ? (
