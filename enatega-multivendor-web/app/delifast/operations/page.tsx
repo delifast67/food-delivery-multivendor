@@ -9,6 +9,7 @@ import {
 } from "@/lib/delifast/api";
 import "../delifast.css";
 import Catalogue from "./Catalogue";
+import RiderPicker from "./RiderPicker";
 import SupportPanel from "../SupportPanel";
 
 const TOKEN_KEY = "delifast-staff-token";
@@ -38,7 +39,6 @@ export default function OperationsPage() {
   const [token, setToken] = useState("");
   const [user, setUser] = useState<StaffUser | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [riders, setRiders] = useState<StaffUser[]>([]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState("");
@@ -70,10 +70,6 @@ export default function OperationsPage() {
       if (!isCurrent()) return;
       setUser(me);
       setOrders(nextOrders);
-      if (me.role.toLowerCase() === "admin") {
-        const nextRiders = await delifastApi.availableRiders(activeToken);
-        if (isCurrent()) setRiders(nextRiders);
-      }
     } catch (e) {
       if (!isCurrent()) return;
       const text = message(e);
@@ -85,7 +81,6 @@ export default function OperationsPage() {
         setToken("");
         setUser(null);
         setOrders([]);
-        setRiders([]);
         setSection("orders");
       }
       setError(text);
@@ -141,7 +136,6 @@ export default function OperationsPage() {
     setToken("");
     setUser(null);
     setOrders([]);
-    setRiders([]);
     setSection("orders");
     try {
       const revoked = previousToken
@@ -361,7 +355,8 @@ export default function OperationsPage() {
                   <OrderDetails
                     order={order}
                     role={role}
-                    riders={riders}
+                    key={`${token}:${order.id}`}
+                    token={token}
                     busy={busy}
                     onTransition={(status) => transition(order, status)}
                     onPayment={() =>
@@ -392,7 +387,7 @@ export default function OperationsPage() {
 function OrderDetails({
   order,
   role,
-  riders,
+  token,
   busy,
   onTransition,
   onPayment,
@@ -400,11 +395,11 @@ function OrderDetails({
 }: {
   order: Order;
   role: string;
-  riders: StaffUser[];
+  token: string;
   busy: string;
   onTransition: (s: string) => void;
   onPayment: () => void;
-  onAssign: (id: string) => void;
+  onAssign: (id: string) => Promise<void>;
 }) {
   const restaurant = role === "restaurant" || role === "admin";
   const rider = role === "rider" || role === "admin";
@@ -513,33 +508,12 @@ function OrderDetails({
       )}
       {role === "admin" &&
         ["ACCEPTED", "PREPARING", "READY"].includes(order.status) && (
-          <div className="df-assign">
-            <label htmlFor={`assign-rider-${order.id}`}>
-              Assigner un livreur
-            </label>
-            <select
-              id={`assign-rider-${order.id}`}
-              value={order.riderId || ""}
-              onChange={(e) => e.target.value && onAssign(e.target.value)}
-              disabled={busy !== "" || !!order.riderId}
-              aria-describedby={
-                order.riderId ? `assign-rider-help-${order.id}` : undefined
-              }
-            >
-              <option value="">Choisir…</option>
-              {riders.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
-            {order.riderId && (
-              <p id={`assign-rider-help-${order.id}`} className="df-muted">
-                Affectation définitive pour la démo : l’API n’autorise pas la
-                réaffectation.
-              </p>
-            )}
-          </div>
+          <RiderPicker
+            token={token}
+            order={order}
+            busy={busy}
+            onAssign={onAssign}
+          />
         )}
       {rider && !canMove && !next[order.status] && (
         <p className="df-muted">Aucune transition disponible pour ce statut.</p>

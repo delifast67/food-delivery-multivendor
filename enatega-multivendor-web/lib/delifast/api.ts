@@ -272,6 +272,8 @@ const SET_CATEGORY_ARCHIVED = `mutation SetMenuCategoryArchived($id: ID!, $expec
 const SET_MENU_ITEM_ARCHIVED = `mutation SetMenuItemArchived($id: ID!, $expectedVersion: Int!, $archived: Boolean!) { setMenuItemArchived(id: $id, expectedVersion: $expectedVersion, archived: $archived) { ${MENU_ITEM_FIELDS} } }`;
 const SET_RESTAURANT_OPEN = `mutation SetRestaurantOpen($id: ID!, $expectedVersion: Int!, $open: Boolean!) { setRestaurantOpen(id: $id, expectedVersion: $expectedVersion, open: $open) { ${RESTAURANT_FIELDS} } }`;
 const AVAILABLE_RIDERS = `query AvailableRiders { availableRiders { id name role restaurantId } }`;
+const RIDER_SUMMARIES = `query OperationsRiderSummaries($after: ID, $riderId: ID) { operationsRiderSummaries(limit: 20, after: $after, riderId: $riderId) { items { id name } nextCursor } }`;
+const RIDER_DETAIL = `query OperationsRider($id: ID!) { operationsRider(id: $id) { id name role restaurantId } }`;
 const ME = `query Me { me { id name role restaurantId } }`;
 const STAFF_LOGOUT = `mutation StaffLogout { staffLogout }`;
 const CUSTOMER_FIELDS = `id phone firstName lastName email`;
@@ -648,6 +650,26 @@ export const delifastApi = {
       { id, expectedVersion, open },
       token,
     ).then((data) => data.setRestaurantOpen),
+  operationsRiderSummaries: (
+    token: string,
+    after: string | null = null,
+    riderId: string | null = null,
+  ) =>
+    request<{
+      operationsRiderSummaries: {
+        items: Array<{ id: string; name: string }>;
+        nextCursor: string | null;
+      };
+    }>(RIDER_SUMMARIES, { after, riderId }, token).then(
+      (data) => data.operationsRiderSummaries,
+    ),
+  operationsRider: (token: string, id: string) =>
+    request<{ operationsRider: StaffUser | null }>(
+      RIDER_DETAIL,
+      { id },
+      token,
+    ).then((data) => data.operationsRider),
+  // Compatibilité des consommateurs externes : ne pas tronquer ce contrat legacy.
   availableRiders: (token: string) =>
     request<{ availableRiders: StaffUser[] }>(
       AVAILABLE_RIDERS,

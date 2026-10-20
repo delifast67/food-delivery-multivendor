@@ -59,7 +59,14 @@ beforeEach(() => {
     .spyOn(delifastApi, "operationsOrders")
     .mockResolvedValue([order]);
   me = vi.spyOn(delifastApi, "me").mockResolvedValue(restaurant);
-  vi.spyOn(delifastApi, "availableRiders").mockResolvedValue([rider]);
+  vi.spyOn(delifastApi, "availableRiders").mockRejectedValue(
+    new Error("Legacy interdit"),
+  );
+  vi.spyOn(delifastApi, "operationsRiderSummaries").mockResolvedValue({
+    items: [{ id: rider.id, name: rider.name }],
+    nextCursor: null,
+  });
+  vi.spyOn(delifastApi, "operationsRider").mockResolvedValue(rider);
   vi.spyOn(delifastApi, "staffLogin").mockResolvedValue({
     token,
     user: restaurant,
@@ -291,9 +298,14 @@ describe("permissions et mutations opérations", () => {
     order = makeOrder("ACCEPTED");
     operationsOrders.mockResolvedValue([order]);
     await openOrder();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Assigner un livreur")).not.toBeDisabled(),
+    );
     fireEvent.change(screen.getByLabelText("Assigner un livreur"), {
       target: { value: rider.id },
     });
+    await waitFor(() => expect(delifastApi.assignRider).toHaveBeenCalled());
+    expect(delifastApi.operationsRider).toHaveBeenCalledWith(token, rider.id);
     expect(delifastApi.assignRider).toHaveBeenCalledWith(
       token,
       "o1",
@@ -476,4 +488,34 @@ it("retire immédiatement le support pendant une révocation serveur lente", asy
   expect(
     screen.getByRole("button", { name: "Se connecter" }),
   ).not.toBeDisabled();
+});
+
+describe("catalogue livreurs borné à la demande", () => {
+  it.each([restaurant, rider])(
+    "ne charge jamais les livreurs pour $role",
+    async (staff) => {
+      me.mockResolvedValue(staff);
+      await openOrder();
+      expect(delifastApi.operationsRiderSummaries).not.toHaveBeenCalled();
+      expect(delifastApi.operationsRider).not.toHaveBeenCalled();
+      expect(delifastApi.availableRiders).not.toHaveBeenCalled();
+    },
+  );
+  it("ne charge ni à la connexion admin, ni au rafraîchissement, mais à l’ouverture du détail assignable", async () => {
+    me.mockResolvedValue(admin);
+    await login();
+    expect(delifastApi.operationsRiderSummaries).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Actualiser" }));
+    await waitFor(() => expect(operationsOrders).toHaveBeenCalledTimes(2));
+    expect(delifastApi.operationsRiderSummaries).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /#o1/ }));
+    await waitFor(() =>
+      expect(delifastApi.operationsRiderSummaries).toHaveBeenCalledWith(
+        token,
+        null,
+        null,
+      ),
+    );
+    expect(delifastApi.availableRiders).not.toHaveBeenCalled();
+  });
 });

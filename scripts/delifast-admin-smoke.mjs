@@ -84,6 +84,7 @@ try {
   const other = await login('restaurant2@delifast.local', 'RestaurantDemo!2026');
   const rider = await login('rider@delifast.local', 'RiderDemo!2026');
   assert.equal((await gql('{me{id role}}', {}, admin.token)).me.role, 'ADMIN');
+  // Contrat legacy intentionnel : vérifier que le catalogue reste interdit aux restaurants.
   await rejected('{availableRiders{id}}', {}, restaurant.token, 'FORBIDDEN');
   await rejected(restaurantsQuery, {}, rider.token, 'FORBIDDEN');
   const client = new DelifastClient(`${origin}/api/delifast/graphql`);
@@ -283,8 +284,9 @@ try {
   await rejected(transitionMutation, { id: paid.id, expected: 'CONFIRMED', status: 'DELIVERED' }, admin.token, 'INVALID_TRANSITION');
   await client.transition(paid.id, 'ACCEPTED', 'CONFIRMED');
   await rejected(transitionMutation, { id: paid.id, expected: 'CONFIRMED', status: 'ACCEPTED' }, admin.token, 'CONCURRENT_MODIFICATION');
-  const riders = (await gql('{availableRiders{id name role}}', {}, admin.token)).availableRiders;
-  assert.ok(riders.some(x => x.id === rider.user.id));
+  const riderPage = (await gql('query RiderSummary($limit:Int,$riderId:ID){operationsRiderSummaries(limit:$limit,riderId:$riderId){items{id name} nextCursor}}', { limit: 20, riderId: rider.user.id }, admin.token)).operationsRiderSummaries;
+  assert.deepEqual(riderPage.items.map(x => x.id), [rider.user.id], 'Le filtre exact doit retrouver le livreur actif hors page');
+  assert.equal(riderPage.nextCursor, null);
   await rejected(assignMutation, { id: paid.id, rider: rider.user.id, expected: 'ACCEPTED' }, restaurant.token, 'FORBIDDEN');
   await client.assignRider(paid.id, rider.user.id, 'ACCEPTED');
   await gql(transitionMutation, { id: paid.id, expected: 'ACCEPTED', status: 'PREPARING' }, admin.token);

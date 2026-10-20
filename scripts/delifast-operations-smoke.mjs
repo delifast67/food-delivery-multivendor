@@ -68,8 +68,9 @@ try {
   order = (await gql(transition, { id: order.id, status: 'ACCEPTED', expected: order.status }, restaurant.token)).transitionOrder;
   await refused(transition, { id: order.id, status: 'PREPARING', expected: 'CONFIRMED' }, restaurant.token);
   await refused(assign, { id: order.id, rider: rider.user.id, expected: order.status }, restaurant.token);
-  const riders = (await gql('{availableRiders{id role}}', {}, admin.token)).availableRiders;
-  assert.ok(riders.some(entry => entry.id === rider.user.id));
+  const riderPage = (await gql('query RiderSummary($limit:Int,$riderId:ID){operationsRiderSummaries(limit:$limit,riderId:$riderId){items{id name} nextCursor}}', { limit: 20, riderId: rider.user.id }, admin.token)).operationsRiderSummaries;
+  assert.deepEqual(riderPage.items.map(entry => entry.id), [rider.user.id], 'Le filtre exact doit retrouver le livreur actif hors page');
+  assert.equal(riderPage.nextCursor, null);
   order = (await gql(assign, { id: order.id, rider: rider.user.id, expected: order.status }, admin.token)).assignRider;
   assert.equal(order.riderId, rider.user.id);
   ok('version périmée refusée et affectation du livreur réservée à l’admin');

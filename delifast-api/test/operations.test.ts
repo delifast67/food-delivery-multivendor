@@ -90,6 +90,27 @@ describe("contrat opérations", () => {
         active: true,
       },
     ]);
+    const legacyRiderPasswordHash = passwordHash("Rider!123");
+    await db.collection("staff_users").insertMany([
+      ...Array.from({ length: 55 }, (_, index) => ({
+        id: `legacy-rider-${String(index).padStart(3, "0")}`,
+        name: `Legacy rider ${index}`,
+        email: `legacy-rider-${index}@x`,
+        role: "RIDER",
+        restaurantId: null,
+        passwordHash: legacyRiderPasswordHash,
+        active: true,
+      })),
+      {
+        id: "legacy-inactive-rider",
+        name: "Inactive legacy rider",
+        email: "legacy-inactive@x",
+        role: "RIDER",
+        restaurantId: null,
+        passwordHash: legacyRiderPasswordHash,
+        active: false,
+      },
+    ]);
     for (const restaurant of await db.collection("restaurants").find({}).toArray()) {
     await db.collection("delivery_zones").insertOne({ id:`test-zone-${restaurant.id}`,restaurantId:restaurant.id,name:"Zone fictive de test",shape:"CIRCLE",center:{latitude:12.3714,longitude:-1.5197},radiusMeters:10000,enabled:true,feeXof:500,minimumOrderXof:0,estimatedMinutes:45,priority:0,demo:true,hours:[],version:0 });
   }
@@ -120,6 +141,24 @@ describe("contrat opérations", () => {
       (await gql("{operationsOrders{id}}", {}, admin.token)).errors[0]
         .extensions.code,
     ).toBe("UNAUTHENTICATED");
+  });
+
+  it("préserve le contrat legacy availableRiders non borné et réservé à ADMIN", async () => {
+    const admin = await login("admin@x", "Admin!123");
+    const restaurant = await login("rest@x", "Rest!123");
+    const rider = await login("rider@x", "Rider!123");
+    const query = "{availableRiders{id name role restaurantId}}";
+    const result = await gql(query, {}, admin.token);
+    expect(result.errors).toBeUndefined();
+    const riders = result.data.availableRiders;
+    expect(riders.length).toBeGreaterThan(50);
+    expect(riders.every((entry: any) => Object.keys(entry).sort().join(",") === "id,name,restaurantId,role")).toBe(true);
+    expect(riders.every((entry: any) => entry.role === "RIDER")).toBe(true);
+    expect(riders.every((entry: any) => entry.id !== "legacy-inactive-rider")).toBe(true);
+    expect(riders.some((entry: any) => entry.id === "legacy-rider-054")).toBe(true);
+    expect((await gql(query, {}, restaurant.token)).errors?.[0].extensions.code).toBe("FORBIDDEN");
+    expect((await gql(query, {}, rider.token)).errors?.[0].extensions.code).toBe("FORBIDDEN");
+    expect((await gql(query)).errors?.[0].extensions.code).toBe("UNAUTHENTICATED");
   });
 
   it.each([
