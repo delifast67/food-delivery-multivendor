@@ -65,6 +65,8 @@ test("le mode rider reste MULTI même si l'environnement demande SINGLE", () => 
   process.env.EXPO_PUBLIC_VENDOR_MODE = "SINGLE";
   const { mode } = riderModeModule();
   assert.equal(mode.getForcedRiderServerMode(), mode.RIDER_SERVER_MODES.MULTI);
+  assert.equal(mode.isRiderServerMode("SINGLE"), false);
+  assert.equal(mode.RIDER_SERVER_MODES.SINGLE, undefined);
 });
 
 test("la migration isole les clés multi, conserve l'existant et ne lit pas SINGLE", async () => {
@@ -74,22 +76,22 @@ test("la migration isole les clés multi, conserve l'existant et ne lit pas SING
   storage.set("rider-id", "legacy-id");
   secure.set(mode.getRiderTokenKey(mode.RIDER_SERVER_MODES.MULTI), "existing-token");
   secure.set(mode.getRiderIdKey(mode.RIDER_SERVER_MODES.MULTI), "existing-id");
-  secure.set(mode.getRiderTokenKey(mode.RIDER_SERVER_MODES.SINGLE), "single-token");
-  secure.set(mode.getRiderIdKey(mode.RIDER_SERVER_MODES.SINGLE), "single-id");
+  secure.set("enatega-rider-single-token", "single-token");
+  secure.set("enatega-rider-single-id", "single-id");
 
   await mode.migrateLegacyRiderStorage();
 
   assert.equal(secure.get(mode.getRiderTokenKey(mode.RIDER_SERVER_MODES.MULTI)), "existing-token");
   assert.equal(secure.get(mode.getRiderIdKey(mode.RIDER_SERVER_MODES.MULTI)), "existing-id");
-  assert.equal(secure.get(mode.getRiderTokenKey(mode.RIDER_SERVER_MODES.SINGLE)), "single-token");
-  assert.equal(secure.get(mode.getRiderIdKey(mode.RIDER_SERVER_MODES.SINGLE)), "single-id");
+  assert.equal(secure.get("enatega-rider-single-token"), "single-token");
+  assert.equal(secure.get("enatega-rider-single-id"), "single-id");
   assert.equal(storage.get("rider-token"), undefined);
   assert.equal(storage.get("rider-id"), undefined);
 });
 
 test("le provider hydrate MULTI même avec une sélection persistée SINGLE", async () => {
   const { mode, storage, asyncStorage } = riderModeModule();
-  storage.set(mode.RIDER_SERVER_MODE_STORAGE_KEY, mode.RIDER_SERVER_MODES.SINGLE);
+  storage.set(mode.RIDER_SERVER_MODE_STORAGE_KEY, "SINGLE");
   const React = require("react");
   const renderer = require("react-test-renderer");
   let observed;

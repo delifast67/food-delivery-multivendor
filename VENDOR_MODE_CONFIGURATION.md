@@ -1,64 +1,41 @@
-# Delifast : plateforme multivendeur par défaut
+# Delifast : plateforme multivendeur uniquement
 
-Les clients web et Expo démarrent directement sur Delifast. Les applications restaurant et livreur démarrent sur leurs parcours autonomes Delifast ; leurs couches historiques conservées sont également verrouillées sur le backend multivendeur. Un panier reste limité à un restaurant : cette règle de commande n’est pas un mode monovendeur de la plateforme.
+Les clients web, Expo client, restaurant et livreur démarrent sur leurs entrées Delifast autonomes. Plusieurs restaurants peuvent recevoir des commandes et un même livreur peut traiter leurs missions. Un panier limité à un restaurant reste une règle de commande, pas un mode monovendeur de la plateforme.
 
-Le parcours local permet de commander auprès de plusieurs restaurants, chacun avec son catalogue et son périmètre de commandes. L’administration peut consulter les établissements et affecter un livreur ; un même livreur peut recevoir des missions provenant de restaurants différents. Aucun paiement réel, SMS, changement de configuration externe, push Git, fusion ou déploiement n’est effectué par ce lot.
+## Nettoyage des chemins morts
 
-## Clients web et mobile
+Le nettoyage client web/mobile précédent a été étendu aux couches restaurant et livreur historiques. Les requêtes et abonnements Apollo monovendeur, les branches conditionnelles qui les sélectionnaient, les variables EAS spécifiques, les anciens scripts de diagnostic monovendeur et leurs entrées npm ont été retirés. Les constantes de mode ne proposent plus que `MULTI`; les providers n’exposent plus de bascule ou de sélection de mode. Les traductions inutilisées du choix monovendeur et une consigne de soumission Google Play obsolète ont été corrigées.
 
-Les modules, routes spécifiques, appels GraphQL, bascules d’interface, variables et scripts de validation monovendeur propres aux clients web et Expo ont été retirés lors du lot précédent. Les anciennes URL spécifiques ne réactivent pas ces parcours.
+Les contrats multivendeurs partagés sont conservés : profil restaurant, listes de commandes, abonnements, chat historique et règles d’état du livreur. La pagination qui appartenait au contrat monovendeur du livreur n’a pas été activée par accident sur le contrat multivendeur : l’interface historique garde un chargement supplémentaire sans effet et `hasMoreAssigned=false`. Les listes Delifast autonomes ne dépendent pas de cette couche.
+
+La migration des anciennes clés de session **non scopées** vers le namespace multivendeur reste nécessaire aux installations historiques. Elle ne copie pas les anciennes sessions explicitement monovendeur et n’écrase pas une session multivendeur existante. Les valeurs de mode persistées et anciennes variables d’environnement ne permettent pas de réactiver un autre parcours. Les sessions Delifast autonomes restent distinctes.
+
+## Références conservées, volontairement
+
+Il ne serait pas exact de prétendre qu’aucune occurrence textuelle ne subsiste dans le dépôt.
+
+- **Admin : `ISingleVendorResponseGraphQL`**, neuf occurrences dans cinq fichiers sous `lib/context/vendor`, `lib/ui/screen-components/protected/layout/vendor-layout` et `lib/utils/interfaces`. C’est la réponse de `getVendor` pour le profil d’un vendeur individuel, pas un mode de plateforme. Ses consommateurs, le catalogue de vendeurs et leurs restaurants sont conservés pour ne pas casser l’admin partagé multivendeur. L’entrée admin Delifast locale ne charge pas ces providers historiques.
+- **Tests : anciennes valeurs et namespaces de session**, ainsi que noms de modules supprimés dans les gardes anti-régression. Ils prouvent le refus d’un ancien mode et l’isolation des identifiants, sans fournir une fonctionnalité de production.
+- **Documentation historique et Git** : les bilans antérieurs décrivent les états successifs du nettoyage. Ils ne sont pas des instructions actuelles pour activer un mode supprimé. Le code retiré reste consultable dans l’historique Git.
+
+Les deux helpers `lib` à la racine ont été inspectés : ils concernent le rafraîchissement et le stockage d’authentification, sans sélecteur monovendeur; ils n’ont pas été modifiés. Aucun nettoyage lexical massif ni suppression de fonctionnalité multivendeur partagée n’est effectué.
+
+## Gardes et vérifications
 
 ```bash
 node --test scripts/delifast-client-multivendor.test.mjs
-npm test --prefix enatega-multivendor-web
-npm run test:delifast --prefix enatega-multivendor-app
-```
-
-## Restaurant et livreur
-
-Les écrans de connexion historiques ne proposent plus de choix Multi/Single ni les identifiants de démonstration monovendeur. Une ancienne sélection persistée ou une ancienne variable de mode ne peut plus activer ce parcours. Les helpers d’environnement ne sélectionnent plus d’URL monovendeur : ils utilisent les connexions multivendeurs existantes, sans changer les fichiers de déploiement ou les valeurs de connexion.
-
-Les clés de session explicitement monovendeur restent isolées : elles ne sont ni copiées dans le namespace multivendeur ni utilisées pour s’authentifier auprès de son backend. La migration des anciennes clés non scopées reste une compatibilité avec le client multivendeur historique ; elle n’écrase pas une session multivendeur déjà présente. Les sessions Delifast autonomes restent distinctes de ces couches historiques.
-
-Le restaurant utilise les requêtes multivendeurs pour son profil et ses commandes, les abonnements correspondants et le parcours de configuration existant. Les anciens documents Apollo monovendeur et leurs scripts de diagnostic restent conservés comme sources historiques, mais ne sont pas sélectionnés par le parcours produit. Leur présence n’est pas une fonctionnalité monovendeur réactivable depuis la connexion.
-
-```bash
+node --test scripts/delifast-staff-multivendor.test.mjs
 npm run test:delifast --prefix enatega-multivendor-store
-(cd enatega-multivendor-store && npx jest --runInBand lib/mode/store-mode.test.ts lib/services/secure-storage.test.ts lib/context/global/restaurant.test.tsx lib/context/global/store-mode.context.test.tsx)
-npm test --prefix enatega-multivendor-rider
-node --test scripts/delifast-store-entry.test.mjs scripts/delifast-rider-entry.test.mjs
-```
-
-Les fichiers `eas.json`, les archives de routes et leurs variables historiques ne sont pas modifiés. Les scripts de diagnostic monovendeur ne sont pas exécutés : ils ne constituent pas une recette Delifast et certains peuvent contacter un serveur externe. Aucun nettoyage lexical massif n’est réalisé.
-
-## Administration
-
-L’audit ne trouve pas de bascule monovendeur à retirer dans l’admin. `ISingleVendorResponseGraphQL` désigne la réponse `getVendor` d’un profil vendeur individuel ; le supprimer confondrait un profil et le mode global de la plateforme. La liste de vendeurs et leurs restaurants restent disponibles. Des tests ciblés protègent cette distinction et l’absence de mode monovendeur exécutable.
-
-```bash
+npm run test:delifast --prefix enatega-multivendor-rider
 npm run test:admin-multivendor --prefix enatega-multivendor-admin
-npm run test:delifast --prefix enatega-multivendor-admin
 ```
 
-## Contrôle multirestaurant de bout en bout API
+La garde staff examine les sources suivies restaurant/livreur/admin et les helpers racine, y compris les scripts et configurations. Elle exclut les tests et n’autorise dans l’admin que le nom précis `ISingleVendorResponseGraphQL` pour la raison ci-dessus. Elle est exécutée dans les trois jobs CI staff. Les tests de migration continuent d’injecter d’anciennes valeurs comme données hostiles.
 
-Le test `delifast-api/test/multivendor-operations.test.ts` crée deux restaurants fictifs et leurs commandes dans MongoDB jetable. Chaque restaurant voit et prépare seulement sa propre commande ; une tentative sur l’autre établissement est refusée sans révéler la commande. L’admin voit les deux commandes, les affecte au même livreur, puis ce livreur peut récupérer et livrer les deux. Un autre livreur ne voit aucune de ces missions. Les confirmations de paiement sont strictement simulées dans la base du test.
-
-```bash
-npm test --prefix delifast-api -- test/multivendor-operations.test.ts
-npm run build --prefix delifast-api
-node scripts/delifast-store-smoke.mjs
-node scripts/delifast-rider-smoke.mjs
-```
+La validation de ce lot comprend les suites API/web/client/restaurant/livreur/admin, les contrats GraphQL, les types, les exports JS/Hermes Android/iOS, une compilation web propre et la recette Chromium multirestaurant sur MongoDB jetable. Le proxy admin compilé est testé séparément. Le détail et les limites figurent dans le [guide local](README_DELIFAST_LOCAL.md).
 
 ## Limites et licences
 
-Le [guide local](README_DELIFAST_LOCAL.md) distingue résultats actuels, validations historiques et fonctions manquantes. Les sources historiques ne sont pas intégralement migrées vers le contrat Delifast ; la suppression des bascules n’affirme pas le contraire. La vérification TypeScript globale du restaurant historique reste bloquée par sa configuration et des erreurs antérieures : les tests ciblés et exports JS ne sont pas une validation de toutes ces sources, ni des builds natifs signés.
+La suppression du mode monovendeur ne signifie pas que le projet complet est terminé ou prêt pour la production. Les sources historiques conservées ne sont pas toutes migrées vers Delifast. Les exports JS/Hermes ne sont ni des APK/IPA signés ni une recette sur téléphone. L’audit design conserve un historique de constats : son succès ne signifie pas zéro défaut visuel.
 
-Le répertoire `enatega-singlevendor-admin` avait déjà été retiré ; son code reste dans l’historique Git. La notice tierce est conservée dans `docs/historique/LICENSE_CREATIVE_TIM.txt`. La licence MIT du dépôt, les notices de dépendances, les migrations et les contrats de l’API ne sont pas modifiés par ce lot.
-
-Pour inventorier les références historiques restantes, sans assimiler chaque nom à une fonctionnalité active :
-
-```bash
-git grep -n -i -E 'single[-_]?vendor' -- enatega-multivendor-store enatega-multivendor-rider enatega-multivendor-admin ':!*lock*'
-```
+Le répertoire d’administration monovendeur avait déjà été supprimé; la notice tierce `docs/historique/LICENSE_CREATIVE_TIM.txt`, la licence MIT racine et les notices de dépendances sont préservées. About reste inchangé. La publication autorisée concerne uniquement la branche `feat/delifast-local-ordering` du fork `delifast67/food-delivery-multivendor` et sa PR ouverte, sans fusion ni déploiement. Aucun achat, paiement ou SMS réel, aucune modification Orange n’est effectué.

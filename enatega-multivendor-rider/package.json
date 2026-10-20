@@ -14,7 +14,6 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "test": "node --test src/delifast/*.test.js ../scripts/delifast-rider-entry.test.mjs",
-    "check:single-vendor-schema": "node ./scripts/check-single-vendor-schema.js",
     "lint": "npx eslint && prettier --write .",
     "upload-sourcemaps": "npx sentry-expo upload-sourcemaps",
     "test:delifast": "node --test src/delifast/*.test.js",

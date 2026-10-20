@@ -5,7 +5,6 @@ import { STORE_ID, STORE_TOKEN } from "@/lib/utils/constants";
 
 export const STORE_SERVER_MODES = {
   MULTI: "MULTI",
-  SINGLE: "SINGLE",
 } as const;
 
 export type StoreServerMode =
@@ -21,8 +20,7 @@ const STORE_STORAGE_MIGRATION_KEY = "@enatega/store/server-storage-migrated-v1";
 
 export const isStoreServerMode = (
   value: string | null,
-): value is StoreServerMode =>
-  value === STORE_SERVER_MODES.MULTI || value === STORE_SERVER_MODES.SINGLE;
+): value is StoreServerMode => value === STORE_SERVER_MODES.MULTI;
 
 const modeSuffix = (mode: StoreServerMode) => mode.toLowerCase();
 

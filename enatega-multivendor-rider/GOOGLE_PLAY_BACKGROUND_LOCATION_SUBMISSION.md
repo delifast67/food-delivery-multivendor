@@ -41,7 +41,7 @@ The app requires authentication and an assigned delivery to display the declared
 
 - Rider account: `[REVIEWER_EMAIL_OR_PHONE]`
 - Password or OTP instructions: `[REVIEWER_PASSWORD_OR_FIXED_OTP]`
-- Server mode, if prompted: `[MULTI_VENDOR_OR_SINGLE_VENDOR]`
+- Server mode: multivendor only; no server-mode selector is shown.
 - Test order: `[ORDER_ID]`
 - Steps: Sign in, open **New Orders** or **Processing**, and accept/open the assigned test order. The background-location disclosure appears when the order becomes an active delivery.
 - Keep this account and test order available throughout the review period.

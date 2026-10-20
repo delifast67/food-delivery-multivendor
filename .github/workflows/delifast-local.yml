@@ -163,6 +163,7 @@ jobs:
       - name: Tester le restaurant et son contrat
         run: |
           node --test scripts/delifast-store-entry.test.mjs
+          node --test scripts/delifast-staff-multivendor.test.mjs
           node --test --test-name-pattern=enatega-multivendor-store scripts/delifast-mobile-tsconfig.test.mjs
           npm run test:delifast --prefix enatega-multivendor-store
           node scripts/delifast-store-contract.mjs
@@ -196,6 +197,7 @@ jobs:
       - name: Tester le livreur et son contrat
         run: |
           node --test scripts/delifast-rider-entry.test.mjs
+          node --test scripts/delifast-staff-multivendor.test.mjs
           node --test --test-name-pattern=enatega-multivendor-rider scripts/delifast-mobile-tsconfig.test.mjs
           npm run test:delifast --prefix enatega-multivendor-rider
           node scripts/delifast-rider-contract.mjs
@@ -229,6 +231,7 @@ jobs:
         run: |
           npm run build --prefix delifast-api
           node --test scripts/delifast-admin-entry.test.mjs
+          node --test scripts/delifast-staff-multivendor.test.mjs
           npm run test:delifast --prefix enatega-multivendor-admin
           npm run build --prefix enatega-multivendor-admin
       - name: Recette HTTP admin et MongoDB jetable, sans paiement

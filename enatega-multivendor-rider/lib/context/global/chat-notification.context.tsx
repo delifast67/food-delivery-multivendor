@@ -16,15 +16,13 @@ import {
 import { useTranslation } from "react-i18next";
 import { AppState, AppStateStatus, Platform } from "react-native";
 
-import { RIDER_ORDERS, SINGLE_VENDOR_RIDER_ORDERS } from "@/lib/apollo/queries";
+import { RIDER_ORDERS } from "@/lib/apollo/queries";
 import {
-  SINGLE_VENDOR_SUBSCRIPTION_NEW_MESSAGE,
   SUBSCRIPTION_NEW_MESSAGE,
 } from "@/lib/apollo/subscriptions";
 import {
   getChatUnreadKey,
   getHandledNotificationKey,
-  RIDER_SERVER_MODES,
 } from "@/lib/mode/rider-mode";
 import FlashMessageComponent from "@/lib/ui/useable-components/flash-message";
 import {
@@ -202,10 +200,7 @@ export const ChatNotificationProvider = ({
   useEffect(() => {
     if (!hydrated || !userId || !subscribedOrderIdsKey) return;
 
-    const chatSubscription =
-      mode === RIDER_SERVER_MODES.SINGLE
-        ? SINGLE_VENDOR_SUBSCRIPTION_NEW_MESSAGE
-        : SUBSCRIPTION_NEW_MESSAGE;
+    const chatSubscription = SUBSCRIPTION_NEW_MESSAGE;
     const subscriptions = subscribedOrderIdsKey.split("\u0000").map((orderId) =>
       client
         .subscribe<{ subscriptionNewMessage?: IncomingChatMessage }>({
@@ -296,16 +291,10 @@ export const ChatNotificationProvider = ({
         return;
       }
 
-      const riderOrdersQuery =
-        mode === RIDER_SERVER_MODES.SINGLE
-          ? SINGLE_VENDOR_RIDER_ORDERS
-          : RIDER_ORDERS;
+      const riderOrdersQuery = RIDER_ORDERS;
       await client.query({
         query: riderOrdersQuery,
-        variables:
-          mode === RIDER_SERVER_MODES.SINGLE
-            ? { limit: 50, offset: 0 }
-            : { userId },
+        variables: { userId },
         fetchPolicy: "network-only",
       });
       router.navigate({

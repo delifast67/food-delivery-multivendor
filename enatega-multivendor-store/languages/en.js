@@ -6,7 +6,6 @@ export const en = {
   Earnings: "Earnings",
   Profile: "Profile",
   "Multi Vendor": "Multi Vendor",
-  "Single Vendor": "Single Vendor",
 
   // FAQs
   faq1: "How do I place an order?",

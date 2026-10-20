@@ -2,15 +2,8 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
-import {
-  StoreModeProvider,
-  useStoreMode,
-} from "./store-mode.context";
-import {
-  getStoreIdKey,
-  getStoreTokenKey,
-  STORE_SERVER_MODES,
-} from "@/lib/mode/store-mode";
+import { StoreModeProvider, useStoreMode } from "./store-mode.context";
+import { getStoreTokenKey, STORE_SERVER_MODES } from "@/lib/mode/store-mode";
 
 jest.mock("@react-native-async-storage/async-storage", () => ({
   getItem: jest.fn(),
@@ -26,12 +19,11 @@ jest.mock("expo-secure-store", () => ({
 describe("StoreModeProvider", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env.EXPO_PUBLIC_VENDOR_MODE = STORE_SERVER_MODES.SINGLE;
+    process.env.EXPO_PUBLIC_VENDOR_MODE = "SINGLE";
     jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
     jest.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
-      if (key === getStoreTokenKey(STORE_SERVER_MODES.SINGLE))
-        return "single-token";
-      if (key === getStoreIdKey(STORE_SERVER_MODES.SINGLE)) return "single-store";
+      if (key === "enatega-store-single-token") return "single-token";
+      if (key === "enatega-store-single-id") return "single-store";
       return null;
     });
   });
@@ -56,7 +48,6 @@ describe("StoreModeProvider", () => {
       await Promise.resolve();
     });
     expect(context?.mode).toBe(STORE_SERVER_MODES.MULTI);
-    expect(context?.isSingleVendor).toBe(false);
     expect(context?.isModeReady).toBe(true);
     expect(context?.tokenKey).toBe(getStoreTokenKey(STORE_SERVER_MODES.MULTI));
     expect(SecureStore.setItemAsync).not.toHaveBeenCalledWith(

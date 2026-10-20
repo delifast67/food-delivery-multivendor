@@ -373,5 +373,4 @@ export const en = {
   "Loading...": "Loading...",
   "Oops!": "Oops!",
   "Multi Vendor": "Multi Vendor",
-  "Single Vendor": "Single Vendor",
 };

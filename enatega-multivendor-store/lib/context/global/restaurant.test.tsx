@@ -28,7 +28,6 @@ jest.mock("@/lib/services", () => ({
 
 jest.mock("@/lib/context/global/store-mode.context", () => ({
   useStoreMode: () => ({
-    isSingleVendor: false,
     storeIdKey: "store-id",
   }),
 }));
@@ -45,12 +44,12 @@ describe("RestaurantProvider app state reconciliation", () => {
       configurable: true,
       value: "active",
     });
-    jest.spyOn(AppState, "addEventListener").mockImplementation(
-      (_event, listener) => {
+    jest
+      .spyOn(AppState, "addEventListener")
+      .mockImplementation((_event, listener) => {
         mockAppStateListener = listener;
         return { remove: mockRemoveAppStateListener };
-      },
-    );
+      });
     jest.mocked(getStoreId).mockResolvedValue("restaurant-1");
     refetch.mockResolvedValue({ data: { restaurantOrders: [] } });
     subscribeToMore.mockReturnValue(unsubscribe);

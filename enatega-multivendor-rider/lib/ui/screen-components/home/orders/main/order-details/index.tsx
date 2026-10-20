@@ -54,7 +54,6 @@ import { ConfigurationContext } from "@/lib/context/global/configuration.context
 // UI Components
 import {
   RIDER_ORDERS,
-  SINGLE_VENDOR_RIDER_ORDERS,
 } from "@/lib/apollo/queries";
 import { useRiderMode } from "@/lib/context/global/rider-mode.context";
 import { useApptheme } from "@/lib/context/global/theme.context";
@@ -70,7 +69,6 @@ import WelldoneComponent from "@/lib/ui/useable-components/well-done";
 import { CustomMapStyles } from "@/lib/utils/constants/map";
 import { map_styles } from "@/lib/utils/constants/order-details";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { RIDER_SERVER_MODES } from "@/lib/mode/rider-mode";
 import {
   canDeliverOrderForMode,
   canPickupOrderForMode,
@@ -111,12 +109,9 @@ export default function OrderDetailScreen() {
 
   // Hooks
   const { appTheme, currentTheme } = useApptheme();
-  const { t } = useTranslation();
   const { mode } = useRiderMode();
-  const riderOrdersQuery =
-    mode === RIDER_SERVER_MODES.SINGLE
-      ? SINGLE_VENDOR_RIDER_ORDERS
-      : RIDER_ORDERS;
+  const riderOrdersQuery = RIDER_ORDERS;
+  const { t } = useTranslation();
   const {
     restaurantAddressPin,
     deliveryAddressPin,

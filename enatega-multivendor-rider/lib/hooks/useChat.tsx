@@ -11,16 +11,13 @@ import UserContext from "../context/global/user.context";
 // API
 import {
   SEND_CHAT_MESSAGE,
-  SINGLE_VENDOR_SEND_CHAT_MESSAGE,
 } from "@/lib/apollo/mutations/chat.mutation";
 import { UPLOAD_IMAGE_TO_S3 } from "@/lib/apollo/mutations/rider.mutation";
-import { CHAT, SINGLE_VENDOR_CHAT } from "@/lib/apollo/queries/chat.query";
+import { CHAT } from "@/lib/apollo/queries/chat.query";
 import {
-  SINGLE_VENDOR_SUBSCRIPTION_NEW_MESSAGE,
   SUBSCRIPTION_NEW_MESSAGE,
 } from "@/lib/apollo/subscriptions";
 import { useRiderMode } from "@/lib/context/global/rider-mode.context";
-import { RIDER_SERVER_MODES } from "@/lib/mode/rider-mode";
 import { useChatNotifications } from "@/lib/context/global/chat-notification.context";
 
 // Interface
@@ -29,9 +26,7 @@ export const useChatScreen = () => {
   const { id: orderId } = useLocalSearchParams<{ id: string }>();
 
   const { dataProfile } = useContext(UserContext);
-  const { mode } = useRiderMode();
   const { markChatRead } = useChatNotifications();
-  const isSingleVendor = mode === RIDER_SERVER_MODES.SINGLE;
 
   // States
   const [messages, setMessages] = useState<any[]>([]);
@@ -68,7 +63,7 @@ export const useChatScreen = () => {
 
   // API
   const { subscribeToMore: subscribeToMessages, data: chatData } = useQuery(
-    isSingleVendor ? SINGLE_VENDOR_CHAT : CHAT,
+    CHAT,
     {
       variables: { order: orderId },
       fetchPolicy: "network-only",
@@ -76,7 +71,7 @@ export const useChatScreen = () => {
     },
   );
   const [send] = useMutation(
-    isSingleVendor ? SINGLE_VENDOR_SEND_CHAT_MESSAGE : SEND_CHAT_MESSAGE,
+    SEND_CHAT_MESSAGE,
     {
       onCompleted /* , onError */,
     },
@@ -203,9 +198,7 @@ export const useChatScreen = () => {
 
   useEffect(() => {
     const unsubscribe = subscribeToMessages({
-      document: isSingleVendor
-        ? SINGLE_VENDOR_SUBSCRIPTION_NEW_MESSAGE
-        : SUBSCRIPTION_NEW_MESSAGE,
+      document: SUBSCRIPTION_NEW_MESSAGE,
       variables: { order: orderId },
       updateQuery: (prev, { subscriptionData }) => {
         if (!subscriptionData.data) return prev;
@@ -218,7 +211,7 @@ export const useChatScreen = () => {
       },
     });
     return unsubscribe;
-  }, [isSingleVendor, orderId, subscribeToMessages]);
+  }, [orderId, subscribeToMessages]);
 
   useEffect(() => {
     if (chatData) {
@@ -231,7 +224,7 @@ export const useChatScreen = () => {
     onSend,
     pickImage,
     uploading,
-    supportsImageMessages: !isSingleVendor,
+    supportsImageMessages: true,
     image,
     setImage,
     inputMessage,

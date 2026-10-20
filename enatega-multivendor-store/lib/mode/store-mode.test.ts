@@ -27,31 +27,30 @@ describe("store mode session migration", () => {
     jest.clearAllMocks();
   });
 
-  it("always forces the multivendor mode even when legacy env policy says SINGLE", () => {
-    process.env.EXPO_PUBLIC_VENDOR_MODE = STORE_SERVER_MODES.SINGLE;
-    expect(getForcedStoreServerMode()).toBe(STORE_SERVER_MODES.MULTI);
-    delete process.env.EXPO_PUBLIC_VENDOR_MODE;
+  it("ignores a retired server-mode environment value", () => {
+    const previous = process.env.EXPO_PUBLIC_VENDOR_MODE;
+    try {
+      process.env.EXPO_PUBLIC_VENDOR_MODE = "SINGLE";
+      expect(getForcedStoreServerMode()).toBe(STORE_SERVER_MODES.MULTI);
+    } finally {
+      if (previous === undefined) delete process.env.EXPO_PUBLIC_VENDOR_MODE;
+      else process.env.EXPO_PUBLIC_VENDOR_MODE = previous;
+    }
   });
 
-  it("does not copy an explicitly single-vendor session", async () => {
+  it("never migrates an explicitly retired namespace into the multi session", async () => {
     jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
     jest.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
-      if (key === getStoreTokenKey(STORE_SERVER_MODES.SINGLE))
-        return "single-token";
-      if (key === getStoreIdKey(STORE_SERVER_MODES.SINGLE))
-        return "single-store";
+      if (key === "enatega-store-single-token") return "single-token";
+      if (key === "enatega-store-single-id") return "single-store";
       return null;
     });
-
     await migrateLegacyStoreSession();
-
     expect(SecureStore.setItemAsync).not.toHaveBeenCalledWith(
-      getStoreTokenKey(STORE_SERVER_MODES.MULTI),
-      "single-token",
+      getStoreTokenKey(STORE_SERVER_MODES.MULTI), "single-token",
     );
     expect(SecureStore.setItemAsync).not.toHaveBeenCalledWith(
-      getStoreIdKey(STORE_SERVER_MODES.MULTI),
-      "single-store",
+      getStoreIdKey(STORE_SERVER_MODES.MULTI), "single-store",
     );
   });
 

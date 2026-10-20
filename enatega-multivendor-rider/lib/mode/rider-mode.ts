@@ -9,7 +9,6 @@ import { RIDER_ID, RIDER_TOKEN } from "@/lib/utils/constants";
 
 export const RIDER_SERVER_MODES = {
   MULTI: "MULTI",
-  SINGLE: "SINGLE",
 } as const;
 
 export type RiderServerMode =
@@ -19,9 +18,7 @@ export const DEFAULT_RIDER_SERVER_MODE: RiderServerMode =
   RIDER_SERVER_MODES.MULTI;
 
 export const getForcedRiderServerMode = (): RiderServerMode | null => {
-  // Delifast uses the multivendor rider backend. Keep the mode constants and
-  // storage migration for existing installations, but do not let an old
-  // environment variable or persisted selection change the product flow.
+  // Retain the multivendor storage migration, never a selectable legacy mode.
   return RIDER_SERVER_MODES.MULTI;
 };
 
@@ -44,7 +41,7 @@ export const getChatUnreadKey = (mode: RiderServerMode) =>
 export const isRiderServerMode = (
   value: string | null,
 ): value is RiderServerMode =>
-  value === RIDER_SERVER_MODES.MULTI || value === RIDER_SERVER_MODES.SINGLE;
+  value === RIDER_SERVER_MODES.MULTI;
 
 export async function migrateLegacyRiderStorage(): Promise<void> {
   const alreadyMigrated = await AsyncStorage.getItem(

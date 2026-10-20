@@ -98,45 +98,6 @@ export const STORE_PROFILE =
     }
   `;
 
-export const STORE_PROFILE_SINGLE_VENDOR = gql`
-  query SingleVendorStoreProfile($restaurantId: String!) {
-    restaurant(id: $restaurantId) {
-      _id
-      unique_restaurant_id
-      orderId
-      orderPrefix
-      name
-      image
-      logo
-      address
-      username
-      minimumOrder
-      isActive
-      isAvailable
-      slug
-      commissionRate
-      tax
-      notificationToken
-      enableNotification
-      shopType
-      phone
-      bussinessDetails {
-        bankName
-        accountNumber
-        accountName
-        accountCode
-      }
-      openingTimes {
-        day
-        times {
-          startTime
-          endTime
-        }
-      }
-    }
-  }
-`;
-
 export const GET_RESTAURANT_BY_ID = gql`
   query Restaurant($id: String) {
     restaurant(id: $id) {

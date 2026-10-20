@@ -1,6 +1,5 @@
 import React, {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -20,12 +19,9 @@ interface StoreModeContextValue {
   mode: StoreServerMode;
   isModeReady: boolean;
   isSwitchingMode: boolean;
-  isSingleVendor: boolean;
-  isModeToggleEnabled: boolean;
   environment: StoreEnvironment;
   tokenKey: string;
   storeIdKey: string;
-  selectMode: (mode: StoreServerMode) => Promise<boolean>;
 }
 
 const StoreModeContext = createContext<StoreModeContextValue>(
@@ -55,23 +51,16 @@ export const StoreModeProvider = ({
     };
   }, []);
 
-  // Kept as a compatibility surface for historical callers; mode switching is
-  // intentionally disabled so product, login and sessions stay multivendor.
-  const selectMode = useCallback(async () => false, []);
-
   const value = useMemo<StoreModeContextValue>(
     () => ({
       mode,
       isModeReady,
       isSwitchingMode: false,
-      isSingleVendor: false,
-      isModeToggleEnabled: false,
       environment: getEnvVars(),
       tokenKey: getStoreTokenKey(mode),
       storeIdKey: getStoreIdKey(mode),
-      selectMode,
     }),
-    [isModeReady, mode, selectMode],
+    [isModeReady, mode],
   );
 
   return (

@@ -20,24 +20,3 @@ export const SEND_CHAT_MESSAGE =
       }
     }
   `;
-
-export const SINGLE_VENDOR_SEND_CHAT_MESSAGE = gql`
-  mutation SingleVendorSendChatMessage(
-    $orderId: ID!
-    $messageInput: ChatMessageInput!
-  ) {
-    sendChatMessage(message: $messageInput, orderId: $orderId) {
-      success
-      message
-      data {
-        id
-        message
-        user {
-          id
-          name
-        }
-        createdAt
-      }
-    }
-  }
-`;

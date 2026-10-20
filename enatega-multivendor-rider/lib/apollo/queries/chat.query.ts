@@ -16,17 +16,3 @@ export const CHAT =
       }
     }
   `;
-
-export const SINGLE_VENDOR_CHAT = gql`
-  query SingleVendorChat($order: ID!) {
-    chat(order: $order) {
-      id
-      message
-      user {
-        id
-        name
-      }
-      createdAt
-    }
-  }
-`;

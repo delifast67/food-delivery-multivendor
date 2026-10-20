@@ -41,9 +41,9 @@ Examples already exist in `.env.stage` and `.env.prod`.
 
 - `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` is required for Google Maps in the browser
 - Google OAuth, Firebase, payments, currency, and other browser configuration is
-  loaded from the Multi Vendor `configuration` query in both storefront modes.
-- Single Vendor environment variables only select its GraphQL, WebSocket, and
-  REST endpoints.
+  loaded from the Multi Vendor `configuration` query in the historical storefront.
+- Delifast uses its own local GraphQL contract; obsolete vendor-mode endpoints
+  and environment switches have been removed. See `../README_DELIFAST_LOCAL.md`.
 
 ## Notes
 
