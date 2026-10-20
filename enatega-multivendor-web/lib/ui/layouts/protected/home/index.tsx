@@ -11,7 +11,6 @@ import { useSearchUI } from "@/lib/context/search/search.context";
 import TabItem from "@/lib/ui/useable-components/tab-item/TabItem";
 import { useTranslations } from "next-intl";
 import homeTabSvg from "@/lib/utils/assets/svg/houseTabsvg";
-import { FiSearch } from "react-icons/fi";
 
 export default function HomeLayout({
   children,
@@ -48,8 +47,6 @@ export default function HomeLayout({
   const isDiscovery = pathname === "/discovery";
   const isRestaurants = pathname === "/restaurants";
   const isStore = pathname === "/store";
-  const isDeals = pathname === "/deals";
-  const isBrowse = pathname === "/browse";
 
   const t = useTranslations();
 

@@ -38,24 +38,6 @@ const isVideoFile = (file?: string) =>
     file?.includes("video"),
   );
 
-const parseParameters = (rawParameters?: string | string[]) => {
-  if (typeof rawParameters === "string") {
-    try {
-      return JSON.parse(rawParameters) as Record<string, string>;
-    } catch {
-      return {};
-    }
-  }
-  if (Array.isArray(rawParameters)) {
-    return Object.fromEntries(
-      rawParameters
-        .map((entry) => entry.split("="))
-        .filter(([key, value]) => key && value),
-    );
-  }
-  return {};
-};
-
 const primePreviewFrame = (event: SyntheticEvent<HTMLVideoElement>) => {
   const video = event.currentTarget;
   const duration = Number.isFinite(video.duration) ? video.duration : 0;
