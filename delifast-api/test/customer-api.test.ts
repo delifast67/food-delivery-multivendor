@@ -11,7 +11,7 @@ import request from "supertest";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import type { Db } from "mongodb";
 import { config } from "../src/config.js";
-import type { OtpProvider } from "../src/customer-auth.js";
+import type { SmsProvider } from "../src/sms-provider.js";
 
 const PHONE_A = "+22670123456";
 const PHONE_B = "+22670123457";
@@ -19,10 +19,10 @@ const gql = (query: string, variables: any = {}, authorization?: string) => {
   const r = request(app).post("/graphql").send({ query, variables });
   return authorization ? r.set("authorization", `Bearer ${authorization}`) : r;
 };
-const code = (r: any) => r.body?.errors?.[0]?.extensions?.code;
+const errorCode = (r: any) => r.body?.errors?.[0]?.extensions?.code;
 const address = (suffix: string) => ({
   recipientName: `Client ${suffix}`,
-  phone: "+22670123456",
+  phone: PHONE_A,
   city: "Ouagadougou",
   neighborhood: "Gounghin",
   landmark: "Marché",
@@ -33,41 +33,66 @@ const address = (suffix: string) => ({
 let mongod: MongoMemoryServer;
 let app: any;
 let db: Db;
-let provider: OtpProvider;
-let calls: { send: number; resend: number; verify: number };
-let challengeCounter = 0;
-const sessions = new Map<string, string>();
+let provider: SmsProvider & { messages: Map<string, string> };
+let sendCalls = 0;
+function assertSmsConfigured() {
+  expect(config.smsProvider).toBe("orange");
+  expect(config.orangeSmsEnabled).toBe(true);
+  expect(config.orangeClientId).toBe("fixture");
+  expect(config.orangeClientSecret).toBe("fixture");
+  expect(config.customerOtpHashKey).toMatch(/^.{32,}$/);
+  expect(config.orangeSenderAddress).toBe("tel:+2260000");
+  expect(config.orangeSenderName).toBe("");
+  expect(config).not.toHaveProperty("d7ApiToken");
+}
+function otpProvider(): SmsProvider & { messages: Map<string, string> } {
+  const messages = new Map<string, string>();
+  return {
+    messages,
+    send: vi.fn(async (phone: string, message: string) => {
+      sendCalls++;
+      const match = message.match(/\b\d{6}\b/);
+      if (!match) throw new Error("fixture message has no OTP");
+      messages.set(phone, match[0]);
+    }),
+  };
+}
+async function login(phone: string) {
+  const r = await gql(
+    "mutation($p:String!){requestCustomerOtp(phone:$p){challengeId}}",
+    { p: phone },
+  );
+  const id = r.body.data.requestCustomerOtp.challengeId;
+  const otp = provider.messages.get(phone)!;
+  const s = await gql(
+    "mutation($id:ID!,$c:String!){verifyCustomerOtp(challengeId:$id,code:$c){token customer{id phone}}}",
+    { id, c: otp },
+  );
+  return s.body.data.verifyCustomerOtp.token;
+}
 
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
   mongod = await MongoMemoryServer.create();
   process.env.MONGODB_URI = mongod.getUri();
-  config.d7VerifyEnabled = true;
-  config.d7ApiToken = "test-only-api-token";
+  Object.assign(config, {
+    smsProvider: "orange",
+    orangeSmsEnabled: true,
+    orangeClientId: "fixture",
+    orangeClientSecret: "fixture",
+    customerOtpHashKey: "fixture-customer-otp-hmac-key-0123456789012345",
+    orangeSenderAddress: "tel:+2260000",
+    orangeSenderName: "",
+  });
+  assertSmsConfigured();
   const dbModule = await import("../src/db.js");
   db = await dbModule.connect();
-  provider = {
-    send: vi.fn(async (phone: string) => {
-      calls.send++;
-      const id = `otp-${++challengeCounter}`;
-      sessions.set(id, phone);
-      return { otpId: id, status: "OPEN" as const, expiry: 600 };
-    }),
-    resend: vi.fn(async (id: string) => {
-      calls.resend++;
-      return { otpId: id, status: "OPEN" as const, expiry: 600 };
-    }),
-    verify: vi.fn(async (id: string, _code: string) => {
-      calls.verify++;
-      return sessions.has(id) ? { status: "APPROVED" } : { status: "FAILED" };
-    }),
-  };
+  provider = otpProvider();
   app = await (await import("../src/server.js")).createApp(undefined, provider);
 }, 60000);
 
 beforeEach(async () => {
-  config.d7VerifyEnabled = true;
-  config.d7ApiToken = "test-only-api-token";
+  assertSmsConfigured();
   await Promise.all(
     [
       "customers",
@@ -78,18 +103,23 @@ beforeEach(async () => {
       "customer_addresses",
     ].map((n) => db.collection(n).deleteMany({})),
   );
-  calls = { send: 0, resend: 0, verify: 0 };
-  challengeCounter = 0;
-  sessions.clear();
+  sendCalls = 0;
+  provider.messages.clear();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new Error("Unstubbed external request forbidden in this suite");
+    }),
+  );
 });
-
 afterAll(async () => {
+  vi.unstubAllGlobals();
   (await import("../src/db.js")).closeDb();
   await mongod?.stop();
 });
 
 describe("customer GraphQL authentication", () => {
-  it("returns challenge metadata only and authenticates an APPROVED OTP", async () => {
+  it("returns challenge metadata only and authenticates with the server-generated OTP", async () => {
     const requestOtp = await gql(
       "mutation($p:String!){requestCustomerOtp(phone:$p){challengeId expiresIn retryAfter}}",
       { p: PHONE_A },
@@ -105,9 +135,12 @@ describe("customer GraphQL authentication", () => {
       }),
     );
     expect(JSON.stringify(requestOtp.body)).not.toMatch(/otp-|code|token/i);
+    expect((provider.send as any).mock.calls[0][1]).toBe(
+      `Votre code Delifast : ${provider.messages.get(PHONE_A)}. Ne le partagez pas. Validite maximale : 10 minutes.`,
+    );
     const verified = await gql(
       "mutation($id:ID!,$c:String!){verifyCustomerOtp(challengeId:$id,code:$c){token customer{id phone}}}",
-      { id: challenge.challengeId, c: "123456" },
+      { id: challenge.challengeId, c: provider.messages.get(PHONE_A) },
     );
     expect(verified.body.errors).toBeUndefined();
     const token = verified.body.data.verifyCustomerOtp.token;
@@ -117,43 +150,35 @@ describe("customer GraphQL authentication", () => {
       id: expect.any(String),
       phone: PHONE_A,
     });
-    expect(calls).toMatchObject({ send: 1, verify: 1 });
+    expect(sendCalls).toBe(1);
+  });
+
+  it("rejects unauthenticated CRUD and invalid phone", async () => {
+    expect(errorCode(await gql("{customerAddresses{id}} "))).toBe(
+      "UNAUTHENTICATED",
+    );
     expect(
-      await db
-        .collection<any>("customer_sessions")
-        .findOne({ tokenHash: token }),
-    ).toBeNull();
+      errorCode(
+        await gql(
+          "mutation($i:DeliveryAddressInput!){createCustomerAddress(input:$i){id}}",
+          { i: address("unauth") },
+        ),
+      ),
+    ).toBe("UNAUTHENTICATED");
+    expect(
+      errorCode(
+        await gql(
+          "mutation($p:String!){requestCustomerOtp(phone:$p){challengeId}}",
+          { p: "+226123" },
+        ),
+      ),
+    ).toBe("INVALID_PHONE");
   });
 
-  it("rejects unauthenticated customer CRUD and maps GraphQL error codes", async () => {
-    const list = await gql("{customerAddresses{id}} ");
-    expect(code(list)).toBe("UNAUTHENTICATED");
-    const create = await gql(
-      "mutation($i:DeliveryAddressInput!){createCustomerAddress(input:$i){id}}",
-      { i: address("unauth") },
-    );
-    expect(code(create)).toBe("UNAUTHENTICATED");
-    const bad = await gql(
-      "mutation($p:String!){requestCustomerOtp(phone:$p){challengeId}}",
-      { p: "+226123" },
-    );
-    expect(code(bad)).toBe("INVALID_PHONE");
-  });
-
-  it("isolates addresses between customers and never persists input ownership fields", async () => {
-    const getToken = async (phone: string) => {
-      const r = await gql(
-        "mutation($p:String!){requestCustomerOtp(phone:$p){challengeId}}",
-        { p: phone },
-      );
-      const s = await gql(
-        'mutation($id:ID!){verifyCustomerOtp(challengeId:$id,code:"123456"){token customer{id phone}}}',
-        { id: r.body.data.requestCustomerOtp.challengeId },
-      );
-      return s.body.data.verifyCustomerOtp.token;
-    };
-    const tokenA = await getToken(PHONE_A);
-    const tokenB = await getToken(PHONE_B);
+  it("isolates addresses between customers and never persists ownership fields", async () => {
+    const tokenA = await login(PHONE_A);
+    // A second phone is subject to the same local provider and has its own captured code.
+    const tokenB = await login(PHONE_B);
     const created = await gql(
       "mutation($i:DeliveryAddressInput!){createCustomerAddress(input:$i){id recipientName phone point{latitude longitude}}}",
       { i: address("A") },
@@ -166,64 +191,68 @@ describe("customer GraphQL authentication", () => {
       { id, i: address("B") },
       tokenB,
     );
-    expect(code(foreignUpdate)).toBe("ADDRESS_NOT_FOUND");
-    const bList = await gql("{customerAddresses{id}}", {}, tokenB);
-    expect(bList.body.data.customerAddresses).toEqual([]);
-    const aList = await gql(
-      "{customerAddresses{id recipientName}}",
-      {},
-      tokenA,
-    );
-    expect(aList.body.data.customerAddresses).toEqual([
-      { id, recipientName: "Client A" },
-    ]);
-    const deleteForeign = await gql(
-      "mutation($id:ID!){deleteCustomerAddress(id:$id)}",
-      { id },
-      tokenB,
-    );
-    expect(code(deleteForeign)).toBe("ADDRESS_NOT_FOUND");
-    const deleted = await gql(
-      "mutation($id:ID!){deleteCustomerAddress(id:$id)}",
-      { id },
-      tokenA,
-    );
-    expect(deleted.body.data.deleteCustomerAddress).toBe(true);
+    expect(errorCode(foreignUpdate)).toBe("ADDRESS_NOT_FOUND");
+    expect(
+      (await gql("{customerAddresses{id}}", {}, tokenB)).body.data
+        .customerAddresses,
+    ).toEqual([]);
+    expect(
+      (await gql("{customerAddresses{id recipientName}}", {}, tokenA)).body.data
+        .customerAddresses,
+    ).toEqual([{ id, recipientName: "Client A" }]);
+    expect(
+      errorCode(
+        await gql(
+          "mutation($id:ID!){deleteCustomerAddress(id:$id)}",
+          { id },
+          tokenB,
+        ),
+      ),
+    ).toBe("ADDRESS_NOT_FOUND");
+    expect(
+      (
+        await gql(
+          "mutation($id:ID!){deleteCustomerAddress(id:$id)}",
+          { id },
+          tokenA,
+        )
+      ).body.data.deleteCustomerAddress,
+    ).toBe(true);
   });
 
-  it("requires and validates delivery coordinates, and strips ownership-like input", async () => {
-    const r = await gql(
-      "mutation($p:String!){requestCustomerOtp(phone:$p){challengeId}}",
-      { p: PHONE_A },
-    );
-    const s = await gql(
-      'mutation($id:ID!){verifyCustomerOtp(challengeId:$id,code:"123456"){token}}',
-      { id: r.body.data.requestCustomerOtp.challengeId },
-    );
-    const token = s.body.data.verifyCustomerOtp.token;
-    const missing = await gql(
-      "mutation($i:DeliveryAddressInput!){createCustomerAddress(input:$i){id}}",
-      { i: { ...address("missing"), point: undefined } },
-      token,
-    );
-    expect(code(missing)).toBe("DELIVERY_POINT_REQUIRED");
-    const invalid = await gql(
-      "mutation($i:DeliveryAddressInput!){createCustomerAddress(input:$i){id}}",
-      { i: { ...address("bad"), point: { latitude: 99, longitude: 0 } } },
-      token,
-    );
-    expect(code(invalid)).toBe("INVALID_POINT");
+  it("requires and validates delivery coordinates", async () => {
+    const token = await login(PHONE_A);
+    expect(
+      errorCode(
+        await gql(
+          "mutation($i:DeliveryAddressInput!){createCustomerAddress(input:$i){id}}",
+          { i: { ...address("missing"), point: undefined } },
+          token,
+        ),
+      ),
+    ).toBe("DELIVERY_POINT_REQUIRED");
+    expect(
+      errorCode(
+        await gql(
+          "mutation($i:DeliveryAddressInput!){createCustomerAddress(input:$i){id}}",
+          { i: { ...address("bad"), point: { latitude: 99, longitude: 0 } } },
+          token,
+        ),
+      ),
+    ).toBe("INVALID_POINT");
   });
 
-  it("enforces active cooldown and one provider send for concurrent requests", async () => {
+  it("enforces active cooldown and one SMS send for concurrent requests", async () => {
     const query =
       "mutation($p:String!){requestCustomerOtp(phone:$p){challengeId}}";
     const [a, b] = await Promise.all([
       gql(query, { p: PHONE_A }),
       gql(query, { p: PHONE_A }),
     ]);
-    expect(calls.send).toBe(1);
+    expect(sendCalls).toBe(1);
     expect([a, b].filter((x) => x.body.data).length).toBe(1);
-    expect([a, b].filter((x) => code(x) === "RATE_LIMITED").length).toBe(1);
+    expect([a, b].filter((x) => errorCode(x) === "RATE_LIMITED").length).toBe(
+      1,
+    );
   });
 });

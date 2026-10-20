@@ -1,3 +1,4 @@
+import { createSmsProvider, type SmsProvider } from "./sms-provider.js";
 import express, { Request, Response, NextFunction } from "express";
 import { ApolloServer } from "@apollo/server";
 import { expressMiddleware } from "@as-integrations/express4";
@@ -20,7 +21,7 @@ import {
 } from "./orders.js";
 import { authenticate, login, logout, requireRole } from "./auth.js";
 import { authenticateCustomer } from "./customer-auth.js";
-import { createD7Provider, requestOtp, resendOtp, verifyOtp, customerLogout, listAddresses, createAddress, updateAddress, deleteAddress, requireCustomer, type OtpProvider } from "./customer-auth.js";
+import { requestOtp, resendOtp, verifyOtp, customerLogout, listAddresses, createAddress, updateAddress, deleteAddress, requireCustomer } from "./customer-auth.js";
 import {
   publicRestaurants,
   publicRestaurant,
@@ -312,7 +313,7 @@ const resolvers: any = {
 };
 export async function createApp(
   gateway: CheckoutGateway | undefined = createPaymentGateway(),
-  otpProvider: OtpProvider = createD7Provider(),
+  otpProvider: SmsProvider = createSmsProvider(),
 ) {
   await connect();
   const payments = new PaymentService(getDb(), gateway);

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { GraphQLError } from "graphql";
 import type { Db } from "mongodb";
 import { config } from "./config.js";
+import { assertSmsConfigured, type SmsProvider } from "./sms-provider.js";
 import { normalizeAddress, type Address } from "./validation.js";
 
 export const AUTH_UNAVAILABLE =
@@ -17,139 +18,27 @@ function unavailable(): never {
   return bad("AUTH_UNAVAILABLE", AUTH_UNAVAILABLE);
 }
 function ready() {
-  if (!config.d7VerifyEnabled || !config.d7ApiToken) unavailable();
+  assertSmsConfigured();
 }
 const hash = (s: string) => crypto.createHash("sha256").update(s).digest("hex");
 const duplicate = (e: any) => e?.code === 11000;
-export type OpenOtp = { otpId: string; status: "OPEN"; expiry: number };
-export type OtpProvider = {
-  send(phone: string): Promise<OpenOtp>;
-  resend(otpId: string): Promise<OpenOtp>;
-  verify(otpId: string, code: string): Promise<{ status: string }>;
-};
-function validOpen(x: any): OpenOtp {
-  if (
-    !x ||
-    typeof x.otp_id !== "string" ||
-    !x.otp_id.trim() ||
-    x.otp_id.length > 256 ||
-    x.status !== "OPEN" ||
-    !Number.isInteger(x.expiry) ||
-    x.expiry < 1 ||
-    x.expiry > MAX_EXPIRY_SECONDS
-  )
-    unavailable();
-  return { otpId: x.otp_id, status: "OPEN", expiry: x.expiry };
+function newOtp() {
+  return crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
 }
-function validProviderOpen(x: OpenOtp): OpenOtp {
-  return validOpen({ otp_id: x?.otpId, status: x?.status, expiry: x?.expiry });
+function otpMessage(code: string) {
+  return `Votre code Delifast : ${code}. Ne le partagez pas. Validite maximale : 10 minutes.`;
 }
-/** A replaceable adapter; D7 alone generates and verifies the OTP. No retry or fallback. */
-export function createD7Provider(): OtpProvider {
-  async function call(path: string, body: object): Promise<any> {
-    ready();
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => {
-            controller.abort();
-            reject(new Error("PROVIDER_TIMEOUT"));
-          }, config.d7TimeoutMs);
-        }),
-        (async () => {
-          const response = await fetch(
-            `https://api.d7networks.com/verify/v1/otp/${path}`,
-            {
-              method: "POST",
-              redirect: "error",
-              signal: controller.signal,
-              headers: {
-                authorization: `Bearer ${config.d7ApiToken}`,
-                "content-type": "application/json",
-                accept: "application/json",
-              },
-              body: JSON.stringify(body),
-            },
-          );
-          if (!response.ok) throw new Error("PROVIDER_HTTP");
-          const declaredLength = Number(
-            response.headers.get("content-length") || 0,
-          );
-          if (declaredLength > config.d7MaxResponseBytes)
-            throw new Error("PROVIDER_SIZE");
-          const reader = response.body?.getReader();
-          if (!reader) throw new Error("PROVIDER_BODY");
-          const chunks: Uint8Array[] = [];
-          let size = 0;
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            size += value.byteLength;
-            if (size > config.d7MaxResponseBytes) {
-              void reader.cancel().catch(() => undefined);
-              throw new Error("PROVIDER_SIZE");
-            }
-            chunks.push(value);
-          }
-          return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-        })(),
-      ]);
-    } catch {
-      return unavailable();
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-  }
-  return {
-    async send(phone) {
-      ready();
-      const body: Record<string, unknown> = {
-        recipient: normalizeCustomerPhone(phone),
-        originator: config.d7Originator,
-        channel: "SMS",
-        expiry: MAX_EXPIRY_SECONDS,
-        retry_delay: 60,
-        retry_count: MAX_RESENDS,
-        otp_code_length: 6,
-        otp_type: "numeric",
-        data_coding: "auto",
-      };
-      if (
-        !config.d7Originator ||
-        config.d7Originator.length > 64 ||
-        /[\r\n]/.test(config.d7Originator)
-      )
-        unavailable();
-      if (config.d7TemplateId) {
-        const templateId = Number(config.d7TemplateId);
-        if (!Number.isSafeInteger(templateId) || templateId <= 0) unavailable();
-        body.template_id = templateId;
-      } else {
-        if (!config.d7Content.includes("{}") || config.d7Content.length > 1000)
-          unavailable();
-        body.content = config.d7Content;
-      }
-      return validOpen(await call("send-otp", body));
-    },
-    async resend(otpId) {
-      return validOpen(await call("resend-otp", { otp_id: otpId }));
-    },
-    async verify(otpId, code) {
-      const result = await call("verify-otp", {
-        otp_id: otpId,
-        otp_code: code,
-      });
-      if (
-        !["APPROVED", "FAILED", "EXPIRED", "ALREADY_VERIFIED"].includes(
-          result?.status,
-        )
-      )
-        unavailable();
-      return { status: result.status };
-    },
-  };
+function otpHash(id: string, phone: string, code: string) {
+  return crypto
+    .createHmac("sha256", config.customerOtpHashKey)
+    .update(JSON.stringify(["delifast-otp-v1", id, phone, code]))
+    .digest("hex");
+}
+function activeChallenge(): never {
+  return bad(
+    "CHALLENGE_ACTIVE",
+    "Une vérification est déjà en cours. Utilisez son renvoi ou attendez son expiration.",
+  );
 }
 export function normalizeCustomerPhone(v: unknown): string {
   if (typeof v !== "string" || !/^\+226\d{8}$/.test(v))
@@ -246,57 +135,80 @@ export function requireCustomer(ctx: CustomerContext): {
 }
 export async function requestOtp(
   db: Db,
-  provider: OtpProvider,
+  provider: SmsProvider,
   rawPhone: string,
   ip: string,
 ) {
   ready();
   const phone = normalizeCustomerPhone(rawPhone);
   await reserveSend(db, phone, ip);
-  const existing = await db.collection("customer_otp_challenges").findOne({
+  const challenges = db.collection<any>("customer_otp_challenges");
+  // Explicit expiry checks, independent of asynchronous Mongo TTL cleanup.
+  await challenges.updateMany(
+    { phone, expiresAt: { $lte: new Date() }, activePhone: phone },
+    { $set: { status: "EXPIRED" }, $unset: { activePhone: "", otpHash: "" } },
+  );
+  const existing = await challenges.findOne({
     phone,
     expiresAt: { $gt: new Date() },
     status: { $in: ["OPEN", "PROCESSING", "LOCKED"] },
   });
-  // Do not reset the verification/resend budget by creating another challenge.
-  if (existing)
-    bad(
-      "CHALLENGE_ACTIVE",
-      "Une vérification est déjà en cours. Utilisez son renvoi ou attendez son expiration.",
-    );
-  let sent: OpenOtp;
-  try {
-    sent = validProviderOpen(await provider.send(phone));
-  } catch {
-    return unavailable();
-  }
+  if (existing) activeChallenge();
   const now = Date.now();
+  const id = crypto.randomUUID();
+  const code = newOtp();
   const challenge = {
-    challengeId: crypto.randomUUID(),
+    challengeId: id,
+    activePhone: phone,
     phone,
-    otpId: sent.otpId,
-    status: "OPEN",
-    createdAt: new Date(),
-    expiresAt: new Date(now + sent.expiry * 1000),
+    otpVersion: 1,
+    otpHash: otpHash(id, phone, code),
+    status: "PROCESSING",
+    createdAt: new Date(now),
+    expiresAt: new Date(now + MAX_EXPIRY_SECONDS * 1000),
     cooldownUntil: new Date(now + COOLDOWN_MS),
     resendCount: 0,
     verifyAttempts: 0,
   };
-  await db.collection("customer_otp_challenges").insertOne(challenge);
+  // Unique sparse activePhone index closes races even if a process is suspended
+  // past the phone cooldown. Persist before the potentially billable request.
+  try {
+    await challenges.insertOne(challenge);
+  } catch (e) {
+    if (duplicate(e)) activeChallenge();
+    throw e;
+  }
+  try {
+    await provider.send(phone, otpMessage(code));
+  } catch {
+    await challenges.updateOne(
+      { challengeId: id, status: "PROCESSING" },
+      { $set: { status: "FAILED" }, $unset: { otpHash: "", activePhone: "" } },
+    );
+    return unavailable();
+  }
+  const opened = await challenges.updateOne(
+    { challengeId: id, status: "PROCESSING", expiresAt: { $gt: new Date() } },
+    { $set: { status: "OPEN" } },
+  );
+  if (opened.modifiedCount !== 1) unavailable();
   return challengeView(challenge);
 }
 export async function resendOtp(
   db: Db,
-  provider: OtpProvider,
+  provider: SmsProvider,
   rawId: string,
   ip = "unknown",
 ) {
   ready();
   const id = challengeId(rawId),
     now = new Date();
-  const c = await db
-    .collection<any>("customer_otp_challenges")
-    .findOne({ challengeId: id, expiresAt: { $gt: now } });
+  const challenges = db.collection<any>("customer_otp_challenges");
+  const c = await challenges.findOne({
+    challengeId: id,
+    otpVersion: 1,
+    expiresAt: { $gt: now },
+  });
   if (!c) bad("INVALID_CHALLENGE", "Vérification invalide ou expirée.");
   if (
     c.status !== "OPEN" ||
@@ -307,56 +219,59 @@ export async function resendOtp(
     limited();
   await reserveSend(db, c.phone, ip);
   const operationId = crypto.randomUUID();
-  const locked = await db
-    .collection<any>("customer_otp_challenges")
-    .findOneAndUpdate(
-      {
-        _id: c._id,
-        status: "OPEN",
-        expiresAt: { $gt: new Date() },
-        cooldownUntil: { $lte: new Date() },
-        resendCount: { $lt: MAX_RESENDS },
-        verifyAttempts: { $lt: MAX_ATTEMPTS },
-      },
-      {
-        $set: {
-          status: "PROCESSING",
-          operationId,
-          cooldownUntil: new Date(Date.now() + COOLDOWN_MS),
-        },
-        $inc: { resendCount: 1 },
-      },
-      { returnDocument: "after" },
-    );
-  if (!locked) limited();
-  try {
-    const r = validProviderOpen(await provider.resend(c.otpId));
-    const next = {
+  const locked = await challenges.findOneAndUpdate(
+    {
+      _id: c._id,
       status: "OPEN",
-      otpId: r.otpId,
-      cooldownUntil: new Date(Date.now() + COOLDOWN_MS),
-      expiresAt: new Date(Date.now() + r.expiry * 1000),
-    };
-    await db
-      .collection("customer_otp_challenges")
-      .updateOne(
-        { _id: c._id, operationId, status: "PROCESSING" },
-        { $set: next, $unset: { operationId: "" } },
-      );
-    return challengeView({ ...locked, ...next });
+      otpVersion: 1,
+      expiresAt: { $gt: new Date() },
+      cooldownUntil: { $lte: new Date() },
+      resendCount: { $lt: MAX_RESENDS },
+      verifyAttempts: { $lt: MAX_ATTEMPTS },
+    },
+    {
+      $set: {
+        status: "PROCESSING",
+        operationId,
+        cooldownUntil: new Date(Date.now() + COOLDOWN_MS),
+      },
+      $unset: { otpHash: "" },
+      $inc: { resendCount: 1 },
+    },
+    { returnDocument: "after" },
+  );
+  if (!locked) limited();
+  let code = newOtp();
+  // A random collision must not leave the immediately previous code valid.
+  while (otpHash(id, c.phone, code) === c.otpHash) code = newOtp();
+  try {
+    await provider.send(c.phone, otpMessage(code));
   } catch {
-    await db
-      .collection("customer_otp_challenges")
-      .updateOne(
-        { _id: c._id, operationId, status: "PROCESSING" },
-        { $set: { status: "OPEN" }, $unset: { operationId: "" } },
-      );
+    // Delivery is uncertain: neither the old nor possibly delivered new code
+    // can authenticate. Keep all budgets; a future explicit resend is required.
+    await challenges.updateOne(
+      { _id: c._id, operationId, status: "PROCESSING" },
+      { $set: { status: "OPEN" }, $unset: { operationId: "", otpHash: "" } },
+    );
     return unavailable();
   }
+  const next = { status: "OPEN", otpHash: otpHash(id, c.phone, code) };
+  const opened = await challenges.updateOne(
+    {
+      _id: c._id,
+      operationId,
+      status: "PROCESSING",
+      expiresAt: { $gt: new Date() },
+    },
+    { $set: next, $unset: { operationId: "" } },
+  );
+  if (opened.modifiedCount !== 1) unavailable();
+  // Resending never extends the original challenge validity or resets attempts.
+  return challengeView(locked);
 }
 export async function verifyOtp(
   db: Db,
-  provider: OtpProvider,
+  _provider: SmsProvider,
   rawId: string,
   code: string,
 ) {
@@ -365,75 +280,53 @@ export async function verifyOtp(
   if (typeof code !== "string" || !/^\d{6}$/.test(code))
     bad("INVALID_INPUT", "Le code doit comporter six chiffres.");
   const operationId = crypto.randomUUID();
-  const c = await db
-    .collection<any>("customer_otp_challenges")
-    .findOneAndUpdate(
-      {
-        challengeId: id,
-        status: "OPEN",
-        expiresAt: { $gt: new Date() },
-        verifyAttempts: { $lt: MAX_ATTEMPTS },
-      },
-      {
-        $inc: { verifyAttempts: 1 },
-        $set: { status: "PROCESSING", operationId },
-      },
-      { returnDocument: "after" },
-    );
+  const challenges = db.collection<any>("customer_otp_challenges");
+  const c = await challenges.findOneAndUpdate(
+    {
+      challengeId: id,
+      otpVersion: 1,
+      status: "OPEN",
+      expiresAt: { $gt: new Date() },
+      verifyAttempts: { $lt: MAX_ATTEMPTS },
+    },
+    {
+      $inc: { verifyAttempts: 1 },
+      $set: { status: "PROCESSING", operationId },
+    },
+    { returnDocument: "after" },
+  );
   if (!c)
     bad("INVALID_CHALLENGE", "Vérification invalide, occupée ou expirée.");
-  let status: string;
-  try {
-    status = (await provider.verify(c.otpId, code))?.status;
-    if (!["APPROVED", "FAILED", "EXPIRED", "ALREADY_VERIFIED"].includes(status))
-      unavailable();
-  } catch {
-    await db
-      .collection("customer_otp_challenges")
-      .updateOne(
-        { _id: c._id, operationId, status: "PROCESSING" },
-        {
-          $set: {
-            status: c.verifyAttempts >= MAX_ATTEMPTS ? "LOCKED" : "OPEN",
-          },
-          $unset: { operationId: "" },
-        },
-      );
-    return unavailable();
-  }
-  if (status !== "APPROVED") {
-    await db.collection("customer_otp_challenges").updateOne(
+  const expected = otpHash(id, c.phone, code);
+  const matches =
+    typeof c.otpHash === "string" &&
+    /^[0-9a-f]{64}$/.test(c.otpHash) &&
+    crypto.timingSafeEqual(
+      Buffer.from(c.otpHash, "hex"),
+      Buffer.from(expected, "hex"),
+    );
+  if (!matches) {
+    await challenges.updateOne(
       { _id: c._id, operationId, status: "PROCESSING" },
       {
-        $set: {
-          status:
-            status === "EXPIRED"
-              ? "EXPIRED"
-              : status === "ALREADY_VERIFIED"
-                ? "CONSUMED"
-                : c.verifyAttempts >= MAX_ATTEMPTS
-                  ? "LOCKED"
-                  : "OPEN",
-        },
+        $set: { status: c.verifyAttempts >= MAX_ATTEMPTS ? "LOCKED" : "OPEN" },
         $unset: { operationId: "" },
       },
     );
     bad("OTP_REJECTED", "Code invalide, déjà utilisé ou expiré.");
   }
-  const consumed = await db
-    .collection("customer_otp_challenges")
-    .updateOne(
-      {
-        _id: c._id,
-        operationId,
-        status: "PROCESSING",
-        expiresAt: { $gt: new Date() },
-      },
-      {
-        $set: { status: "APPROVED", verifiedAt: new Date() },
-        $unset: { operationId: "" },
-      },
-    );
+  const consumed = await challenges.updateOne(
+    {
+      _id: c._id,
+      operationId,
+      status: "PROCESSING",
+      expiresAt: { $gt: new Date() },
+    },
+    {
+      $set: { status: "APPROVED", verifiedAt: new Date() },
+      $unset: { operationId: "", otpHash: "", activePhone: "" },
+    },
+  );
   if (consumed.modifiedCount !== 1)
     bad("INVALID_CHALLENGE", "Vérification invalide ou expirée.");
   let customer;
@@ -477,13 +370,11 @@ export async function authenticateCustomer(
     return {};
   const raw = authorization.slice(7).trim();
   if (!/^[A-Za-z0-9_-]{20,128}$/.test(raw)) return {};
-  const s = await db
-    .collection<any>("customer_sessions")
-    .findOne({
-      tokenHash: hash(raw),
-      expiresAt: { $gt: new Date() },
-      revokedAt: { $exists: false },
-    });
+  const s = await db.collection<any>("customer_sessions").findOne({
+    tokenHash: hash(raw),
+    expiresAt: { $gt: new Date() },
+    revokedAt: { $exists: false },
+  });
   if (!s) return {};
   const c = await db.collection<any>("customers").findOne({ id: s.customerId });
   return c

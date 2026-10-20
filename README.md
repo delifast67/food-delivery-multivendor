@@ -2,7 +2,7 @@
 
 Plateforme de livraison de repas multirestaurant pour le Burkina Faso, en cours de transformation vers un backend autonome. La langue de la démonstration est le français et les montants sont des entiers en francs CFA (`XOF`).
 
-**État actuel : démonstration locale, pas un produit prêt pour la production.** Aucun paiement, remboursement, SMS ou déplacement de livreur réel n’a été effectué pendant le développement. L’authentification client D7 Verify et les adresses personnelles sont raccordées, mais le fournisseur SMS est désactivé par défaut, sans simulation : voir les [conditions de configuration et du premier envoi réel](docs/D7_VERIFY_CLIENT.md). Les prix, comptes du personnel et restaurants du seed sont fictifs ; aucun compte client n’est précréé. L’API refuse de démarrer avec `NODE_ENV=production`.
+**État actuel : démonstration locale, pas un produit prêt pour la production.** Aucun paiement, remboursement, SMS ou déplacement de livreur réel n’a été effectué pendant le développement. L’authentification client par OTP local et transport Orange SMS BF et les adresses personnelles sont raccordées, mais le fournisseur SMS est désactivé par défaut, sans simulation : voir les [conditions de configuration et du premier envoi réel](docs/ORANGE_SMS_CLIENT.md). Les prix, comptes du personnel et restaurants du seed sont fictifs ; aucun compte client n’est précréé. L’API refuse de démarrer avec `NODE_ENV=production`.
 
 ## Essayer le parcours local
 
