@@ -56,3 +56,15 @@ Les tests de rendu utilisent les vrais hooks/composants React avec des primitive
 ## Avant une publication réelle
 
 Les identifiants Android/iOS historiques sont conservés ; le propriétaire doit confirmer s’il existe déjà des applications publiées avant de les remplacer par des identifiants Delifast. Aucun projet EAS, compte éditeur, certificat, notification, prestataire marchand ou service payant n’est activé par ce lot. Restent notamment la recette sur appareil, les builds/signatures, le rebranding global et la migration des applications restaurant/livreur et de l’ancien back-office. La PR doit rester non fusionnée et non déployée selon les consignes du lot.
+
+## Support client dans l’app
+
+Depuis **Compte → Mes tickets de support**, un client dont la session a été validée par le serveur peut créer une demande (sujet de 1 à 120 caractères et description de 1 à 4 000 caractères, après suppression des espaces de bord), lire ses tickets par pages de 20, actualiser leur état et ouvrir le détail avec l’historique et les notes de prise en charge/résolution. Les statuts affichés sont **Ouvert**, **En cours** et **Résolu**, uniquement d’après les réponses de l’API. Le point d’entrée Delifast conserve sa navigation locale et ses libellés français ; les anciens écrans de chat et leur fournisseur historique ne sont pas initialisés.
+
+Les opérations `createSupportTicket`, `customerSupportTickets` et `customerSupportTicket` utilisent le même jeton client privé que le carnet d’adresses. Le serveur détermine le propriétaire depuis cette session ; l’app ne transmet pas d’identité choisie par l’utilisateur. Aucune opération d’administration du support n’est ajoutée au client.
+
+Avant une création, la clé d’idempotence et le contenu exact sont conservés dans SecureStore avec l’identité du client. Si la réponse est perdue, **Reprendre le ticket** réutilise cette demande, y compris après redémarrage et validation de la session. Une tentative incertaine bloque une nouvelle création. Ne pas supprimer les données de l’app ou réinstaller pour tenter de résoudre une réponse perdue : la clé nécessaire à la reprise pourrait disparaître. Les listes, détails et brouillons sont retirés lors d’un changement de compte ou d’une révocation ; une ancienne réponse ne doit pas réapparaître dans une nouvelle session.
+
+Le support reste une fonctionnalité de la démonstration locale : **pas de chat, pièce jointe, notification, SMS ni engagement de délai de réponse**. L’équipe utilise les transitions sécurisées déjà disponibles dans le web. Aucun ticket ni statut réussi n’est simulé dans l’interface. Les sessions et réponses injectées par les tests restent exclusivement dans les fichiers de tests.
+
+La recette `scripts/delifast-mobile-support-smoke.mjs` exerce le vrai client/contrôleur mobile contre l’API et un MongoDB jetable. Elle ne valide ni exécution native, ni réception SMS, ni livraison de notifications. Les exports Expo restent des bundles JS/Hermes Android/iOS, pas des APK/IPA signés.

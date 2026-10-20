@@ -24,6 +24,12 @@ const sessionFields = `token customer { ${customerFields} }`
 const challengeFields = 'challengeId expiresIn retryAfter'
 const addressFields = 'id recipientName phone city neighborhood landmark instructions point { latitude longitude }'
 const addressInputFields = ['recipientName', 'phone', 'city', 'neighborhood', 'landmark', 'instructions', 'point']
+const supportFields = 'id customerId subject description status version createdAt updatedAt history { status at actorRole note }'
+const supportInputFields = ['subject', 'description', 'idempotencyKey']
+const serializeSupportTicketInput = input => {
+  const value = input && typeof input === 'object' ? input : {}
+  return Object.fromEntries(supportInputFields.filter(key => value[key] !== undefined).map(key => [key, value[key]]))
+}
 const serializeDeliveryAddressInput = input => {
   const value = input && typeof input === 'object' ? input : {}
   return Object.fromEntries(addressInputFields.filter(key => value[key] !== undefined).map(key => [key, key === 'point' && value[key] ? { latitude: value[key].latitude, longitude: value[key].longitude } : value[key]]))
@@ -42,7 +48,10 @@ const documents = {
   customerLogout: 'mutation CustomerLogout { customerLogout }',
   createCustomerAddress: `mutation CreateCustomerAddress($input: DeliveryAddressInput!) { createCustomerAddress(input: $input) { ${addressFields} } }`,
   updateCustomerAddress: `mutation UpdateCustomerAddress($id: ID!, $input: DeliveryAddressInput!) { updateCustomerAddress(id: $id, input: $input) { ${addressFields} } }`,
-  deleteCustomerAddress: 'mutation DeleteCustomerAddress($id: ID!) { deleteCustomerAddress(id: $id) }'
+  deleteCustomerAddress: 'mutation DeleteCustomerAddress($id: ID!) { deleteCustomerAddress(id: $id) }',
+  customerSupportTickets: `query CustomerSupportTickets($limit: Int!, $offset: Int!) { customerSupportTickets(limit: $limit, offset: $offset) { ${supportFields} } }`,
+  customerSupportTicket: `query CustomerSupportTicket($id: ID!) { customerSupportTicket(id: $id) { ${supportFields} } }`,
+  createSupportTicket: `mutation CreateSupportTicket($input: CreateSupportTicketInput!) { createSupportTicket(input: $input) { ${supportFields} } }`
 }
 function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetch, timeoutMs = 15000 } = {}) {
   if (!/^https?:\/\//.test(endpoint)) throw new Error('Une URL HTTP(S) Delifast explicite est requise')
@@ -126,7 +135,10 @@ function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetc
     customerLogout: () => field('customerLogout', {}, true),
     createCustomerAddress: input => field('createCustomerAddress', { input: serializeDeliveryAddressInput(input) }, true),
     updateCustomerAddress: (id, input) => field('updateCustomerAddress', { id, input: serializeDeliveryAddressInput(input) }, true),
-    deleteCustomerAddress: id => field('deleteCustomerAddress', { id }, true)
+    deleteCustomerAddress: id => field('deleteCustomerAddress', { id }, true),
+    customerSupportTickets: (limit = 20, offset = 0) => field('customerSupportTickets', { limit, offset }, true),
+    customerSupportTicket: id => field('customerSupportTicket', { id }, true),
+    createSupportTicket: input => field('createSupportTicket', { input: serializeSupportTicketInput(input) }, true)
   }
 }
-module.exports = { createClient, DelifastApiError, DEFAULT_ENDPOINT, documents, serializeDeliveryAddressInput }
+module.exports = { createClient, DelifastApiError, DEFAULT_ENDPOINT, documents, serializeDeliveryAddressInput, serializeSupportTicketInput }

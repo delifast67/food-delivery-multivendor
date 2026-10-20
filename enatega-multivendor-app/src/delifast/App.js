@@ -11,6 +11,8 @@ const initialAddress = { recipientName: '', phone: '+226 ', city: '', neighborho
 
 const money = (value) => `${Number(value || 0).toLocaleString('fr-FR')} XOF`
 const errorText = (error) => (error ? error.message || String(error) : '')
+// Le point d’entrée Delifast utilise actuellement des libellés français locaux.
+const supportStatus = (status) => ({ OPEN: 'Ouvert', IN_PROGRESS: 'En cours', RESOLVED: 'Résolu' }[status] || 'Statut inconnu')
 const normalizeSelections = (selections) =>
   (selections || [])
     .map((selection) => ({
@@ -70,11 +72,17 @@ function App({ api, storage }) {
   const [accountAddress, setAccountAddress] = useState(initialAddress)
   const [editingAddressId, setEditingAddressId] = useState(null)
   const [otpNow, setOtpNow] = useState(Date.now())
+  const [supportSubject, setSupportSubject] = useState('')
+  const [supportDescription, setSupportDescription] = useState('')
+  const [expandedTicket, setExpandedTicket] = useState(null)
   const customerId = state?.customer?.id || null
   useEffect(() => {
     // A draft from a revoked account must not reappear in another account.
     setAccountAddress({ ...initialAddress, point: { ...initialAddress.point } })
     setEditingAddressId(null)
+    setSupportSubject('')
+    setSupportDescription('')
+    setExpandedTicket(null)
   }, [customerId])
   useEffect(() => {
     if (!challenge) return undefined
@@ -257,13 +265,79 @@ function App({ api, storage }) {
           <Button title='Changer de téléphone' disabled={state.authBusy} onPress={() => { setChallenge(null); setOtp('') }} />
         </>}
       </> : <>
-        <Text style={styles.sectionTitle}>Téléphone : {customer.phone}</Text><Button title='Se déconnecter' disabled={state.authBusy} onPress={logout} /><Text style={styles.sectionTitle}>Carnet d’adresses</Text>
+        <Text style={styles.sectionTitle}>Téléphone : {customer.phone}</Text><Button title='Se déconnecter' disabled={state.authBusy} onPress={logout} />
+        <Button title='Mes tickets de support' disabled={state.authBusy} onPress={() => { setLocalError(''); setScreen('support'); controller.loadSupportTickets().catch(() => {}) }} />
+        <Text style={styles.sectionTitle}>Carnet d’adresses</Text>
         {(state.addresses || []).map(item => <View style={styles.card} key={item.id}><Text style={styles.cardTitle}>{item.recipientName}</Text><Text>{item.city} · {item.neighborhood}</Text><Button title='Utiliser pour la livraison' disabled={addressBusy || !state.restored} onPress={() => chooseAddress(item)} /><Button title='Modifier' disabled={addressBusy} onPress={() => editAddress(item)} /><Button title='Supprimer' disabled={addressBusy} onPress={() => removeAddress(item.id)} /></View>)}
         <Text style={styles.sectionTitle}>{editingAddressId ? 'Modifier l’adresse' : 'Ajouter une adresse'}</Text>
         {['recipientName', 'phone', 'city', 'neighborhood', 'landmark', 'instructions'].map(key => <TextInput key={key} style={styles.input} placeholder={key} value={accountAddress[key] || ''} onChangeText={value => setAccountAddress({ ...accountAddress, [key]: value })} editable={!addressBusy} />)}
         <TextInput style={styles.input} placeholder='Latitude' keyboardType='numeric' editable={!addressBusy} value={String(accountAddress.point.latitude)} onChangeText={value => setAccountAddress({ ...accountAddress, point: { ...accountAddress.point, latitude: Number(value.replace(',', '.')) } })} /><TextInput style={styles.input} placeholder='Longitude' keyboardType='numeric' editable={!addressBusy} value={String(accountAddress.point.longitude)} onChangeText={value => setAccountAddress({ ...accountAddress, point: { ...accountAddress.point, longitude: Number(value.replace(',', '.')) } })} /><Button title={editingAddressId ? 'Enregistrer les modifications' : 'Ajouter cette adresse'} disabled={addressBusy} onPress={saveAddress} />{editingAddressId && <Button title='Annuler la modification' disabled={addressBusy} onPress={resetAddress} />}
       </>}
     </ScrollView></SafeAreaView>
+  }
+
+  if (screen === 'support') {
+    const locked = state.supportBusy || state.supportLoading || state.authBusy
+    const attempt = state.supportPending
+    const sendTicket = async(retry = false) => {
+      const owner = state.customer?.id
+      try {
+        const result = retry ? await controller.retrySupportTicket() : await controller.createSupportTicket({ subject: supportSubject, description: supportDescription })
+        // Une réponse d’un ancien compte ne doit jamais modifier le nouveau brouillon.
+        if (result && controller.getState().customer?.id === owner) {
+          setSupportSubject(''); setSupportDescription(''); setExpandedTicket(result.id)
+        }
+      } catch {} // L’erreur du contrôleur reste visible, sans annonce optimiste.
+    }
+    const page = state.supportPage || 0
+    return (
+      <SafeAreaView style={styles.safe}>
+        <Header title='Mes tickets de support' onBack={() => setScreen('account')} />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
+          <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps='handled'>
+            <Text style={styles.subtitle}>Démonstration locale. Seuls vos tickets enregistrés sur le serveur sont affichés. Sans chat ni pièces jointes ; aucune notification n’est envoyée.</Text>
+            {!state.customer ? <>
+              <Text style={styles.warning}>Connexion client requise. Reconnectez-vous pour consulter vos tickets.</Text>
+              <Button title='Aller au compte' onPress={() => setScreen('account')} />
+            </> : <>
+              {state.supportError && <Text accessibilityRole='alert' style={styles.error}>{errorText(state.supportError)}</Text>}
+              <Text style={styles.sectionTitle}>Créer un ticket</Text>
+              <Text style={styles.label}>Sujet (120 caractères maximum)</Text>
+              <TextInput accessibilityLabel='Sujet du ticket' style={styles.input} placeholder='Sujet du ticket' maxLength={120} value={supportSubject} onChangeText={setSupportSubject} editable={!locked && !attempt} />
+              <Text style={styles.label}>Description (4 000 caractères maximum)</Text>
+              <TextInput accessibilityLabel='Description du ticket' style={styles.input} placeholder='Description du ticket' maxLength={4000} multiline value={supportDescription} onChangeText={setSupportDescription} editable={!locked && !attempt} />
+              {attempt ? <View style={styles.notice}>
+                <Text style={styles.noticeTitle}>Demande à reprendre</Text>
+                <Text>{attempt.subject || attempt.payload?.subject}</Text>
+                <Text>Le résultat de cette tentative doit être confirmé. Reprenez la même demande pour éviter un doublon.</Text>
+                <Button title='Reprendre le ticket' disabled={locked} onPress={() => sendTicket(true)} />
+              </View> : <Button title={state.supportBusy ? 'Enregistrement en cours…' : 'Créer le ticket'} disabled={locked || !supportSubject.trim() || !supportDescription.trim()} onPress={() => sendTicket()} />}
+              <Text style={styles.sectionTitle}>Mes demandes</Text>
+              <Button title='Actualiser les tickets' disabled={locked} onPress={() => controller.loadSupportTickets(page).catch(() => {})} />
+              {state.supportLoading && <ActivityIndicator color='#1f6f5b' />}
+              {!state.supportLoading && !state.supportError && !(state.supportTickets || []).length && <Text style={styles.muted}>Aucun ticket sur cette page.</Text>}
+              {(state.supportTickets || []).map(ticket => <View key={ticket.id} style={styles.card}>
+                <Text style={styles.cardTitle}>{ticket.subject}</Text>
+                <Text>{supportStatus(ticket.status)} · Référence : {ticket.id}</Text>
+                <Text style={styles.muted}>Créé le {ticket.createdAt} · Mis à jour le {ticket.updatedAt}</Text>
+                <Button title={expandedTicket === ticket.id ? 'Masquer le détail' : 'Voir le détail'} onPress={() => setExpandedTicket(expandedTicket === ticket.id ? null : ticket.id)} />
+                {expandedTicket === ticket.id && <>
+                  <Text>{ticket.description}</Text>
+                  <Text style={styles.label}>Historique serveur</Text>
+                  {(ticket.history || []).map((entry, index) => <View key={`${entry.at}-${index}`} style={styles.history}>
+                    <Text>{supportStatus(entry.status)} — {entry.at} · {entry.actorRole === 'CUSTOMER' ? 'Client' : 'Équipe support'}</Text>
+                    {!!entry.note && <Text>{entry.note}</Text>}
+                  </View>)}
+                </>}
+              </View>)}
+              <Text style={styles.muted}>Page {Math.floor(page / 20) + 1} · ordre de création</Text>
+              <Button title='Page précédente' disabled={locked || page === 0} onPress={() => { setExpandedTicket(null); controller.loadSupportTickets(Math.max(0, page - 20)).catch(() => {}) }} />
+              <Button title='Page suivante' disabled={locked || !state.supportHasMore || page >= 10000} onPress={() => { setExpandedTicket(null); controller.loadSupportTickets(page + 20).catch(() => {}) }} />
+            </>}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    )
   }
 
   if (screen === 'menu') {

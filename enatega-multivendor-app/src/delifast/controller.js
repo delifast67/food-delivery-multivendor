@@ -3,6 +3,7 @@ const { addToCart, changeQuantity, validateSelections, validatePoint, validateAd
 const ATTEMPT_KEY = 'delifast-order-attempt'
 const LAST_ORDER_KEY = 'delifast-last-order'
 const CUSTOMER_TOKEN_KEY = 'delifast-customer-token'
+const SUPPORT_ATTEMPT_KEY = 'delifast-support-attempt'
 const clone = (value) => (value == null ? value : JSON.parse(JSON.stringify(value)))
 const errorView = (error) => ({ message: error?.message || String(error), kind: error?.kind || 'unknown', code: error?.code })
 const validQuote = (quote) => quote && quote.currency === 'XOF' && Number.isSafeInteger(quote.total) && quote.total >= 0 && Array.isArray(quote.items)
@@ -25,7 +26,14 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
     lastOrder: null,
     customer: null,
     addresses: [],
-    authBusy: false
+    authBusy: false,
+    supportTickets: [],
+    supportPage: 0,
+    supportHasMore: false,
+    supportLoading: false,
+    supportBusy: false,
+    supportError: null,
+    supportPending: null
   }
   let inFlight = null
   let restorePromise = null
@@ -35,6 +43,8 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
   let discoveryRequest = 0
   let authEpoch = 0
   let authInFlight = null
+  let supportRequest = 0
+  let supportInFlight = null
   let otpChallenge = null
   const ADDRESS_FIELDS = ['recipientName', 'phone', 'city', 'neighborhood', 'landmark', 'instructions', 'point']
   const serializeAddress = (input) => {
@@ -48,10 +58,24 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
     return authInFlight
   }
   async function clearCustomerSession() {
+    const supportOwner = state.customer?.id
+    ++supportRequest
     ++authEpoch
     if (api.setCustomerToken) api.setCustomerToken(null)
-    set({ customer: null, addresses: [] })
-    try { if (storage.removeItem) await storage.removeItem(CUSTOMER_TOKEN_KEY) } catch {}
+    set({ customer: null, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null })
+    try { if (storage.removeItem) { await storage.removeItem(CUSTOMER_TOKEN_KEY); await removeSupportAttempt(supportOwner) } } catch {}
+  }
+  const supportErrorView = error => ({ message: error?.message || String(error), kind: error?.kind || 'unknown', code: error?.code })
+  const supportInput = input => {
+    const subject = typeof input?.subject === 'string' ? input.subject.trim() : ''
+    const description = typeof input?.description === 'string' ? input.description.trim() : ''
+    if (subject.length < 1 || subject.length > 120) throw new Error('Sujet invalide (1 à 120 caractères)')
+    if (description.length < 1 || description.length > 4000) throw new Error('Description invalide (1 à 4000 caractères)')
+    return { subject, description }
+  }
+  const supportList = (tickets) => {
+    const seen = new Set()
+    return (Array.isArray(tickets) ? tickets : []).filter(ticket => ticket && typeof ticket.id === 'string' && !seen.has(ticket.id) && seen.add(ticket.id)).map(clone)
   }
   const set = (patch) => {
     state = { ...state, ...patch }
@@ -164,6 +188,92 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
         set({ busy: false })
       })
     return inFlight
+  }
+  // Les écritures et purges partagent une file pour ne pas ressusciter une
+  // tentative après une déconnexion pendant une écriture SecureStore.
+  let supportStorageTail = Promise.resolve()
+  function supportIO(work) {
+    const result = supportStorageTail.then(work)
+    supportStorageTail = result.catch(() => {})
+    return result
+  }
+  function checkSupportAttempt(attempt, owner) {
+    if (!attempt || attempt.customerId !== owner || !/^[a-zA-Z0-9_-]{8,128}$/.test(attempt.idempotencyKey)) throw new Error('Tentative support invalide ; vérification requise')
+    const payload = supportInput(attempt.payload)
+    if (payload.subject !== attempt.payload.subject || payload.description !== attempt.payload.description) throw new Error('Tentative support invalide ; vérification requise')
+    return payload
+  }
+  function removeSupportAttempt(owner, key) {
+    return supportIO(async() => {
+      const stored = await readJSON(SUPPORT_ATTEMPT_KEY)
+      if (stored?.customerId === owner && (!key || stored.idempotencyKey === key)) await storage.removeItem(SUPPORT_ATTEMPT_KEY)
+    })
+  }
+  function supportExclusive(retry, input) {
+    if (!state.customer || !api.createSupportTicket) return Promise.reject(new Error('Connexion client requise'))
+    if (supportInFlight) return retry ? supportInFlight : Promise.reject(new Error('Une création support est en attente ; reprenez-la'))
+    const epoch = authEpoch; const owner = state.customer.id
+    let attempt = null; let persisted = false; let sent = false
+    set({ supportBusy: true, supportError: null })
+    ++supportRequest
+    set({ supportLoading: false })
+    const current = () => epoch === authEpoch && state.customer?.id === owner
+    // Verrou publié avant le premier await : deux clics ne créent pas deux clés.
+    const work = Promise.resolve().then(async() => {
+      try {
+        storageReady()
+        const stored = await supportIO(() => readJSON(SUPPORT_ATTEMPT_KEY))
+        if (!current()) return null
+        if (retry) {
+          attempt = stored || state.supportPending
+          checkSupportAttempt(attempt, owner)
+          persisted = true
+        } else {
+          if (stored || state.supportPending) {
+            if (stored?.customerId === owner) set({ supportPending: clone(stored) })
+            throw new Error('Une création support est en attente ; reprenez-la')
+          }
+          const payload = supportInput(input)
+          const key = makeIdempotencyKey(random)
+          if (!/^[a-zA-Z0-9_-]{8,128}$/.test(key)) throw new Error('Clé d’idempotence invalide')
+          attempt = { customerId: owner, idempotencyKey: key, payload }
+          await supportIO(async() => {
+            if (!current()) return
+            await storage.setItem(SUPPORT_ATTEMPT_KEY, JSON.stringify(attempt))
+            persisted = true
+          })
+        }
+        if (!current()) {
+          if (persisted) await removeSupportAttempt(owner, attempt.idempotencyKey)
+          return null
+        }
+        set({ supportPending: clone(attempt) })
+        sent = true
+        const result = await api.createSupportTicket({ ...checkSupportAttempt(attempt, owner), idempotencyKey: attempt.idempotencyKey })
+        if (!current()) return null
+        if (!result || typeof result.id !== 'string' || !result.id) throw new Error('Réponse ticket incomplète')
+        await removeSupportAttempt(owner, attempt.idempotencyKey)
+        if (!current()) return null
+        ++supportRequest
+        set({ supportPending: null, supportLoading: false, supportTickets: supportList([result, ...state.supportTickets]), supportError: null })
+        return clone(result)
+      } catch (error) {
+        if (!current()) return null
+        // Un refus de validation certain n’est pas une création ambiguë.
+        if (persisted && sent && error?.kind === 'validation') {
+          try { await removeSupportAttempt(owner, attempt.idempotencyKey); persisted = false } catch {}
+          if (!current()) return null
+        }
+        set({ supportError: supportErrorView(error), ...(attempt ? { supportPending: persisted ? clone(attempt) : null } : {}) })
+        if (error?.kind === 'auth') await clearCustomerSession()
+        throw error
+      } finally {
+        if (supportInFlight === work) supportInFlight = null
+        if (current()) set({ supportBusy: false })
+      }
+    })
+    supportInFlight = work
+    return work
   }
   const actions = {
     getState: () => clone(state),
@@ -314,7 +424,7 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
           if (customer) set({ customer: clone(customer), addresses: [] })
           throw error
         }
-        api.setCustomerToken(null); await storage.removeItem(CUSTOMER_TOKEN_KEY); set({ customer: null, addresses: [] })
+        await clearCustomerSession()
         return null
       }
     },
@@ -358,7 +468,8 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
         storageReady(); await storage.setItem(CUSTOMER_TOKEN_KEY, session.token)
         if (epoch !== authEpoch) { await storage.removeItem(CUSTOMER_TOKEN_KEY); throw new Error('Connexion annulée') }
         api.setCustomerToken(session.token)
-        set({ customer: clone(session.customer), addresses: [] })
+        ++supportRequest
+        set({ customer: clone(session.customer), addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null })
         const addresses = api.customerAddresses ? await api.customerAddresses() : []
         if (epoch !== authEpoch) { api.setCustomerToken(null); await storage.removeItem(CUSTOMER_TOKEN_KEY); throw new Error('Connexion annulée') }
         set({ customer: clone(session.customer), addresses: clone(addresses) || [] })
@@ -367,14 +478,16 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
       })
     },
     async logoutCustomer() {
+      const supportOwner = state.customer?.id
       ++authEpoch
+      ++supportRequest
       otpChallenge = null
       // Start revocation with the current token, then clear local access synchronously.
       let failure
       const revoked = (async() => { try { if (api.customerLogout) await api.customerLogout() } catch (error) { failure = error } })()
       if (api.setCustomerToken) api.setCustomerToken(null)
-      set({ customer: null, addresses: [] })
-      try { if (storage.removeItem) await storage.removeItem(CUSTOMER_TOKEN_KEY) } finally { await revoked }
+      set({ customer: null, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null })
+      try { if (storage.removeItem) { await storage.removeItem(CUSTOMER_TOKEN_KEY); await removeSupportAttempt(supportOwner) } } finally { await revoked }
       if (failure) throw failure
       return true
     },
@@ -423,6 +536,36 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
         }
       })
     },
+    async loadSupportTickets(offset = 0) {
+      if (!state.customer || !api.customerSupportTickets) throw new Error('Connexion client requise')
+      if (!Number.isInteger(offset) || offset < 0 || offset > 10000) throw new Error('Pagination support invalide')
+      const request = ++supportRequest; const epoch = authEpoch; const owner = state.customer.id
+      set({ supportLoading: true, supportError: null })
+      try {
+        const stored = await supportIO(() => readJSON(SUPPORT_ATTEMPT_KEY))
+        if (epoch !== authEpoch || request !== supportRequest) return null
+        if (stored?.customerId === owner) {
+          checkSupportAttempt(stored, owner)
+          set({ supportPending: clone(stored) })
+        }
+        const rows = await api.customerSupportTickets(20, offset)
+        if (epoch !== authEpoch || request !== supportRequest) return null
+        if (!Array.isArray(rows)) throw new Error('Réponse support incomplète')
+        set({ supportTickets: supportList(rows), supportPage: offset, supportHasMore: rows.length === 20, supportLoading: false })
+        return clone(rows)
+      } catch (error) {
+        if (epoch !== authEpoch || request !== supportRequest) return null
+        set({ supportLoading: false, supportError: supportErrorView(error) })
+        if (error?.kind === 'auth') await clearCustomerSession()
+        throw error
+      }
+    },
+    createSupportTicket(input) {
+      return supportExclusive(false, input)
+    },
+    retrySupportTicket() {
+      return supportExclusive(true)
+    },
     stopPolling() {
       ++trackingRequest
       if (pollTimer) clearInterval(pollTimer)
@@ -431,4 +574,4 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
   }
   return actions
 }
-module.exports = { createController, ATTEMPT_KEY, LAST_ORDER_KEY, CUSTOMER_TOKEN_KEY }
+module.exports = { createController, ATTEMPT_KEY, LAST_ORDER_KEY, CUSTOMER_TOKEN_KEY, SUPPORT_ATTEMPT_KEY }

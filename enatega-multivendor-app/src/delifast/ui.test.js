@@ -190,3 +190,110 @@ test('la révocation efface le brouillon du carnet avant une nouvelle identité'
   assert.equal(tree.root.findAllByType('TextInput').find(node => node.props.placeholder === 'instructions').props.value, '')
   await unmount(tree)
 })
+
+// Fixtures de protocole réservées aux tests, aucun SMS ni service réel.
+const supportTicket = { id: 'fixture-ticket', customerId: 'fixture-customer', subject: 'Sujet enregistré', description: 'Description privée fictive', status: 'IN_PROGRESS', version: 1, createdAt: '2026-10-20T08:00:00Z', updatedAt: '2026-10-20T09:00:00Z', history: [{ status: 'OPEN', at: '2026-10-20T08:00:00Z', actorRole: 'CUSTOMER', note: '' }, { status: 'IN_PROGRESS', at: '2026-10-20T09:00:00Z', actorRole: 'ADMIN', note: 'Prise en charge fictive' }] }
+async function supportMount(extra = {}, storage = memory()) {
+  await storage.setItem('delifast-customer-token', 'fixture-support-session-not-visible')
+  return mount(api({
+    setCustomerToken: () => {},
+    customerMe: async () => ({ id: 'fixture-customer', phone: '+22670000000' }),
+    customerAddresses: async () => [],
+    customerSupportTickets: async () => [supportTicket],
+    createSupportTicket: async input => ({ ...supportTicket, subject: input.subject, description: input.description, status: 'OPEN', version: 0 }),
+    ...extra
+  }), storage)
+}
+async function editSupport(tree, label, value) {
+  await renderer.act(async () => { tree.root.findAllByType('TextInput').find(node => node.props.accessibilityLabel === label).props.onChangeText(value) })
+}
+test('support : accès depuis le compte, détail et historique serveur traduits sans jeton', async () => {
+  const tree = await supportMount()
+  await press(tree, 'Compte', 'TouchableOpacity')
+  await press(tree, 'Mes tickets de support')
+  assert.match(treeText(tree), /Sujet enregistré/)
+  assert.match(treeText(tree), /En cours/)
+  assert.match(treeText(tree), /Démonstration locale/)
+  await press(tree, 'Voir le détail')
+  assert.match(treeText(tree), /Description privée fictive/)
+  assert.match(treeText(tree), /Historique serveur/)
+  assert.match(treeText(tree), /Prise en charge fictive/)
+  assert.doesNotMatch(treeText(tree), /fixture-support-session-not-visible|IN_PROGRESS|CUSTOMER|ADMIN/)
+  await unmount(tree)
+})
+test('support : formulaire borné, création confirmée seulement après réponse serveur', async () => {
+  let input
+  const tree = await supportMount({ customerSupportTickets: async () => [], createSupportTicket: async value => { input = value; return { ...supportTicket, subject: value.subject, description: value.description } } })
+  await press(tree, 'Compte', 'TouchableOpacity'); await press(tree, 'Mes tickets de support')
+  assert.match(treeText(tree), /Aucun ticket sur cette page/)
+  assert.equal(tree.root.findAllByType('Button').find(node => node.props.title === 'Créer le ticket').props.disabled, true)
+  const fields = tree.root.findAllByType('TextInput')
+  assert.deepEqual(fields.map(node => node.props.maxLength), [120, 4000])
+  await editSupport(tree, 'Sujet du ticket', ' Nouveau sujet ')
+  await editSupport(tree, 'Description du ticket', ' Description nouvelle ')
+  await press(tree, 'Créer le ticket')
+  assert.equal(input.subject, 'Nouveau sujet')
+  assert.equal(input.description, 'Description nouvelle')
+  assert.match(treeText(tree), /Nouveau sujet/)
+  assert.equal(tree.root.findAllByType('TextInput')[0].props.value, '')
+  assert.doesNotMatch(treeText(tree), /envoyé par SMS|notification envoyée/i)
+  await unmount(tree)
+})
+test('support : erreur réseau sans faux succès puis reprise de la même clé', async () => {
+  const inputs = []
+  const tree = await supportMount({ customerSupportTickets: async () => [], createSupportTicket: async input => { inputs.push(input); if (inputs.length === 1) throw Object.assign(new Error('Réponse réseau perdue'), { kind: 'unavailable' }); return { ...supportTicket, subject: input.subject } } })
+  await press(tree, 'Compte', 'TouchableOpacity'); await press(tree, 'Mes tickets de support')
+  await editSupport(tree, 'Sujet du ticket', 'Sujet à reprendre')
+  await editSupport(tree, 'Description du ticket', 'Description test')
+  await press(tree, 'Créer le ticket')
+  assert.match(treeText(tree), /Réponse réseau perdue/)
+  assert.match(treeText(tree), /Demande à reprendre/)
+  assert.doesNotMatch(treeText(tree), /Référence :/)
+  assert.ok(tree.root.findAllByType('TextInput').every(node => node.props.editable === false))
+  await press(tree, 'Reprendre le ticket')
+  assert.deepEqual(inputs[0], inputs[1])
+  assert.match(treeText(tree), /Référence :/)
+  assert.doesNotMatch(treeText(tree), /Demande à reprendre/)
+  await unmount(tree)
+})
+test('support : pagination et actualisation suivent les offsets serveur', async () => {
+  const offsets = []
+  const tree = await supportMount({ customerSupportTickets: async (limit, offset) => { offsets.push([limit, offset]); return offset === 0 ? Array.from({ length: 20 }, (_, i) => ({ ...supportTicket, id: `ticket-${i}` })) : [] } })
+  await press(tree, 'Compte', 'TouchableOpacity'); await press(tree, 'Mes tickets de support')
+  await press(tree, 'Page suivante')
+  assert.match(treeText(tree), /Page\s+2/)
+  await press(tree, 'Actualiser les tickets')
+  await press(tree, 'Page précédente')
+  assert.deepEqual(offsets, [[20, 0], [20, 20], [20, 20], [20, 0]])
+  await unmount(tree)
+})
+test('support : révocation retire les données et exige une reconnexion', async () => {
+  let calls = 0
+  const tree = await supportMount({ customerSupportTickets: async () => { if (++calls > 1) throw Object.assign(new Error('Session révoquée'), { kind: 'auth' }); return [supportTicket] } })
+  await press(tree, 'Compte', 'TouchableOpacity'); await press(tree, 'Mes tickets de support')
+  await editSupport(tree, 'Sujet du ticket', 'Brouillon secret fictif')
+  await press(tree, 'Actualiser les tickets')
+  assert.match(treeText(tree), /Reconnectez-vous/)
+  assert.doesNotMatch(treeText(tree), /Sujet enregistré|Brouillon secret fictif|Description privée/)
+  assert.equal(tree.root.findAllByType('TextInput').length, 0)
+  await press(tree, 'Aller au compte')
+  assert.match(treeText(tree), /Connexion par téléphone/)
+  await unmount(tree)
+})
+
+test('support : aucune création optimiste pendant une réponse serveur en attente', async () => {
+  let finish
+  const delayed = new Promise(resolve => { finish = resolve })
+  const tree = await supportMount({ customerSupportTickets: async () => [], createSupportTicket: async () => delayed })
+  await press(tree, 'Compte', 'TouchableOpacity'); await press(tree, 'Mes tickets de support')
+  await editSupport(tree, 'Sujet du ticket', 'Sujet non confirmé')
+  await editSupport(tree, 'Description du ticket', 'Demande fictive')
+  await renderer.act(async () => { void tree.root.findAllByType('Button').find(node => node.props.title === 'Créer le ticket').props.onPress() })
+  assert.doesNotMatch(treeText(tree), /Référence :/)
+  assert.ok(tree.root.findAllByType('TextInput').every(node => node.props.editable === false))
+  const retry = tree.root.findAllByType('Button').find(node => node.props.title === 'Reprendre le ticket')
+  if (retry) assert.equal(retry.props.disabled, true)
+  await renderer.act(async () => { finish({ ...supportTicket, subject: 'Sujet confirmé par API' }); await delayed })
+  assert.match(treeText(tree), /Sujet confirmé par API/)
+  await unmount(tree)
+})

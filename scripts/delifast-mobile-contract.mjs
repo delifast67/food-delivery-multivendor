@@ -9,7 +9,8 @@ const { documents } = mobileRequire('./src/delifast/api.js');
 const schema = buildSchema(readFileSync(new URL('../delifast-api/schema/v1.graphql', import.meta.url), 'utf8'));
 const required = ['calculateCheckout', 'order', 'placeOrder', 'restaurant', 'restaurants',
   'requestCustomerOtp', 'resendCustomerOtp', 'verifyCustomerOtp', 'customerLogout',
-  'customerMe', 'customerAddresses', 'createCustomerAddress', 'updateCustomerAddress', 'deleteCustomerAddress'];
+  'customerMe', 'customerAddresses', 'createCustomerAddress', 'updateCustomerAddress', 'deleteCustomerAddress',
+  'customerSupportTickets', 'customerSupportTicket', 'createSupportTicket'];
 assert.deepEqual(Object.keys(documents).sort(), required.sort());
 for (const [name, document] of Object.entries(documents)) {
   const ast = parse(document);
