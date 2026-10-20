@@ -93,6 +93,18 @@ try {
   assert.equal(restaurants.length, 2);
   const own = restaurants.find(x => x.id === restaurant.user.restaurantId);
   assert.ok(own);
+  const zoneInput = {name:'Zone fictive recette admin',shape:'CIRCLE',center:{latitude:12.3714,longitude:-1.5197},radiusMeters:2000,polygon:null,enabled:true,feeXof:777,minimumOrderXof:0,estimatedMinutes:42,priority:-50,demo:true,hours:[]};
+  const zone = await client.createDeliveryZone(own.id, zoneInput);
+  assert.equal(zone.shape,'CIRCLE');
+  assert.ok((await client.deliveryZones(own.id)).some(z=>z.id===zone.id));
+  const eligible = (await gql('query($r:ID!,$p:DeliveryPointInput!){deliveryEligibility(restaurantId:$r,point:$p){zoneId deliveryFee}}',{r:own.id,p:zoneInput.center})).deliveryEligibility;
+  assert.equal(eligible.zoneId,zone.id); assert.equal(eligible.deliveryFee,777);
+  await rejected('mutation($r:ID!,$i:DeliveryZoneInput!){createDeliveryZone(restaurantId:$r,input:$i){id}}',{r:own.id,i:zoneInput},restaurant.token,'FORBIDDEN');
+  await rejected('query($r:ID!){deliveryZones(restaurantId:$r){id}}',{r:own.id},other.token,'FORBIDDEN');
+  const zoneUpdated=await client.updateDeliveryZone(zone.id,zone.version,{...zoneInput,enabled:false,feeXof:987});
+  assert.equal(zoneUpdated.version,zone.version+1); assert.equal(zoneUpdated.enabled,false);
+  await assert.rejects(client.updateDeliveryZone(zone.id,zone.version,zoneInput),e=>e.code==='CONCURRENT_MODIFICATION');
+  ok('zones créées et modifiées via le client admin : tarif serveur, isolation et version périmée vérifiés');
   const closed = (await gql(openMutation, { id: own.id, version: own.version, open: false }, admin.token)).setRestaurantOpen;
   assert.equal(closed.open, false);
   assert.equal(closed.version, own.version + 1);
@@ -104,7 +116,7 @@ try {
   async function place() {
     return (await gql('mutation($input:PlaceOrderInput!){placeOrder(input:$input){id status accessToken checkout{total}}}', { input: {
       restaurantId: own.id, items: [{ menuItemId: 'riz-gras', quantity: 2 }], idempotencyKey: `admin-${randomUUID()}`,
-      deliveryAddress: { recipientName: 'Recette admin fictive', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Démo', landmark: 'Ne pas livrer', instructions: 'Test sans livraison' },
+      deliveryAddress: { recipientName: 'Recette admin fictive', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Démo', landmark: 'Ne pas livrer', instructions: 'Test sans livraison', point: { latitude: 12.3714, longitude: -1.5197 } },
     } })).placeOrder;
   }
   const pending = await place();

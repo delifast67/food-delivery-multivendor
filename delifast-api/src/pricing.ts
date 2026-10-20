@@ -1,3 +1,4 @@
+import { eligibility } from "./zones.js";
 import type { Db } from "mongodb";
 import { config } from "./config.js";
 import { assertIntAmount, Cart, fail } from "./validation.js";
@@ -26,6 +27,7 @@ export type Checkout = {
   discount: number;
   total: number;
   items: CheckoutItem[];
+  delivery: Awaited<ReturnType<typeof eligibility>> | null;
 };
 export async function calculateCheckout(db: Db, cart: Cart): Promise<Checkout> {
   const restaurant = await db
@@ -109,13 +111,16 @@ export async function calculateCheckout(db: Db, cart: Cart): Promise<Checkout> {
   }
   const subtotal = assertIntAmount(
       items.reduce((n, x) => assertIntAmount(n + x.total), 0),
-    ),
-    fees = assertIntAmount(config.deliveryFee + config.serviceFee + config.tax),
+    );
+  const delivery = cart.point ? await eligibility(db, cart.restaurantId, cart.point, subtotal) : null;
+  const deliveryFee = delivery?.deliveryFee ?? 0;
+  const fees = assertIntAmount(deliveryFee + config.serviceFee + config.tax),
     total = assertIntAmount(subtotal + fees);
   return {
     currency: "XOF",
     subtotal,
-    deliveryFee: config.deliveryFee,
+    deliveryFee,
+    delivery,
     serviceFee: config.serviceFee,
     tax: config.tax,
     discount: 0,

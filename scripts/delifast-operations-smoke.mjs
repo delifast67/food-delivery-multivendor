@@ -38,7 +38,7 @@ try {
   assert.ok(store);
   const item = store.menu.find(entry => entry.available);
   async function place() {
-    const input = { restaurantId: store.id, items: [{ menuItemId: item.id, quantity: 1 }], idempotencyKey: `operations-${randomUUID()}`, deliveryAddress: { recipientName: 'Parcours opérations fictif', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Démo', landmark: 'Ne pas livrer — test automatisé', instructions: '' } };
+    const input = { restaurantId: store.id, items: [{ menuItemId: item.id, quantity: 1 }], idempotencyKey: `operations-${randomUUID()}`, deliveryAddress: { recipientName: 'Parcours opérations fictif', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Démo', landmark: 'Ne pas livrer — test automatisé', instructions: '', point: { latitude: 12.3714, longitude: -1.5197 } } };
     return (await gql(`mutation Place($input:PlaceOrderInput!){placeOrder(input:$input){${fields}}}`, { input })).placeOrder;
   }
   let order = await place();

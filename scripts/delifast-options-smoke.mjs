@@ -62,7 +62,7 @@ try {
   const input = { name: `Plat à options fictif ${randomUUID().slice(0, 8)}`, description: 'Recette automatisée — ne pas préparer', priceXof: 1000, available: true, categoryId: category.id, optionGroups: groups };
   item = (await gql(createItem, { r, input }, restaurant.token)).createMenuItem;
   assert.equal(item.categoryId, category.id);
-  const cart = selections => ({ restaurantId: r, items: [{ menuItemId: item.id, quantity: 2, selections }] });
+  const cart = selections => ({ restaurantId: r, items: [{ menuItemId: item.id, quantity: 2, selections }], point: { latitude: 12.3714, longitude: -1.5197 } });
   await denied(checkout, { input: cart([]) }, undefined, 'INVALID_OPTIONS');
   await denied(checkout, { input: cart([{ groupId: 'size', optionIds: ['regular', 'large'] }]) }, undefined, 'INVALID_OPTIONS');
   await denied(checkout, { input: cart([{ groupId: 'size', optionIds: ['unknown'] }]) }, undefined, 'INVALID_OPTIONS');
@@ -78,7 +78,8 @@ try {
   twoLines.items.push({ menuItemId: item.id, quantity: 1, selections: [{ groupId: 'size', optionIds: ['regular'] }] });
   assert.equal((await gql(checkout, { input: twoLines })).calculateCheckout.subtotal, 3500);
   ok('suppléments multipliés par quantité et deux configurations du même plat séparées');
-  const orderInput = { ...cart(selections), idempotencyKey: `options-${randomUUID()}`, deliveryAddress: { recipientName: 'Test fictif options', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Démo', landmark: 'Ne pas livrer — recette automatisée', instructions: '' } };
+  const orderInput = { restaurantId: cart(selections).restaurantId, items: cart(selections).items, idempotencyKey: `options-${randomUUID()}`, deliveryAddress: { recipientName: 'Test fictif options', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Démo', landmark: 'Ne pas livrer — recette automatisée', instructions: '', point: { latitude: 12.3714, longitude: -1.5197 } } };
+
   const order = (await gql(place, { input: orderInput })).placeOrder;
   const changedGroups = structuredClone(groups);
   changedGroups[0].name = 'Taille renommée fictive';

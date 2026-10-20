@@ -162,8 +162,16 @@ export async function seedCatalog(db: any) {
     { upsert: true },
   );
 }
+export async function seedZones(db: any) {
+  const zones = [
+    { id: "zone-rest-koudougou-centre", restaurantId: "rest-koudougou", name: "Zone fictive — essai uniquement", shape: "CIRCLE", center: { latitude: 12.3714, longitude: -1.5197 }, radiusMeters: 10000, polygon: null, enabled: true, feeXof: 500, minimumOrderXof: 0, estimatedMinutes: 45, priority: 0, demo: true, hours: [], version: 0, audit: [] },
+    { id: "zone-rest-ouaga-centre", restaurantId: "rest-ouaga-centre", name: "Zone fictive — essai uniquement", shape: "CIRCLE", center: { latitude: 12.3714, longitude: -1.5197 }, radiusMeters: 10000, polygon: null, enabled: true, feeXof: 500, minimumOrderXof: 0, estimatedMinutes: 45, priority: 0, demo: true, hours: [], version: 0, audit: [] },
+  ];
+  for (const zone of zones) await db.collection("delivery_zones").updateOne({ id: zone.id }, { $setOnInsert: { ...zone, createdAt: new Date(), updatedAt: new Date() } }, { upsert: true });
+}
 export async function seedAll(db: any) {
   await seedCatalog(db);
+  await seedZones(db);
   const staff = [
     {
       id: "staff-admin",

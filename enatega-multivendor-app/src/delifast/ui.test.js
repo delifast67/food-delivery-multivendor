@@ -24,7 +24,7 @@ const App = moduleMock.exports.default
 const text = node => typeof node === 'string' ? node : node?.children?.map(text).join(' ') || ''
 const treeText = tree => text(tree.toJSON())
 const restaurant = { id: 'r1', name: 'Restaurant fictif', description: 'Menu test', open: true, categories: [{ id: 'cat', name: 'Repas', sortOrder: 0 }], menu: [{ id: 'plat', name: 'Riz test', description: 'Fictif', priceXof: 1000, available: true, categoryId: 'cat', optionGroups: [] }] }
-const address = { recipientName: 'Nom test', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Quartier', landmark: 'Repère', instructions: '' }
+const address = { recipientName: 'Nom test', phone: '+22670000000', city: 'Ville libre', neighborhood: 'Quartier', landmark: 'Repère', instructions: '', point: { latitude: 12.3714, longitude: -1.5197 } }
 const checkout = { currency: 'XOF', subtotal: 1000, deliveryFee: 500, serviceFee: 200, tax: 0, discount: 0, total: 1700, items: [{ menuItemId: 'plat', name: 'Riz test', quantity: 1, unitPrice: 1000, total: 1000, selectedOptions: [] }] }
 const order = { id: 'order-test', accessToken: 'never-show-this-token', checkout, status: 'PAYMENT_PENDING', paymentStatus: 'PENDING', history: [{ status: 'PAYMENT_PENDING', at: '2026-01-01' }] }
 const memory = () => { const map = new Map(); return { getItem: async k => map.get(k) || null, setItem: async (k, v) => { map.set(k, v) }, removeItem: async k => { map.delete(k) } } }
@@ -70,9 +70,9 @@ test('parcours rendu menu, panier, adresse et suivi sans fuite de jeton', async 
   assert.match(treeText(tree), /Total serveur/)
   await press(tree, 'Livrer à cette adresse')
   const inputs = tree.root.findAllByType('TextInput')
-  assert.equal(inputs.length, 6)
-  for (const [index, value] of Object.values(address).entries()) {
-    await renderer.act(async () => { tree.root.findAllByType('TextInput')[index].props.onChangeText(value) })
+  assert.equal(inputs.length, 8)
+  for (const [index, pair] of [['latitude', String(address.point.latitude)], ['longitude', String(address.point.longitude)], ['recipientName', address.recipientName], ['phone', address.phone], ['city', address.city], ['neighborhood', address.neighborhood], ['landmark', address.landmark], ['instructions', address.instructions]].entries()) {
+    await renderer.act(async () => { tree.root.findAllByType('TextInput')[index].props.onChangeText(pair[1]) })
   }
   await press(tree, 'Envoyer la commande')
   assert.match(treeText(tree), /order-test/)
@@ -102,10 +102,10 @@ test('les erreurs de validation ne remplacent jamais les instructions de livrais
   await press(tree, 'Ajouter au panier')
   await press(tree, 'Panier', 'TouchableOpacity')
   await press(tree, 'Livrer à cette adresse')
-  await renderer.act(async () => { tree.root.findAllByType('TextInput')[5].props.onChangeText('Repère personnel fictif') })
+  await renderer.act(async () => { tree.root.findAllByType('TextInput')[7].props.onChangeText('Repère personnel fictif') })
   await press(tree, 'Envoyer la commande')
   assert.match(treeText(tree), /Adresse invalide/)
-  assert.equal(tree.root.findAllByType('TextInput')[5].props.value, 'Repère personnel fictif')
+  assert.equal(tree.root.findAllByType('TextInput')[7].props.value, 'Repère personnel fictif')
   await unmount(tree)
 })
 test('la tentative restaurée verrouille les restaurants et permet une reprise vers le suivi', async () => {

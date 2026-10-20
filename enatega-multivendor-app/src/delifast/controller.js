@@ -1,5 +1,5 @@
 'use strict'
-const { addToCart, changeQuantity, validateSelections, validateAddress, makeIdempotencyKey } = require('./model')
+const { addToCart, changeQuantity, validateSelections, validatePoint, validateAddress, makeIdempotencyKey } = require('./model')
 const ATTEMPT_KEY = 'delifast-order-attempt'
 const LAST_ORDER_KEY = 'delifast-last-order'
 const clone = (value) => (value == null ? value : JSON.parse(JSON.stringify(value)))
@@ -11,6 +11,7 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
   let state = {
     restaurants: [],
     restaurant: null,
+    deliveryPoint: { latitude: 12.3714, longitude: -1.5197 },
     cart: { restaurantId: null, items: [] },
     quote: null,
     quoteVersion: 0,
@@ -26,6 +27,7 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
   let restorePromise = null
   let pollTimer = null
   let restaurantRequest = 0
+  let discoveryRequest = 0
   const set = (patch) => {
     state = { ...state, ...patch }
     onChange(clone(state))
@@ -89,7 +91,7 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
     set({ quote: null, quoteVersion: version, error: null })
     if (!cart.restaurantId || !cart.items.length) return null
     try {
-      const quote = await api.calculateCheckout(cart)
+      const quote = await api.calculateCheckout({ ...cart, point: clone(state.deliveryPoint) })
       if (version !== state.quoteVersion) return null
       if (!validQuote(quote)) throw new Error('Devis serveur incomplet')
       set({ quote: clone(quote) })
@@ -141,16 +143,28 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
   const actions = {
     getState: () => clone(state),
     restoreAttempt,
-    async loadRestaurants() {
+    async loadRestaurants(point = state.deliveryPoint) {
+      const request = ++discoveryRequest
+      const checked = validatePoint(point)
+      if (!checked.ok) throw new Error(checked.message)
       set({ loading: true })
       try {
-        const restaurants = await api.restaurants()
-        set({ restaurants: clone(restaurants), loading: false })
+        const restaurants = await api.restaurants(clone(checked.point))
+        if (request !== discoveryRequest) return null
+        set({ restaurants: clone(restaurants), loading: false, deliveryPoint: clone(checked.point) })
         return clone(restaurants)
       } catch (error) {
+        if (request !== discoveryRequest) return null
         set({ loading: false, error: errorView(error) })
         throw error
       }
+    },
+    async setDeliveryPoint(point) {
+      writable()
+      const checked = validatePoint(point)
+      if (!checked.ok) throw new Error(checked.message)
+      set({ deliveryPoint: checked.point, quote: null, quoteVersion: state.quoteVersion + 1, error: null, restaurants: [] })
+      return actions.loadRestaurants(checked.point)
     },
     async selectRestaurant(id) {
       writable()
@@ -194,8 +208,9 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
         storageReady()
         if (!state.cart.restaurantId || !state.cart.items.length) throw new Error('Panier vide')
         if (!validQuote(state.quote)) throw new Error('Devis serveur requis : actualisez le panier avant de confirmer')
-        const validation = validateAddress(address)
+        const validation = validateAddress(address, { requirePoint: true })
         if (!validation.ok) throw new Error(validation.message)
+        if (JSON.stringify(validation.address.point) !== JSON.stringify(state.deliveryPoint)) throw new Error('Le point a changé : rechargez les restaurants et le devis')
         const payload = { ...clone(state.cart), deliveryAddress: validation.address }
         const version = state.quoteVersion
         const key = makeIdempotencyKey(random)

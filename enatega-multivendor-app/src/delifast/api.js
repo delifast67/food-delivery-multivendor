@@ -1,7 +1,7 @@
 'use strict'
 
 const DEFAULT_ENDPOINT = 'http://localhost:4000/graphql'
-const VALIDATION_CODES = new Set(['INVALID_INPUT', 'INVALID_CART', 'INVALID_QUANTITY', 'INVALID_PRICE', 'AMOUNT_OVERFLOW', 'RESTAURANT_NOT_FOUND', 'RESTAURANT_CLOSED', 'ITEM_NOT_FOUND', 'ITEM_RESTAURANT_MISMATCH', 'ITEM_UNAVAILABLE', 'OUT_OF_DEMO_ZONE', 'INVALID_PHONE', 'INVALID_ADDRESS', 'INVALID_IDEMPOTENCY_KEY', 'INVALID_OPTIONS', 'CATEGORY_NOT_FOUND', 'GRAPHQL_VALIDATION_FAILED', 'GRAPHQL_PARSE_FAILED', 'BAD_USER_INPUT'])
+const VALIDATION_CODES = new Set(['INVALID_INPUT', 'INVALID_CART', 'INVALID_QUANTITY', 'INVALID_PRICE', 'AMOUNT_OVERFLOW', 'RESTAURANT_NOT_FOUND', 'RESTAURANT_CLOSED', 'ITEM_NOT_FOUND', 'ITEM_RESTAURANT_MISMATCH', 'ITEM_UNAVAILABLE', 'OUT_OF_DEMO_ZONE', 'INVALID_PHONE', 'INVALID_ADDRESS', 'INVALID_IDEMPOTENCY_KEY', 'INVALID_OPTIONS', 'CATEGORY_NOT_FOUND', 'DELIVERY_POINT_REQUIRED', 'OUT_OF_DELIVERY_ZONE', 'MINIMUM_ORDER_NOT_MET', 'GRAPHQL_VALIDATION_FAILED', 'GRAPHQL_PARSE_FAILED', 'BAD_USER_INPUT'])
 class DelifastApiError extends Error {
   constructor(message, kind = 'unknown', code, status) {
     super(message)
@@ -16,11 +16,12 @@ const groupFields = `id name minSelections maxSelections options { ${optionField
 const categoryFields = 'id name sortOrder archived version'
 const restaurantFields = `id name description open version categories { ${categoryFields} } menu { id name description priceXof available archived version categoryId optionGroups { ${groupFields} } }`
 const checkout = 'currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } }'
-const orderFields = `id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { ${checkout} }`
+const deliveryFields = 'delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo }'
+const orderFields = `id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions point { latitude longitude } } history { status at actorRole } checkout { ${checkout} ${deliveryFields} }`
 const documents = {
-  restaurants: `query MobileRestaurants { restaurants { ${restaurantFields} } }`,
+  restaurants: `query MobileRestaurants($point: DeliveryPointInput) { restaurants(point: $point) { ${restaurantFields} } }`,
   restaurant: `query MobileRestaurant($id: ID!) { restaurant(id: $id) { ${restaurantFields} } }`,
-  calculateCheckout: `query MobileCalculateCheckout($input: CartInput!) { calculateCheckout(input: $input) { ${checkout} } }`,
+  calculateCheckout: `query MobileCalculateCheckout($input: CartInput!) { calculateCheckout(input: $input) { ${checkout} ${deliveryFields} } }`,
   placeOrder: `mutation MobilePlaceOrder($input: PlaceOrderInput!) { placeOrder(input: $input) { ${orderFields} } }`,
   order: `query MobileOrder($id: ID!, $accessToken: String!) { order(id: $id, accessToken: $accessToken) { ${orderFields} } }`
 }
@@ -77,7 +78,7 @@ function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetc
     return data[key]
   }
   return {
-    restaurants: () => field('restaurants'),
+    restaurants: (point) => field('restaurants', point == null ? {} : { point }),
     restaurant: (id) => field('restaurant', { id }),
     calculateCheckout: (input) => field('calculateCheckout', { input }),
     placeOrder: (input) => field('placeOrder', { input }),

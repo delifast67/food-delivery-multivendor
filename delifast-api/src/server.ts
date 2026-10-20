@@ -33,11 +33,18 @@ import {
   setMenuItemArchived,
   setRestaurantOpen,
 } from "./catalog.js";
+import { normalizePoint, eligibility, listDeliveryZones, createDeliveryZone, updateDeliveryZone } from "./zones.js";
 const typeDefs = await readFile(
   new URL("../schema/v1.graphql", import.meta.url),
   "utf8",
 );
 const knownCodes = new Set([
+  "INVALID_POINT",
+  "INVALID_ZONE",
+  "ZONE_NOT_FOUND",
+  "DELIVERY_POINT_REQUIRED",
+  "OUT_OF_DELIVERY_ZONE",
+  "MINIMUM_ORDER_NOT_MET",
   "INVALID_INPUT",
   "INVALID_CART",
   "INVALID_QUANTITY",
@@ -121,7 +128,22 @@ function rateLimit() {
 }
 const resolvers: any = {
   Query: {
-    restaurants: () => publicRestaurants(getDb()),
+    restaurants: async (_: any, { point }: any) => {
+      const restaurants = await publicRestaurants(getDb());
+      if (point == null) return restaurants;
+      const location = normalizePoint(point);
+      const matches = await Promise.all(restaurants.map(async (r: any) => {
+        if (r.open === false) return null;
+        try { await eligibility(getDb(), r.id, location); return r; }
+        catch (error: any) {
+          if (["OUT_OF_DELIVERY_ZONE"].includes(error?.extensions?.code)) return null;
+          throw error;
+        }
+      }));
+      return matches.filter(Boolean);
+    },
+    deliveryEligibility: (_: any, { restaurantId, point }: any) => eligibility(getDb(), restaurantId, normalizePoint(point)),
+    deliveryZones: (_: any, { restaurantId }: any, ctx: any) => listDeliveryZones(getDb(), requireRole(ctx, ["ADMIN", "RESTAURANT"]), restaurantId),
     restaurant: (_: any, { id }: any) => publicRestaurant(getDb(), id),
     operationsRestaurants: (_: any, _a: any, ctx: any) =>
       operationsRestaurants(getDb(), requireRole(ctx, ["ADMIN", "RESTAURANT"])),
@@ -154,6 +176,8 @@ const resolvers: any = {
       Array.isArray(x.optionGroups) ? x.optionGroups : [],
   },
   Mutation: {
+    createDeliveryZone: (_: any, { restaurantId, input }: any, ctx: any) => createDeliveryZone(getDb(), requireRole(ctx, ["ADMIN"]), restaurantId, input),
+    updateDeliveryZone: (_: any, { id, expectedVersion, input }: any, ctx: any) => updateDeliveryZone(getDb(), requireRole(ctx, ["ADMIN"]), id, expectedVersion, input),
     placeOrder: (_: any, { input }: any) =>
       placeOrder(
         getDb(),

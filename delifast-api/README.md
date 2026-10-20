@@ -43,3 +43,7 @@ npm test
 ```
 
 La suite utilise MongoDB réel (MongoDB Memory Server) et Supertest pour couvrir authentification, portée, concurrence, CAS, transitions, affectation et compatibilité de persistance. Le serveur de démonstration ne doit pas être exposé comme un service de production.
+
+## Livraison et zones
+
+Voir le [contrat des zones](DELIVERY_ZONES.md). Une nouvelle commande exige un point GPS, et le serveur vérifie géométrie, disponibilité, horaires et minimum avant insertion. Le tarif de livraison est lu dans la zone sélectionnée, jamais dans une variable globale ni un prix client. Le seed reste intégralement fictif et préserve les configurations éditées. Les anciennes commandes sans GPS restent lisibles et rejouables à l’identique.

@@ -22,8 +22,6 @@ export const config = {
     process.env.MONGODB_URI ||
     process.env.MONGO_URI ||
     "mongodb://127.0.0.1:27017/delifast",
-  demoCity: process.env.DEMO_CITY || "Ouagadougou",
-  deliveryFee: boundedInteger("DELIVERY_FEE_XOF", 500),
   serviceFee: boundedInteger("SERVICE_FEE_XOF", 200),
   tax: boundedInteger("TAX_XOF", 0),
   maxLines: 20,

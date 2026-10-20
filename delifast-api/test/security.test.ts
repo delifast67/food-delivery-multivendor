@@ -42,6 +42,7 @@ const address = {
   city: "Ouagadougou",
   neighborhood: "Fictif",
   landmark: "Ne pas livrer",
+  point: { latitude: 12.3714, longitude: -1.5197 },
   instructions: "",
 };
 async function order(id: string, overrides: Record<string, unknown> = {}) {

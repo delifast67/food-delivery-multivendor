@@ -1,4 +1,5 @@
 import { GraphQLError } from "graphql";
+import { normalizePoint, type Point } from "./zones.js";
 import { config, INT_MAX_VALUE } from "./config.js";
 export type OptionSelection = { groupId: string; optionIds: string[] };
 export type CartItem = {
@@ -6,7 +7,7 @@ export type CartItem = {
   quantity: number;
   selections: OptionSelection[];
 };
-export type Cart = { restaurantId: string; items: CartItem[] };
+export type Cart = { restaurantId: string; items: CartItem[]; point?: Point };
 export type Address = {
   recipientName: string;
   phone: string;
@@ -14,6 +15,7 @@ export type Address = {
   neighborhood: string;
   landmark: string;
   instructions: string;
+  point?: Point;
 };
 export function fail(code: string, message: string): never {
   throw new GraphQLError(message, { extensions: { code } });
@@ -92,14 +94,12 @@ export function normalizeCart(input: any): Cart {
       a.menuItemId.localeCompare(b.menuItemId) ||
       selectionsKey(a.selections).localeCompare(selectionsKey(b.selections)),
   );
-  return { restaurantId, items };
+  return { restaurantId, items, ...(input.point == null ? {} : { point: normalizePoint(input.point) }) };
 }
 export function normalizeAddress(input: any): Address {
   if (!input || typeof input !== "object")
     fail("INVALID_ADDRESS", "Adresse invalide");
   const city = text(input.city, "city", 120);
-  if (city !== config.demoCity)
-    fail("OUT_OF_DEMO_ZONE", "Ville hors zone de démonstration");
   const phone = text(input.phone, "phone", 32);
   if (!/^\+226\s?\d{8}$/.test(phone))
     fail("INVALID_PHONE", "Téléphone BF invalide");
@@ -110,6 +110,7 @@ export function normalizeAddress(input: any): Address {
     neighborhood: text(input.neighborhood, "neighborhood", 120),
     landmark: text(input.landmark, "landmark", 500),
     instructions: optionalText(input.instructions, "instructions", 1000),
+    ...(input.point == null ? {} : { point: normalizePoint(input.point) }),
   };
 }
 export function assertIntAmount(value: number, code = "AMOUNT_OVERFLOW") {

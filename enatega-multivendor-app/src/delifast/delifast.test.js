@@ -10,7 +10,8 @@ const address = {
   phone: '+22670000000',
   city: 'Ouagadougou',
   neighborhood: 'Koulouba',
-  landmark: 'Marché central'
+  landmark: 'Marché central',
+  point: { latitude: 12.3714, longitude: -1.5197 }
 }
 const checkout = () => ({
   currency: 'XOF', total: 100, subtotal: 100, deliveryFee: 0, serviceFee: 0, tax: 0,
@@ -282,4 +283,28 @@ test('onChange receives snapshots that cannot mutate controller state', async ()
   seen.at(-1).restaurant.id = 'tampered'
   assert.equal(controller.getState().restaurant.id, 'r')
   assert.ok(seen.length >= 2)
+})
+
+test('les points GPS invalides sont refusés et un changement invalide le devis courant', async () => {
+  const { validatePoint } = require('./model')
+  for (const point of [null, {latitude:NaN,longitude:0}, {latitude:91,longitude:0}, {latitude:0,longitude:181}, {latitude:'12',longitude:0}]) assert.equal(validatePoint(point).ok,false)
+  const {controller}=setup()
+  await seeded(controller)
+  assert.ok(controller.getState().quote)
+  await controller.setDeliveryPoint({latitude:1,longitude:2})
+  assert.equal(controller.getState().quote,null)
+  assert.deepEqual(controller.getState().deliveryPoint,{latitude:1,longitude:2})
+  await assert.rejects(controller.submit(address), /devis/i)
+})
+test('une ancienne découverte ne rétablit pas un point ou une liste périmés', async () => {
+  const old=deferred(), current=deferred()
+  let calls=0
+  const {controller}=setup({restaurants:()=>++calls===1?old.promise:current.promise})
+  await controller.restoreAttempt()
+  const first=controller.setDeliveryPoint({latitude:1,longitude:2})
+  const second=controller.setDeliveryPoint({latitude:3,longitude:4})
+  current.resolve([{id:'current'}]);await second
+  old.resolve([{id:'old'}]);await first
+  assert.deepEqual(controller.getState().deliveryPoint,{latitude:3,longitude:4})
+  assert.deepEqual(controller.getState().restaurants,[{id:'current'}])
 })

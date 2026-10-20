@@ -32,7 +32,7 @@ const item = first.menu.find(item => item.available);
 const otherItem = second.menu.find(item => item.available);
 ok('catalogue autonome : deux restaurants et menus');
 
-const cart = { restaurantId: first.id, items: [{ menuItemId: item.id, quantity: 2 }] };
+const cart = { restaurantId: first.id, items: [{ menuItemId: item.id, quantity: 2 }], point: { latitude: 12.3714, longitude: -1.5197 } };
 const quoteQuery = `query Quote($input: CartInput!) { calculateCheckout(input: $input) { ${fields} } }`;
 const quote = data(await request(quoteQuery, { input: cart })).calculateCheckout;
 assert.equal(quote.currency, 'XOF');
@@ -54,9 +54,10 @@ for (const quantity of [0, -1, 1.5, 100]) {
 ok('quantités invalides refusées');
 
 const input = {
-  ...cart,
+  restaurantId: cart.restaurantId, items: cart.items,
   idempotencyKey: `smoke-${randomUUID()}`,
   deliveryAddress: {
+    point: { latitude: 12.3714, longitude: -1.5197 },
     recipientName: 'Client de démonstration', phone: '+22670000000',
     city: 'Ouagadougou', neighborhood: 'Zone de démonstration',
     landmark: 'Repère fictif — ne pas livrer', instructions: 'Test local automatisé uniquement',

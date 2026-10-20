@@ -100,6 +100,7 @@ const orderDocument = (extra: any = {}) => ({
     city: "Ouagadougou",
     neighborhood: "C",
     landmark: "L",
+    point: { latitude: 12.3714, longitude: -1.5197 },
   },
   history: [],
   ...extra,

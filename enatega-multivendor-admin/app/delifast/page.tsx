@@ -5,8 +5,11 @@ import {
   DelifastError,
   type DelifastSnapshot,
   type Order,
+  type DeliveryZone,
+  type DeliveryZoneInput,
 } from '@/lib/delifast/client';
 import './delifast.css';
+import { parseHoursText, parsePolygonText } from '@/lib/delifast/zone-parsing';
 
 const client = new DelifastClient();
 const statuses = [
@@ -294,8 +297,79 @@ export default function DelifastPage() {
         )}
       </section>
       <RestaurantPanel snapshot={snapshot} busy={busy} run={run} />
+      <DeliveryZonesPanel snapshot={snapshot} busy={busy} />
     </main>
   );
+}
+function emptyZone(): DeliveryZoneInput {
+  return {
+    name: '', shape: 'CIRCLE', center: null, radiusMeters: null, polygon: null,
+    enabled: true, feeXof: 0, minimumOrderXof: 0, estimatedMinutes: 35,
+    priority: 0, demo: true, hours: [],
+  };
+}
+function zoneDraft(zone: DeliveryZone): DeliveryZoneInput {
+  return { name: zone.name, shape: zone.shape, center: zone.center, radiusMeters: zone.radiusMeters, polygon: zone.polygon, enabled: zone.enabled, feeXof: zone.feeXof, minimumOrderXof: zone.minimumOrderXof, estimatedMinutes: zone.estimatedMinutes, priority: zone.priority, demo: zone.demo, hours: zone.hours };
+}
+function pointsText(points: DeliveryZone['polygon']) {
+  return points?.length ? JSON.stringify(points) : '';
+}
+function hoursText(hours: DeliveryZone['hours']) {
+  return JSON.stringify(hours ?? []);
+}
+function DeliveryZonesPanel({ snapshot, busy }: { snapshot: DelifastSnapshot; busy: boolean }) {
+  const [restaurantId, setRestaurantId] = useState(snapshot.restaurants[0]?.id ?? '');
+  const [zones, setZones] = useState<DeliveryZone[]>([]);
+  const [editing, setEditing] = useState<DeliveryZone | null>(null);
+  const [form, setForm] = useState<DeliveryZoneInput>(() => emptyZone());
+  const [polygonText, setPolygonText] = useState('');
+  const [hoursTextValue, setHoursTextValue] = useState('[]');
+  const [error, setError] = useState('');
+  const loadSequence = useRef(0);
+  const saveRef = useRef(false);
+  const field = (key: keyof DeliveryZoneInput, value: unknown) => setForm((current) => ({ ...current, [key]: value }));
+  const resetDraft = () => { setEditing(null); setForm(emptyZone()); setPolygonText(''); setHoursTextValue('[]'); };
+  const load = async (id: string) => {
+    const sequence = ++loadSequence.current;
+    if (!id) { setZones([]); return; }
+    try {
+      const next = await client.deliveryZones(id);
+      if (sequence === loadSequence.current) { setZones(next); setError(''); }
+    } catch (e) {
+      if (sequence === loadSequence.current) setError(e instanceof Error ? e.message : 'Zones indisponibles');
+    }
+  };
+  useEffect(() => { resetDraft(); setZones([]); void load(restaurantId); }, [restaurantId]);
+  const selectZone = (zone: DeliveryZone) => { setEditing(zone); setForm(zoneDraft(zone)); setPolygonText(pointsText(zone.polygon)); setHoursTextValue(hoursText(zone.hours)); setError(''); };
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!restaurantId || busy || saveRef.current) return;
+    const polygon = parsePolygonText(polygonText);
+    const hours = parseHoursText(hoursTextValue);
+    if (polygon.error || hours.error) { setError([polygon.error, hours.error].filter(Boolean).join(' ')); return; }
+    if (form.shape === 'POLYGON' && (!polygon.value || polygon.value.length < 3)) { setError('Un polygone doit contenir au moins trois points.'); return; }
+    const payload: DeliveryZoneInput = { ...form, polygon: polygon.value ?? null, hours: hours.value ?? [] };
+    saveRef.current = true; setError('');
+    try {
+      const saved = editing ? await client.updateDeliveryZone(editing.id, editing.version, payload) : await client.createDeliveryZone(restaurantId, payload);
+      setZones((current) => editing ? current.map((zone) => zone.id === saved.id ? saved : zone) : [...current, saved]);
+      resetDraft();
+    } catch (e) {
+      const isConflict = e instanceof DelifastError && e.code === 'CONCURRENT_MODIFICATION';
+      if (isConflict) {
+        // Reconcile the list, but deliberately keep the draft/version for review; never retry the write.
+        await load(restaurantId);
+        setError('La zone a été modifiée ailleurs. Liste actualisée ; votre brouillon est conservé pour révision.');
+      } else setError(e instanceof Error ? e.message : 'Enregistrement refusé');
+    } finally { saveRef.current = false; }
+  };
+  return <section className="df-card df-zones">
+    <div className="df-section-head"><div><p className="df-kicker">ZONES DE LIVRAISON</p><h2>Tarifs, périmètres et disponibilité</h2></div><span>UTC · [] = toujours</span></div>
+    {error && <p className="df-error" role="alert">{error}</p>}
+    <label>Restaurant<select value={restaurantId} onChange={(e) => setRestaurantId(e.target.value)}>{snapshot.restaurants.map((restaurant) => <option key={restaurant.id} value={restaurant.id}>{restaurant.name}</option>)}</select></label>
+    <div className="df-zone-layout"><div><ul className="df-zone-list">{zones.map((zone) => <li key={zone.id}><div><strong>{zone.name}</strong><small>{zone.shape} · {money(zone.feeXof)} · {zone.estimatedMinutes} min · v{zone.version}{zone.enabled ? '' : ' · désactivée'}</small></div><button type="button" className="df-secondary" onClick={() => selectZone(zone)}>Modifier</button></li>)}</ul>{zones.length === 0 && <p className="df-muted">Aucune zone configurée.</p>}</div>
+    <form className="df-zone-form" onSubmit={submit}><strong>{editing ? `Modifier ${editing.name} · v${editing.version}` : 'Nouvelle zone'}</strong><label>Nom<input required value={form.name} onChange={(e) => field('name', e.target.value)} /></label><label>Forme<select value={form.shape} onChange={(e) => field('shape', e.target.value as DeliveryZoneInput['shape'])}><option value="CIRCLE">Cercle</option><option value="POLYGON">Polygone</option></select></label><div className="df-zone-two"><label>Latitude <small>(exemple fictif, à remplacer)</small><input type="number" step="0.0001" value={form.center?.latitude ?? ''} onChange={(e) => field('center', { ...(form.center ?? { longitude: 0 }), latitude: Number(e.target.value) })} /></label><label>Longitude <small>(exemple fictif, à remplacer)</small><input type="number" step="0.0001" value={form.center?.longitude ?? ''} onChange={(e) => field('center', { ...(form.center ?? { latitude: 0 }), longitude: Number(e.target.value) })} /></label></div><label>Rayon mètres<input type="number" min="1" value={form.radiusMeters ?? ''} onChange={(e) => field('radiusMeters', e.target.value === '' ? null : Number(e.target.value))} /></label><label>Polygone <small>JSON Point[] ou lat,lng; lat,lng (exemple fictif, à remplacer)</small><textarea value={polygonText} onChange={(e) => setPolygonText(e.target.value)} rows={3} placeholder='[{"latitude":12.3,"longitude":-1.5}]' /></label><div className="df-zone-two"><label>Frais XOF <small>(aucun tarif commercial prérempli)</small><input type="number" min="0" value={form.feeXof} onChange={(e) => field('feeXof', Number(e.target.value))} /></label><label>Minimum XOF<input type="number" min="0" value={form.minimumOrderXof} onChange={(e) => field('minimumOrderXof', Number(e.target.value))} /></label></div><div className="df-zone-two"><label>Délai minutes<input type="number" min="1" value={form.estimatedMinutes} onChange={(e) => field('estimatedMinutes', Number(e.target.value))} /></label><label>Priorité<input type="number" value={form.priority} onChange={(e) => field('priority', Number(e.target.value))} /></label></div><label className="df-check"><input type="checkbox" checked={form.enabled} onChange={(e) => field('enabled', e.target.checked)} /> Zone active</label><label className="df-check"><input type="checkbox" checked={form.demo} onChange={(e) => field('demo', e.target.checked)} /> Démo (point fictif)</label><label>Horaires UTC <small>JSON [{'{'}&quot;day&quot;:1,&quot;startMinute&quot;:480,&quot;endMinute&quot;:1200{'}'}] ; [] = toujours</small><textarea value={hoursTextValue} onChange={(e) => setHoursTextValue(e.target.value)} rows={3} /></label><div className="df-button-row"><button disabled={busy || saveRef.current || !restaurantId}>{editing ? 'Enregistrer la version' : 'Créer la zone'}</button>{editing && <button type="button" className="df-secondary" onClick={resetDraft}>Annuler</button>}</div></form></div>
+  </section>;
 }
 function OrderPanel({
   order,

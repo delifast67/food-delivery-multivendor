@@ -17,6 +17,7 @@ import {
   type OrderAttempt,
   type OrderPayload,
   type Restaurant,
+  type DeliveryPoint,
 } from "@/lib/delifast/api";
 import "./delifast.css";
 
@@ -27,6 +28,7 @@ const emptyAddress: DeliveryAddress = {
   neighborhood: "",
   landmark: "",
   instructions: "",
+  point: { latitude: 12.3714, longitude: -1.5197 },
 };
 const validPhone = /^\+226\s?\d{8}$/;
 const messageFor = (error: unknown) =>
@@ -82,6 +84,7 @@ const statusTitle: Record<string, string> = {
 
 export default function DelifastPage() {
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [point, setPoint] = useState<DeliveryPoint>(emptyAddress.point!);
   const [selected, setSelected] = useState<Restaurant | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [checkout, setCheckout] = useState<Awaited<
@@ -103,12 +106,15 @@ export default function DelifastPage() {
   const locked = !!attempt && !order;
 
   useEffect(() => {
+    let cancelled = false;
+    setRestaurants([]);
     delifastApi
-      .restaurants()
-      .then(setRestaurants)
-      .catch((e) => setError(messageFor(e)))
-      .finally(() => setLoading(""));
-  }, []);
+      .restaurants(point)
+      .then((value) => { if (!cancelled) setRestaurants(value); })
+      .catch((e) => { if (!cancelled) setError(messageFor(e)); })
+      .finally(() => { if (!cancelled) setLoading(""); });
+    return () => { cancelled = true; };
+  }, [point]);
   useEffect(() => {
     try {
       const raw = localStorage.getItem(attemptStorageKey);
@@ -147,6 +153,7 @@ export default function DelifastPage() {
       setSelected(restored);
       setCart(attempt.payload.items);
       setAddress(attempt.payload.deliveryAddress);
+      if (attempt.payload.deliveryAddress.point) setPoint(attempt.payload.deliveryAddress.point);
     }
   }, [attempt, restaurants, selected]);
   const refreshOrder = async () => {
@@ -187,7 +194,7 @@ export default function DelifastPage() {
     setLoading("checkout");
     setError("");
     delifastApi
-      .checkout({ restaurantId: selected.id, items: cart })
+      .checkout({ restaurantId: selected.id, items: cart, point })
       .then((value) => {
         if (!cancelled) setCheckout(value);
       })
@@ -203,7 +210,7 @@ export default function DelifastPage() {
     return () => {
       cancelled = true;
     };
-  }, [selected, cart, locked]);
+  }, [selected, cart, locked, point]);
   const cartCount = useMemo(
     () => cart.reduce((sum, line) => sum + line.quantity, 0),
     [cart],
@@ -319,6 +326,15 @@ export default function DelifastPage() {
   const updateAddress = (key: keyof DeliveryAddress, value: string) => {
     if (!locked) setAddress((current) => ({ ...current, [key]: value }));
   };
+  const updatePoint = (key: keyof DeliveryPoint, value: string) => {
+    if (locked) return;
+    const next = Number(value);
+    if (!Number.isFinite(next)) return;
+    const nextPoint = { ...point, [key]: next };
+    setPoint(nextPoint);
+    setAddress((current) => ({ ...current, point: nextPoint }));
+    setCheckout(null);
+  };
   const saveAttempt = (value: OrderAttempt) => {
     localStorage.setItem(attemptStorageKey, JSON.stringify(value));
     setAttempt(value);
@@ -402,6 +418,7 @@ export default function DelifastPage() {
     setCart([]);
     setSelected(null);
     setAddress(emptyAddress);
+    setPoint(emptyAddress.point!);
     setCheckout(null);
     setError("");
     setNotice("");
@@ -786,6 +803,14 @@ export default function DelifastPage() {
                   disabled={locked}
                   onChange={(e) => updateAddress("landmark", e.target.value)}
                 />
+                <div className="df-point-box">
+                  <strong>Point de livraison</strong>
+                  <small>Coordonnées fictives de démonstration, non commerciales. Changer le point recalcule les restaurants et les tarifs.</small>
+                  <label htmlFor="latitude">Latitude</label>
+                  <input id="latitude" type="number" step="0.0001" min="-90" max="90" value={point.latitude} disabled={locked} onChange={(e) => updatePoint("latitude", e.target.value)} />
+                  <label htmlFor="longitude">Longitude</label>
+                  <input id="longitude" type="number" step="0.0001" min="-180" max="180" value={point.longitude} disabled={locked} onChange={(e) => updatePoint("longitude", e.target.value)} />
+                </div>
                 <label htmlFor="instructions">Instructions (facultatif)</label>
                 <textarea
                   id="instructions"
@@ -805,9 +830,10 @@ export default function DelifastPage() {
                     <span>{formatXof(checkout.subtotal)}</span>
                   </div>
                   <div>
-                    <span>Livraison</span>
+                    <span>Livraison{checkout.delivery ? ` · ${checkout.delivery.zoneName}` : ""}</span>
                     <span>{formatXof(checkout.deliveryFee)}</span>
                   </div>
+                  {checkout.delivery && <div><span>Délai estimé</span><span>{checkout.delivery.estimatedMinutes} min</span></div>}
                   <div>
                     <span>Service</span>
                     <span>{formatXof(checkout.serviceFee)}</span>

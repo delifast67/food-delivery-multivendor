@@ -47,6 +47,9 @@ export type Order = {
   history: OrderEvent[];
   checkout: Checkout;
 };
+export type DeliveryPoint = { latitude: number; longitude: number };
+export type DeliveryZone = { id: string; restaurantId: string; name: string; shape: 'CIRCLE' | 'POLYGON'; center: DeliveryPoint | null; radiusMeters: number | null; polygon: DeliveryPoint[] | null; enabled: boolean; feeXof: number; minimumOrderXof: number; estimatedMinutes: number; priority: number; demo: boolean; hours: { day: number; startMinute: number; endMinute: number }[]; version: number };
+export type DeliveryZoneInput = Omit<DeliveryZone, 'id' | 'restaurantId' | 'version'>;
 export type Restaurant = {
   id: string;
   name: string;
@@ -214,6 +217,27 @@ export class DelifastClient {
       { orderId, riderId, expectedStatus },
       'assignRider(orderId: $orderId, riderId: $riderId, expectedStatus: $expectedStatus)'
     );
+  }
+  async deliveryZones(restaurantId: string) {
+    const data = await this.request<{ deliveryZones: DeliveryZone[] }>(
+      'query DeliveryZones($restaurantId: ID!) { deliveryZones(restaurantId: $restaurantId) { id restaurantId name shape center { latitude longitude } radiusMeters polygon { latitude longitude } enabled feeXof minimumOrderXof estimatedMinutes priority demo hours { day startMinute endMinute } version } }',
+      { restaurantId }
+    );
+    return data.deliveryZones;
+  }
+  async createDeliveryZone(restaurantId: string, input: DeliveryZoneInput) {
+    const data = await this.request<{ createDeliveryZone: DeliveryZone }>(
+      'mutation CreateDeliveryZone($restaurantId: ID!, $input: DeliveryZoneInput!) { createDeliveryZone(restaurantId: $restaurantId, input: $input) { id restaurantId name shape center { latitude longitude } radiusMeters polygon { latitude longitude } enabled feeXof minimumOrderXof estimatedMinutes priority demo hours { day startMinute endMinute } version } }',
+      { restaurantId, input }
+    );
+    return data.createDeliveryZone;
+  }
+  async updateDeliveryZone(id: string, expectedVersion: number, input: DeliveryZoneInput) {
+    const data = await this.request<{ updateDeliveryZone: DeliveryZone }>(
+      'mutation UpdateDeliveryZone($id: ID!, $expectedVersion: Int!, $input: DeliveryZoneInput!) { updateDeliveryZone(id: $id, expectedVersion: $expectedVersion, input: $input) { id restaurantId name shape center { latitude longitude } radiusMeters polygon { latitude longitude } enabled feeXof minimumOrderXof estimatedMinutes priority demo hours { day startMinute endMinute } version } }',
+      { id, expectedVersion, input }
+    );
+    return data.updateDeliveryZone;
   }
   async setRestaurantOpen(id: string, expectedVersion: number, open: boolean) {
     return this.mutate<Restaurant>(

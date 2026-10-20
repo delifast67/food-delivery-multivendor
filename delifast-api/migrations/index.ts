@@ -6,6 +6,8 @@ await db
 await db.collection("restaurants").createIndex({ id: 1 }, { unique: true });
 await db.collection("menu_items").createIndex({ id: 1 }, { unique: true });
 await db.collection("menu_categories").createIndex({ id: 1 }, { unique: true });
+await db.collection("delivery_zones").createIndex({ id: 1 }, { unique: true });
+await db.collection("delivery_zones").createIndex({ restaurantId: 1, enabled: 1, priority: -1 });
 await db
   .collection("menu_categories")
   .createIndex({ restaurantId: 1, sortOrder: 1 });

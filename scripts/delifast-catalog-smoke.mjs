@@ -58,11 +58,12 @@ try {
   item = (await gql(create, { r: store.id, input }, restaurant.token)).createMenuItem;
   assert.equal(item.priceXof, input.priceXof);
   assert.equal(item.archived, false);
-  const cart = { restaurantId: store.id, items: [{ menuItemId: item.id, quantity: 1 }] };
+  const cart = { restaurantId: store.id, items: [{ menuItemId: item.id, quantity: 1 }], point: { latitude: 12.3714, longitude: -1.5197 } };
   const initial = (await gql(checkout, { input: cart })).calculateCheckout;
   assert.equal(initial.items[0].unitPrice, 1234);
   ok('création visible côté client, prix entier serveur et validation des champs');
-  const orderInput = { ...cart, idempotencyKey: `catalog-${randomUUID()}`, deliveryAddress: { recipientName: 'Test catalogue fictif', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Démo', landmark: 'Ne pas livrer — test automatisé', instructions: '' } };
+  const orderInput = { restaurantId: cart.restaurantId, items: cart.items, idempotencyKey: `catalog-${randomUUID()}`, deliveryAddress: { recipientName: 'Test catalogue fictif', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Démo', landmark: 'Ne pas livrer — test automatisé', instructions: '', point: { latitude: 12.3714, longitude: -1.5197 } } };
+
   const placed = (await gql(place, { input: orderInput })).placeOrder;
   const changes = await Promise.all([1500, 1700].map(priceXof => raw(update, { id: item.id, v: item.version, input: { ...input, priceXof } }, restaurant.token)));
   assert.equal(changes.filter(x => x.data?.updateMenuItem).length, 1);

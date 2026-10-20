@@ -10,6 +10,7 @@ const address = {
   city: "Ouagadougou",
   neighborhood: "Démo",
   landmark: "Fictif",
+  point: { latitude: 12.3714, longitude: -1.5197 },
 };
 
 describe("Validation technique locale", () => {

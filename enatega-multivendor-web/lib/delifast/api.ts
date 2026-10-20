@@ -55,6 +55,8 @@ export type Restaurant = {
   open?: boolean;
 };
 
+export type DeliveryPoint = { latitude: number; longitude: number };
+export type DeliveryZone = { id: string; restaurantId: string; name: string; shape: "CIRCLE" | "POLYGON"; center?: DeliveryPoint | null; radiusMeters?: number | null; polygon?: DeliveryPoint[] | null; enabled: boolean; feeXof: number; minimumOrderXof: number; estimatedMinutes: number; priority: number; demo: boolean; hours: { day: number; startMinute: number; endMinute: number }[]; version: number };
 export type OptionSelection = { groupId: string; optionIds: string[] };
 export type CartLine = {
   menuItemId: string;
@@ -78,6 +80,7 @@ export type DeliveryAddress = {
   neighborhood: string;
   landmark: string;
   instructions: string;
+  point?: DeliveryPoint;
 };
 export type CheckoutItem = {
   menuItemId: string;
@@ -104,6 +107,7 @@ export type Checkout = {
   discount: number;
   total: number;
   items: CheckoutItem[];
+  delivery?: { zoneId: string; zoneName: string; zoneVersion: number; deliveryFee: number; minimumOrderXof: number; estimatedMinutes: number; demo: boolean } | null;
 };
 export type Order = {
   id: string;
@@ -139,12 +143,12 @@ const OPTION_FIELDS = `id name priceXof available`;
 const GROUP_FIELDS = `id name minSelections maxSelections options { ${OPTION_FIELDS} }`;
 const CATEGORY_FIELDS = `id name sortOrder archived version`;
 const RESTAURANT_FIELDS = `id name description open version categories { ${CATEGORY_FIELDS} } menu { id name description priceXof available archived version categoryId optionGroups { ${GROUP_FIELDS} } }`;
-const RESTAURANTS = `query Restaurants { restaurants { ${RESTAURANT_FIELDS} } }`;
+const RESTAURANTS = `query Restaurants($point: DeliveryPointInput) { restaurants(point: $point) { ${RESTAURANT_FIELDS} } }`;
 const RESTAURANT = `query Restaurant($id: ID!) { restaurant(id: $id) { ${RESTAURANT_FIELDS} } }`;
-const CHECKOUT = `query CalculateCheckout($input: CartInput!) { calculateCheckout(input: $input) { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } }`;
-const PLACE_ORDER = `mutation PlaceOrder($input: PlaceOrderInput!) { placeOrder(input: $input) { id accessToken status paymentStatus createdAt restaurantId checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } } }`;
-const ORDER = `query Order($id: ID!, $accessToken: String!) { order(id: $id, accessToken: $accessToken) { id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } } }`;
-const ORDER_OPERATIONS_FIELDS = `id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } }`;
+const CHECKOUT = `query CalculateCheckout($input: CartInput!) { calculateCheckout(input: $input) { currency subtotal deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } }`;
+const PLACE_ORDER = `mutation PlaceOrder($input: PlaceOrderInput!) { placeOrder(input: $input) { id accessToken status paymentStatus createdAt restaurantId checkout { currency subtotal deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } } }`;
+const ORDER = `query Order($id: ID!, $accessToken: String!) { order(id: $id, accessToken: $accessToken) { id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions point { latitude longitude } } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } } }`;
+const ORDER_OPERATIONS_FIELDS = `id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions point { latitude longitude } } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } }`;
 const STAFF_LOGIN = `mutation StaffLogin($email: String!, $password: String!) { staffLogin(email: $email, password: $password) { token user { id name role restaurantId } } }`;
 const OPERATIONS_ORDERS = `query OperationsOrders { operationsOrders { ${ORDER_OPERATIONS_FIELDS} } }`;
 const OPERATIONS_RESTAURANTS = `query OperationsRestaurants { operationsRestaurants { ${RESTAURANT_FIELDS} } }`;
@@ -220,6 +224,10 @@ async function request<T>(
       "INVALID_PRICE",
       "AMOUNT_OVERFLOW",
       "OUT_OF_DEMO_ZONE",
+      "INVALID_POINT",
+      "DELIVERY_POINT_REQUIRED",
+      "OUT_OF_DELIVERY_ZONE",
+      "MINIMUM_ORDER_NOT_MET",
       "INVALID_PHONE",
       "INVALID_ADDRESS",
       "INVALID_IDEMPOTENCY_KEY",
@@ -249,15 +257,15 @@ async function request<T>(
 }
 
 export const delifastApi = {
-  restaurants: () =>
-    request<{ restaurants: Restaurant[] }>(RESTAURANTS).then(
+  restaurants: (point?: DeliveryPoint) =>
+    request<{ restaurants: Restaurant[] }>(RESTAURANTS, { point: point ?? null }).then(
       (data) => data.restaurants,
     ),
   restaurant: (id: string) =>
     request<{ restaurant: Restaurant | null }>(RESTAURANT, { id }).then(
       (data) => data.restaurant,
     ),
-  checkout: (input: { restaurantId: string; items: CartLine[] }) =>
+  checkout: (input: { restaurantId: string; items: CartLine[]; point?: DeliveryPoint }) =>
     request<{ calculateCheckout: Checkout }>(CHECKOUT, { input }).then(
       (data) => data.calculateCheckout,
     ),

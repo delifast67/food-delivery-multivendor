@@ -73,6 +73,7 @@ const address = normalizeAddress({
   city: "Ouagadougou",
   neighborhood: "Démo",
   landmark: "Ne pas livrer",
+  point: { latitude: 12.3714, longitude: -1.5197 },
   instructions: "",
 });
 const failure = (code: string) => ({ extensions: { code } });
@@ -102,6 +103,11 @@ beforeEach(async () => {
     { id: "r1", name: "Restaurant fictif", description: "Démo", open: true },
     { id: "r2", name: "Autre fictif", description: "Démo", open: true },
   ]);
+  await db.collection("delivery_zones").deleteMany({});
+  for (const restaurant of await db.collection("restaurants").find({}).toArray()) {
+    await db.collection("delivery_zones").insertOne({ id:`test-zone-${restaurant.id}`,restaurantId:restaurant.id,name:"Zone fictive de test",shape:"CIRCLE",center:{latitude:12.3714,longitude:-1.5197},radiusMeters:10000,enabled:true,feeXof:500,minimumOrderXof:0,estimatedMinutes:45,priority:0,demo:true,hours:[],version:0 });
+  }
+
 });
 afterAll(async () => {
   await (await import("../src/db.js")).closeDb();

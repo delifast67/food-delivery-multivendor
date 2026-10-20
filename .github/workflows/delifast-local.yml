@@ -62,6 +62,7 @@ jobs:
         run: npm ci --prefix delifast-api --ignore-scripts --no-audit --no-fund
       - name: Compiler et tester l’API
         run: |
+          for script in scripts/delifast-*.mjs; do node --check "$script"; done
           npm run build --prefix delifast-api
           npm test --prefix delifast-api
           node scripts/delifast-persistence.mjs

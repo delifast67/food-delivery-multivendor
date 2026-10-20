@@ -27,6 +27,8 @@ export async function connect(
   await db
     .collection("menu_items")
     .createIndex({ restaurantId: 1, archived: 1 });
+  await db.collection("delivery_zones").createIndex({ id: 1 }, { unique: true });
+  await db.collection("delivery_zones").createIndex({ restaurantId: 1, enabled: 1, priority: -1 });
   await db.collection("staff_users").createIndex({ id: 1 }, { unique: true });
   await db
     .collection("staff_users")

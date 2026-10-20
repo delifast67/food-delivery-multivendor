@@ -7,7 +7,7 @@ import { createController } from './controller'
 import { createSecureStorage } from './secure-storage'
 
 const endpoint = (typeof process !== 'undefined' && process.env && process.env.EXPO_PUBLIC_DELIFAST_API_URL) || `http://${Platform.OS === 'android' ? '10.0.2.2' : 'localhost'}:4000/graphql`
-const initialAddress = { recipientName: '', phone: '+226 ', city: 'Ouagadougou', neighborhood: '', landmark: '', instructions: '' }
+const initialAddress = { recipientName: '', phone: '+226 ', city: '', neighborhood: '', landmark: '', instructions: '', point: { latitude: 12.3714, longitude: -1.5197 } }
 
 const money = (value) => `${Number(value || 0).toLocaleString('fr-FR')} XOF`
 const errorText = (error) => (error ? error.message || String(error) : '')
@@ -384,7 +384,10 @@ function App({ api, storage }) {
         <Header title='Adresse de livraison' onBack={() => setScreen('cart')} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
           <ScrollView contentContainerStyle={styles.content}>
-            <Text style={styles.subtitle}>Burkina Faso — vérifiez vos coordonnées avant d’envoyer.</Text>
+            <Text style={styles.subtitle}>Point de livraison — exemple fictif 12.3714, -1.5197. Les restaurants et frais sont filtrés et calculés par le serveur.</Text>
+            <TextInput editable={!state.busy && !pending} style={styles.input} placeholder='Latitude (ex. 12.3714)' value={String(address.point.latitude)} keyboardType='numeric' onChangeText={(value) => setAddress({ ...address, point: { ...address.point, latitude: Number(value.replace(',', '.')) } })} />
+            <TextInput editable={!state.busy && !pending} style={styles.input} placeholder='Longitude (ex. -1.5197)' value={String(address.point.longitude)} keyboardType='numeric' onChangeText={(value) => setAddress({ ...address, point: { ...address.point, longitude: Number(value.replace(',', '.')) } })} />
+            <Button title='Recharger les restaurants pour ce point' onPress={async() => { setLocalError(''); try { await controller.setDeliveryPoint(address.point) } catch (e) { setLocalError(errorText(e)) } }} disabled={state.busy || !!pending || !state.restored} />
             {[
               ['recipientName', 'Nom du destinataire'],
               ['phone', 'Téléphone (+226)'],
@@ -397,7 +400,7 @@ function App({ api, storage }) {
             ))}
             {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
             <Text style={styles.warning}>Démonstration locale : aucun paiement réel ni paiement à la livraison n’est disponible.</Text>
-            {state.quote && <Text style={styles.total}>Total serveur : {money(state.quote.total)}</Text>}<Button title={state.busy ? 'Envoi en cours…' : 'Envoyer la commande'} onPress={submit} disabled={state.busy || !!pending || !state.restored || !cart.items.length || !state.quote} />
+            {state.quote && <Text style={styles.total}>Total serveur : {money(state.quote.total)}</Text>}{state.quote.delivery && <Text style={styles.muted}>Zone : {state.quote.delivery.zoneName} · Livraison : {money(state.quote.delivery.deliveryFee)} · environ {state.quote.delivery.estimatedMinutes} min</Text>}<Button title={state.busy ? 'Envoi en cours…' : 'Envoyer la commande'} onPress={submit} disabled={state.busy || !!pending || !state.restored || !cart.items.length || !state.quote} />
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>

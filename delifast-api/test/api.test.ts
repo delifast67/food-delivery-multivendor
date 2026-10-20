@@ -17,6 +17,7 @@ beforeAll(async () => {
     { id: "r1", name: "R1", description: "D", open: true },
     { id: "r2", name: "R2", description: "D", open: true },
   ]);
+  await db.collection("delivery_zones").insertOne({ id: "zone-r1", restaurantId: "r1", name: "Centre", geometry: { type: "CIRCLE", center: { latitude: 12.3714, longitude: -1.5197 }, radiusMeters: 10000 }, enabled: true, feeXof: 500, minimumOrderXof: 0, estimatedMinutes: 45, priority: 0, demo: true, hours: [], version: 0 });
   await db.collection("menu_items").insertMany([
     {
       id: "m1",
@@ -66,6 +67,7 @@ it("reject unavailable and replay idempotently", async () => {
       city: "Ouagadougou",
       neighborhood: "C",
       landmark: "L",
+      point: { latitude: 12.3714, longitude: -1.5197 },
     },
   };
   const q =
@@ -93,6 +95,7 @@ it("concurrent same key is atomic", async () => {
       city: "Ouagadougou",
       neighborhood: "C",
       landmark: "L",
+      point: { latitude: 12.3714, longitude: -1.5197 },
     },
   };
   const q = "mutation($i:PlaceOrderInput!){placeOrder(input:$i){id}}";
@@ -124,11 +127,11 @@ it("canonicalizes reordered and duplicate cart lines and exposes all price field
     total: 7500,
   });
   expect(a.body.data.calculateCheckout).toMatchObject({
-    deliveryFee: 500,
+    deliveryFee: 0,
     serviceFee: 200,
     tax: 0,
     discount: 0,
-    total: 8200,
+    total: 7700,
   });
 });
 
@@ -159,6 +162,7 @@ it("rejects mixed restaurants, oversized technical fields, and closed restaurant
           city: "Ouagadougou",
           neighborhood: "C",
           landmark: "L",
+      point: { latitude: 12.3714, longitude: -1.5197 },
         },
       },
     },
@@ -170,7 +174,7 @@ it("rejects mixed restaurants, oversized technical fields, and closed restaurant
     .updateOne({ id: "r1" }, { $set: { open: false } });
   const closed = await call(
     "query($i:CartInput!){calculateCheckout(input:$i){total}}",
-    { i: { restaurantId: "r1", items: [{ menuItemId: "m1", quantity: 1 }] } },
+    { i: { restaurantId: "r1", items: [{ menuItemId: "m1", quantity: 1 }], point: { latitude: 12.3714, longitude: -1.5197 } } },
   );
   expect(closed.body.errors[0].extensions.code).toBe("RESTAURANT_CLOSED");
   await db
@@ -189,6 +193,7 @@ it("replays historical price after menu change and rejects a changed canonical p
       city: "Ouagadougou",
       neighborhood: "C",
       landmark: "L",
+      point: { latitude: 12.3714, longitude: -1.5197 },
     },
   };
   const q =

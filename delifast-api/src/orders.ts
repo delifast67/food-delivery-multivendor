@@ -101,7 +101,8 @@ export async function placeOrder(
       fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée avec un autre panier");
     return customerView(old, old.accessToken ?? "");
   }
-  const checkout = await calculateCheckout(db, cart);
+  if (!address.point) fail("DELIVERY_POINT_REQUIRED", "Un point GPS de livraison est requis");
+  const checkout = await calculateCheckout(db, { ...cart, point: address.point });
   const raw = crypto.randomBytes(24).toString("hex");
   const timestamp = now();
   const order = {

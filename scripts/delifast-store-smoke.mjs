@@ -163,6 +163,7 @@ try {
       ],
       idempotencyKey: `store-${randomUUID()}`,
       deliveryAddress: {
+        point: { latitude: 12.3714, longitude: -1.5197 },
         recipientName: "Recette restaurant fictive",
         phone: "+22670000000",
         city: "Ouagadougou",

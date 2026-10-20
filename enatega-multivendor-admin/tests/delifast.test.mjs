@@ -119,3 +119,24 @@ test('une réponse JSON sans données est refusée explicitement', async () => {
   transport(() => ({ ok: true, status: 200, json: async () => ({}) }));
   await assert.rejects(new DelifastClient().snapshot(), { code: 'INVALID_RESPONSE' });
 });
+
+const parsingSource = fs.readFileSync(new URL('../lib/delifast/zone-parsing.ts', import.meta.url), 'utf8');
+const parsingCompiled = ts.transpileModule(parsingSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
+const { parsePolygonText, parseHoursText } = await import(`data:text/javascript;base64,${Buffer.from(parsingCompiled).toString('base64')}`);
+
+test('le parseur de polygone accepte JSON et lat,lng sans reconstruire la saisie', () => {
+  assert.deepEqual(parsePolygonText('[{"latitude":1,"longitude":2},{"latitude":3,"longitude":4}]').value, [
+    { latitude: 1, longitude: 2 }, { latitude: 3, longitude: 4 },
+  ]);
+  assert.deepEqual(parsePolygonText('1,2; 3,4').value, [
+    { latitude: 1, longitude: 2 }, { latitude: 3, longitude: 4 },
+  ]);
+  assert.equal(parsePolygonText('').value, null);
+});
+
+test('les textes polygonaires ou horaires invalides renvoient une erreur sans perte de texte', () => {
+  assert.match(parsePolygonText('[{"latitude":1,').error, /JSON invalide/);
+  assert.match(parsePolygonText('1,wat; 3,4').error, /Coordonnées invalides/);
+  assert.match(parseHoursText('[{"day":1,"startMinute":900,"endMinute":480}]').error, /début < fin/);
+  assert.deepEqual(parseHoursText('[]').value, []);
+});

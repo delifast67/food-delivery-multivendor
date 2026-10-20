@@ -28,6 +28,7 @@ const orderInput = (key: string, restaurantId = "r1") => ({
     city: "Ouagadougou",
     neighborhood: "C",
     landmark: "L",
+    point: { latitude: 12.3714, longitude: -1.5197 },
   },
 });
 
@@ -89,7 +90,10 @@ describe("contrat opérations", () => {
         active: true,
       },
     ]);
-    app = await (await import("../src/server.js")).createApp();
+    for (const restaurant of await db.collection("restaurants").find({}).toArray()) {
+    await db.collection("delivery_zones").insertOne({ id:`test-zone-${restaurant.id}`,restaurantId:restaurant.id,name:"Zone fictive de test",shape:"CIRCLE",center:{latitude:12.3714,longitude:-1.5197},radiusMeters:10000,enabled:true,feeXof:500,minimumOrderXof:0,estimatedMinutes:45,priority:0,demo:true,hours:[],version:0 });
+  }
+  app = await (await import("../src/server.js")).createApp();
   }, 60000);
   afterAll(async () => {
     await (await import("../src/db.js")).closeDb();
