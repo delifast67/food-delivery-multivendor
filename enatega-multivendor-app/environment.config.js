@@ -1,7 +1,4 @@
-const APP_MODES = {
-  MULTI: 'MULTI',
-  SINGLE: 'SINGLE'
-}
+const APP_MODES = { MULTI: 'MULTI' }
 
 const MULTI_ENV_CONFIG = {
   development: {
@@ -51,42 +48,6 @@ const MULTI_ENV_CONFIG = {
   }
 }
 
-// Single-vendor production backend. Environment variables can still override
-// it for local or staging builds when needed.
-const SINGLE_VENDOR_DEFAULT_HOST =
-  'enatega-multivendor-api-production-9b09.up.railway.app'
-
-const getSingleVendorConfig = () => {
-  const graphqlUrl = process.env.EXPO_PUBLIC_SINGLE_VENDOR_GRAPHQL_URL
-  const wsGraphqlUrl = process.env.EXPO_PUBLIC_SINGLE_VENDOR_WS_GRAPHQL_URL
-  const serverRestUrl = process.env.EXPO_PUBLIC_SINGLE_VENDOR_REST_URL
-  const explicitlyEnabled =
-    process.env.EXPO_PUBLIC_SINGLE_VENDOR_ENABLED === 'true'
-
-  if (graphqlUrl && wsGraphqlUrl && serverRestUrl) {
-    return {
-      GRAPHQL_URL: graphqlUrl,
-      WS_GRAPHQL_URL: wsGraphqlUrl,
-      SERVER_URL: graphqlUrl,
-      SERVER_REST_URL: serverRestUrl,
-      CLARITY_ENABLED: false,
-      PUBLIC_ACCESS_REQUIRED: true,
-      SINGLE_VENDOR_ENABLED: explicitlyEnabled
-    }
-  }
-
-  return {
-    GRAPHQL_URL: `https://${SINGLE_VENDOR_DEFAULT_HOST}/graphql`,
-    WS_GRAPHQL_URL: `wss://${SINGLE_VENDOR_DEFAULT_HOST}/graphql`,
-    SERVER_URL: `https://${SINGLE_VENDOR_DEFAULT_HOST}/graphql`,
-    SERVER_REST_URL: `https://${SINGLE_VENDOR_DEFAULT_HOST}/`,
-    CLARITY_ENABLED: false,
-    PUBLIC_ACCESS_REQUIRED: true,
-    SINGLE_VENDOR_ENABLED:
-      process.env.EXPO_PUBLIC_SINGLE_VENDOR_ENABLED !== 'false'
-  }
-}
-
 const normalizeEnvironment = (env) => {
   if (env === 'production' || env === 'staging') return env
   return 'development'
@@ -95,14 +56,10 @@ const normalizeEnvironment = (env) => {
 const getEnvironmentConfig = (env, mode = APP_MODES.MULTI) => {
   const environment = normalizeEnvironment(env)
 
-  if (mode === APP_MODES.SINGLE) {
-    return getSingleVendorConfig()
-  }
 
   return {
     ...MULTI_ENV_CONFIG[environment],
-    PUBLIC_ACCESS_REQUIRED: true,
-    SINGLE_VENDOR_ENABLED: getSingleVendorConfig().SINGLE_VENDOR_ENABLED
+    PUBLIC_ACCESS_REQUIRED: true
   }
 }
 

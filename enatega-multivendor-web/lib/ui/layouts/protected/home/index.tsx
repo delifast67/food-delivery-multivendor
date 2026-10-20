@@ -11,7 +11,6 @@ import { useSearchUI } from "@/lib/context/search/search.context";
 import TabItem from "@/lib/ui/useable-components/tab-item/TabItem";
 import { useTranslations } from "next-intl";
 import homeTabSvg from "@/lib/utils/assets/svg/houseTabsvg";
-import { useAppMode } from "@/lib/mode";
 import { FiSearch } from "react-icons/fi";
 
 export default function HomeLayout({
@@ -20,7 +19,6 @@ export default function HomeLayout({
   const router = useRouter();
   const pathname = usePathname();
   const { isSearchFocused, setIsSearchFocused } = useSearchUI();
-  const { isSingleVendor } = useAppMode();
 
   const onChangeScreen = (
     name: "Discovery" | "Restaurants" | "Store" | "Deals" | "Browse",
@@ -79,23 +77,7 @@ export default function HomeLayout({
             onClick={() => onChangeScreen("Discovery")}
             Icon={homeTabSvg}
           />
-          {isSingleVendor ? (
-            <>
-              <TabItem
-                active={isDeals}
-                label={t("tab_deals")}
-                onClick={() => onChangeScreen("Deals")}
-                Icon={CutlerySvg}
-              />
-              <TabItem
-                active={isBrowse}
-                label={t("tab_browse")}
-                onClick={() => onChangeScreen("Browse")}
-                Icon={FiSearch}
-              />
-            </>
-          ) : (
-            <>
+          <>
               <TabItem
                 active={isRestaurants}
                 label={t("tab_restaurants")}
@@ -109,7 +91,7 @@ export default function HomeLayout({
                 Icon={StoreSvg}
               />
             </>
-          )}
+
         </div>
       </div>
 

@@ -4,30 +4,9 @@ import gql from 'graphql-tag'
 
 import { getConfiguration } from '../apollo/queries'
 import { useAppMode } from '../mode/AppModeContext'
-import { APP_MODES } from '../mode/constants'
 
 const GETCONFIGURATION = gql`
   ${getConfiguration}
-`
-
-const GET_SINGLE_VENDOR_CONFIGURATION = gql`
-  query SingleVendorConfiguration {
-    configuration: publicConfiguration {
-      _id
-      currency
-      currencySymbol
-      deliveryRate
-      twilioEnabled
-      appAmplitudeApiKey
-      customerAppSentryUrl
-      termsAndConditions
-      privacyPolicy
-      skipMobileVerification
-      skipEmailVerification
-      costType
-      publishableKey
-    }
-  }
 `
 
 // Module-level constant so the fallback keeps a stable reference across renders
@@ -46,9 +25,7 @@ const ConfigurationContext = React.createContext({})
 
 export const ConfigurationProvider = props => {
   const { mode } = useAppMode()
-  const query = mode === APP_MODES.SINGLE
-    ? GET_SINGLE_VENDOR_CONFIGURATION
-    : GETCONFIGURATION
+  const query = GETCONFIGURATION
   const { loading, data, error } = useQuery(query)
 
   const configuration = useMemo(

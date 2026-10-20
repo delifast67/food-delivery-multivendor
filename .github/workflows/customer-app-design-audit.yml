@@ -4,13 +4,16 @@ on:
   pull_request:
     paths:
       - 'enatega-multivendor-app/**'
+      - 'enatega-multivendor-web/**'
+      - 'scripts/delifast-client-multivendor.test.mjs'
       - '.github/workflows/customer-app-design-audit.yml'
   push:
     branches:
-      - integration/single-vendor-combined
-      - design/multivendor-ui-parity
+      - feat/delifast-local-ordering
     paths:
       - 'enatega-multivendor-app/**'
+      - 'enatega-multivendor-web/**'
+      - 'scripts/delifast-client-multivendor.test.mjs'
       - '.github/workflows/customer-app-design-audit.yml'
 
 jobs:
@@ -26,7 +29,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: enatega-multivendor-app/package-lock.json
 
@@ -36,5 +39,5 @@ jobs:
       - name: Check multivendor visual rules
         run: npm run check:multivendor-design
 
-      - name: Check single-vendor import boundaries
-        run: npm run check:single-vendor-imports
+      - name: Check Delifast client boundaries
+        run: node --test ../scripts/delifast-client-multivendor.test.mjs

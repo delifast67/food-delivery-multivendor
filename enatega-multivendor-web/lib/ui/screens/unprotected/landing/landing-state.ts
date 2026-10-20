@@ -1,7 +1,6 @@
 export const isMarketplaceLandingPath = (
   pathname: string | null,
-  isSingleVendor = false,
-) => pathname === "/" && !isSingleVendor;
+) => pathname === "/";
 
 export const getJourneyStage = (progress: number) => {
   if (progress < 0.34) return 0;

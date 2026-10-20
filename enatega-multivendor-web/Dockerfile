@@ -3,12 +3,12 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY . .
-ENV DELIFAST_LOCAL_MODE=true NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 FROM node:24.19.0-bookworm-slim AS runtime
 WORKDIR /app
-ENV NODE_ENV=production DELIFAST_LOCAL_MODE=true NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
 COPY --from=build /app/package*.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
 COPY --from=build /app/.next ./.next

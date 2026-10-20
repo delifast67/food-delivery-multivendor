@@ -1,63 +1,33 @@
-# Product
+# Delifast — produit web local
 
 <!-- impeccable:product-schema 1 -->
 
-## Platform
+## Plateforme et public
 
-web
+Client web responsive pour une démonstration de livraison multirestaurant en français. Les restaurants, menus, adresses et tarifs de démonstration sont fictifs ; ils ne constituent pas des offres commerciales validées.
 
-## Users
+## Parcours disponible
 
-Enatega serves people ordering food, groceries, and other local goods for delivery or pickup. They typically arrive with a location and an immediate need to discover what is available, compare options, place an order, and track it. The same customer website can operate as a neighborhood multivendor marketplace or as a focused single-vendor storefront.
+La racine `/` redirige directement vers `/delifast`, sans drapeau de configuration. Le client peut choisir un restaurant, consulter catégories et plats, configurer les options, composer un panier limité à ce restaurant, obtenir le total serveur en XOF, créer une commande en attente de paiement et reprendre son suivi avec son jeton. Une réponse réseau perdue peut être reprise avec le même payload et la même clé d’idempotence.
 
-Secondary audiences use the public marketing surfaces to evaluate becoming a restaurant, store, or rider partner.
+Le site n’offre plus de second mode de catalogue ni de bascule entre services. Les anciennes URL spécifiques ne permettent pas de réactiver le parcours retiré. Les composants multivendeurs historiques partagés conservés ne sont pas présentés comme intégralement migrés vers l’API Delifast.
 
-## Product Purpose
+## Personnel
 
-Turn a customer's location into an actionable local marketplace, carry them from discovery through checkout and tracking, and support the complete account and post-purchase journey. Success means customers can quickly understand what is available, trust the ordering information, and complete an order without mode or navigation confusion.
+L’espace distinct `/delifast/operations` utilise les rôles et permissions du backend pour les commandes, le catalogue et l’affectation manuelle. Une simulation de confirmation de paiement est possible seulement avec activation serveur explicite et rôle admin ; elle n’encaisse rien. Le client ne peut pas effectuer cette simulation.
 
-## Positioning
+## Contraintes
 
-Enatega provides one adaptable customer experience for two distinct operating models: a multivendor neighborhood marketplace spanning restaurants and stores, and a single-vendor catalog with deals, categories, and direct ordering. Mode-specific carts and active orders remain isolated while customers can move safely between services.
+Les montants proviennent du serveur, pas d’un total envoyé par le client. Le navigateur appelle le proxy same-origin `/api/delifast/graphql`, paramétré côté serveur par `DELIFAST_API_URL`. Les anciennes API web ne sont pas exposées par le proxy de navigation. Les migrations du stockage multivendeur restent non destructives et ne doivent pas écraser un panier déjà migré.
 
-## Operating Context
+Aucun compte client permanent, encaissement, remboursement réel, déplacement physique ou suivi GPS temps réel n’est revendiqué. Les règles commerciales, frais réels, zones et accès marchands nécessitent des décisions distinctes du propriétaire. Le lot ne choisit pas de nouvelle identité de publication mobile et ne permet ni fusion ni déploiement en production.
 
-Customers browse by current or saved delivery address, search nearby vendors or products, compare ratings and delivery information, customize items, manage carts, select delivery or pickup, pay, and follow live order progress. The web app supports responsive mobile and desktop usage, light and dark themes, multiple languages, RTL layouts, PWA behavior, and location/map integrations.
+## Code et éléments hérités
 
-## Capabilities and Constraints
+Next.js, React et les outils historiques restent en place. Les contrats multivendeurs et leurs données ne sont pas renommés artificiellement pour masquer l’ancien mode. Les logos, médias et notices de licence hérités restent conservés ; leur présence n’atteste pas une intégration commerciale actuelle. Les écrans et effets visuels historiques ne sont pas des exigences fonctionnelles ajoutées au parcours autonome.
 
-- Next.js App Router, React, Tailwind CSS, PrimeReact, Apollo GraphQL, next-intl, Google Maps, Stripe, Firebase, and PWA/service-worker integration are established constraints.
-- Preserve existing GraphQL contracts, route compatibility, authentication, payment, cart, order, tracking, localization, and business behavior unless a change is explicitly part of the redesign.
-- Multivendor `/` is an ordering-first marketplace entry page.
-- Single-vendor `/` resolves to `/discovery`, which is its default home surface.
-- Mode switching must preserve isolated carts and active orders and continue to guard incompatible routes.
-- Factual commercial claims must be verified; the redesign must not invent testimonials, coverage, prices, performance statistics, or partner outcomes.
-- Every user-visible label, location, vendor, product, price, ETA, offer, image, and claim must resolve from the existing translation, configuration, or API data paths. Do not introduce hardcoded production content or sample marketplace data. New interface labels, when unavoidable, must be localized through the existing locale system rather than written inline in components.
+## Vérifications et limites
 
-## Brand Commitments
+Les tests de démarrage web, de migration de stockage, de commande et d’opérations, le typecheck et le build sont décrits dans le [guide local](../README_DELIFAST_LOCAL.md). Le [garde-fou client](../scripts/delifast-client-multivendor.test.mjs) vérifie les modules, endpoints et constantes retirés. L’[inventaire hors clients](../VENDOR_MODE_CONFIGURATION.md) précise les références préservées dans les autres surfaces.
 
-- Preserve the Enatega name and existing logo.
-- Preserve the current primary green family: `#75D04B` primary, `#F3FFEE` light, `#5AC12F` dark, plus the established hover, pressed, focus, and disabled states.
-- The shipped visual direction is **Quiet Orbit**: an elegant pure-white multivendor landing canvas with precise Inter typography, restrained Cormorant Garamond italic accents, brand-green route geometry, pale-sage grounding fields, and address-first interaction.
-- The result must avoid generic AI/SaaS styling, interchangeable food-delivery templates, gratuitous glass effects, excessive rounded cards, decorative gradients, and ungrounded marketing copy.
-- New surface development is comp-first: high-fidelity desktop and mobile compositions are approved before production UI code.
-- The approved multivendor root composition uses one city gateway with a green landing action, an isolated food-grocery-essentials product orbit with autonomous oval route markers, the restored More than delivery customer-business-rider strip, a low-amplitude Choose–Moving–Arrived scroll journey, and a final branch to restaurant or rider partnership. It intentionally sends marketplace listings to discovery instead of duplicating them on `/`.
-
-## Evidence on Hand
-
-- Existing logos and product imagery live under `public/assets/` and `lib/assets/`; the regenerated Quiet Orbit still lifes, per-asset generation metadata, and aggregate provenance live under `public/assets/images/landing/quiet-orbit/`. Their transparent alpha was validated before the final WebP encoding.
-- Real vendor, product, category, banner, rating, delivery, and order data is supplied by the existing GraphQL APIs.
-- The current implementation demonstrates the complete route set and product behavior but is visual evidence and an anti-reference rather than authority for the replacement design.
-- Existing promotional percentage, zero-fee, and superlative claims require product-owner verification before reuse.
-
-## Product Principles
-
-- Location and availability come before promotion.
-- Make the two operating modes distinct in task hierarchy but unmistakably one Enatega product.
-- Show real marketplace information and state instead of generic claims or decorative chrome.
-- Keep ordering fast on mobile while using desktop space for comparison and context.
-- Accessibility, localization, RTL behavior, resilience, and honest system states are part of the design, not finishing work.
-
-## Accessibility & Inclusion
-
-Target WCAG 2.2 AA. Support keyboard navigation, visible focus, semantic landmarks, accessible dialogs and drawers, adequate contrast, reduced motion, touch targets, responsive zoom, long translations, RTL layouts, and screen-reader labels for all icon-only controls.
+L’accessibilité, la résilience et les états honnêtes restent des objectifs du produit ; aucun audit WCAG complet ou essai sur appareil physique n’est revendiqué par ce lot.

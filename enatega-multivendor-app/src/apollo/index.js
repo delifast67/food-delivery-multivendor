@@ -267,7 +267,7 @@ const setupApollo = ({
 
     const hasUserToken = operation.getContext()?.hasUserToken === true
 
-    // Single-vendor has protected operations that can return 401 for guests.
+    // Guest requests may return 401; only invalidate sessions for authenticated requests.
     // Only invalidate a session when this request actually carried a user JWT.
     if (hasUserToken && (hasInvalidSession || hasUnauthorizedNetworkError)) {
       invalidateUserSession({

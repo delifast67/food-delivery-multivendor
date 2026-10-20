@@ -22,7 +22,7 @@ const buildStyles = (props = null) => {
       marginTop: scale(2),
       marginBottom: scale(8),
       overflow: 'visible',
-      // Match the restrained single-vendor card treatment. The outer wrapper
+      // Match the restrained multivendor card treatment. The outer wrapper
       // owns the shadow while cardSurface clips media and ripple content.
       shadowColor: props?.shadowColor ?? '#000',
       shadowOffset: {

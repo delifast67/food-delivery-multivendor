@@ -1,25 +1,12 @@
-import { APP_MODES, type AppMode } from "./constants";
+import type { AppMode } from "./constants";
 
-const MULTI_ONLY = [
-  /^\/restaurants/,
-  /^\/store/,
-  /^\/mapview/,
-  /^\/restaurantInfo/,
-];
-const SINGLE_ONLY = [
-  /^\/deals/,
-  /^\/browse/,
+const RETIRED_ROUTES = [
+  /^\/deals(?:\/|$)/,
+  /^\/browse(?:\/|$)/,
   /^\/product\//,
-  /^\/profile\/(favorites|vouchers|wallet|membership|referral)/,
+  /^\/profile\/(favorites|vouchers|wallet|membership|referral)(?:\/|$)/,
 ];
-
-export const isRouteCompatible = (pathname: string, mode: AppMode) => {
-  const rules = mode === APP_MODES.SINGLE ? MULTI_ONLY : SINGLE_ONLY;
-  return !rules.some((rule) => rule.test(pathname));
-};
-
-export const getModeHomeRoute = (mode: AppMode): "/" | "/discovery" =>
-  mode === APP_MODES.SINGLE ? "/discovery" : "/";
-
-export const routeAfterModeSwitch = (nextMode: AppMode) =>
-  getModeHomeRoute(nextMode);
+export const isRouteCompatible = (pathname: string, _mode?: AppMode) =>
+  !RETIRED_ROUTES.some(rule => rule.test(pathname));
+export const getModeHomeRoute = (_mode?: AppMode) => "/delifast" as const;
+export const routeAfterModeSwitch = (_mode?: AppMode) => getModeHomeRoute();

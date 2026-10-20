@@ -25,13 +25,13 @@ L’onglet **Catalogue** permet désormais à l’administration et au restauran
 | `delifast-api` | API GraphQL autonome, MongoDB, migrations, seed, authentification locale et opérations |
 | `enatega-multivendor-web/app/delifast` | Parcours client et espace opérations autonomes, indépendants du backend historique |
 | `scripts/delifast-*.mjs` | Contrat GraphQL, parcours HTTP client/opérations/catalogue/options, persistance et sauvegarde/restauration |
-| `enatega-multivendor-admin` | Ancien back-office multivendeur, non raccordé intégralement à la nouvelle API |
+| `enatega-multivendor-admin` | Entrée web admin Delifast autonome ; fonctions historiques non intégralement migrées |
 | `enatega-multivendor-app` | Parcours client Delifast autonome, reprise de commande et suivi ; validation sur appareils et fonctions restantes à terminer |
 | `enatega-multivendor-store` | Parcours restaurant Delifast autonome : connexion, commandes payées, acceptation/préparation/prête/refus ; [guide et tests](enatega-multivendor-store/src/delifast/README.md) |
-| `enatega-multivendor-rider` | Application livreur historique restant à migrer et à tester sur appareils |
+| `enatega-multivendor-rider` | Parcours livreur Delifast autonome : missions affectées, récupération et livraison simulée ; validation sur appareils restante |
 | `docs/historique` | Documentation héritée, non contractuelle pour Delifast |
 
-Le module d’administration mono-restaurant a été retiré. Des chemins mono-restaurant, anciens paiements et références de marque subsistent dans les clients historiques ; ils ne doivent pas être présentés comme migrés. En mode local, les routes historiques du site sont inaccessibles. Redis est provisionné mais ne sert pas encore de file de jobs ou de verrou métier.
+Le module d’administration mono-restaurant avait déjà été retiré. Les clients web et mobile démarrent directement sur Delifast et leur mode mono-vendeur est supprimé. Le support historique de ce mode dans le restaurant et le livreur reste volontairement hors de ce lot ; les anciens paiements et fonctions historiques non raccordées ne sont pas présentés comme migrés. Voir [la note de retrait et les contrôles](VENDOR_MODE_CONFIGURATION.md). Redis est provisionné mais ne sert pas encore de file de jobs ou de verrou métier.
 
 ## Avant une utilisation réelle
 
@@ -41,7 +41,7 @@ Les détails de fonctionnement et les limites sont dans le [guide Delifast](READ
 
 ## Vérifications de la recette locale
 
-La recette locale actuelle passe la compilation et le typecheck API, **151 tests API**, **126 tests web**, **44 tests mobiles client**, **43 tests restaurant**, **3 contrôles d’entrée/configuration restaurant**, **21 documents GraphQL web/opérations**, **5 documents client mobile** et **5 documents restaurant**. Le parcours restaurant passe aussi **9 contrôles HTTP sur API/MongoDB jetables** et les exports JS/Hermes Android/iOS. Les réponses PayDunya restent entièrement mockées : aucune recette d’encaissement externe n’est revendiquée et aucun checkout n’est relié aux interfaces. Les recettes précédentes de persistance et sauvegarde/restauration sont documentées dans le guide local, sans être présentées comme réexécutées dans ce lot. Docker, builds natifs signés et essais sur appareils physiques ne sont pas validés ici. Le job CI restaurant est configuré, mais son exécution publique attend la publication du commit local.
+Le lot de retrait client passe **182 tests API**, **96 tests web**, **50 tests mobiles client**, **43 tests restaurant**, **55 tests livreur**, **15 tests admin**, ainsi que les contrôles d’entrée et les contrats GraphQL. Les tests propres aux fonctionnalités mono-vendeur supprimées ne font plus partie du total web ; les tests Delifast et les migrations de stockage multivendeur restent couverts. Un garde-fou transversal vérifie l’absence des modules, endpoints et constantes de mode retirés dans les deux clients. La persistance MongoDB et la sauvegarde/restauration sont revérifiées sur bases jetables. Les exports JS/Hermes Android/iOS du client mobile passent ; ils ne constituent pas des APK/IPA signés. Le [guide local](README_DELIFAST_LOCAL.md) détaille la recette HTTP et les limites. Aucun encaissement externe, test sur téléphone physique, Docker/Compose, fusion, publication ou déploiement n’est validé par ce lot ; les workflows CI sont seulement préparés localement.
 
 ## Licence
 

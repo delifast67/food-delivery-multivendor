@@ -17,8 +17,7 @@
     "cy:open": "cypress open",
     "cy:run": "cypress run",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "check:single-vendor-schema": "node scripts/check-single-vendor-schema.js"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@apollo/client": "^3.11.8",

@@ -16,11 +16,6 @@ import { useNavigation } from '@react-navigation/native'
 import { useTranslation } from 'react-i18next'
 import { useAppMode } from '../../mode/AppModeContext'
 import { getModeHomeRoute } from '../../mode/navigation'
-import { APP_MODES } from '../../mode/constants'
-import {
-  EMAIL_EXIST_SINGLE_VENDOR,
-  LOGIN_SINGLE_VENDOR
-} from '../../singlevendor/apollo/mutations'
 
 const LOGIN = gql`
   ${login}
@@ -29,10 +24,6 @@ const EMAIL = gql`
   ${emailExist}
 `
 
-const singleVendorDemoCredentials = {
-  email: Constants.expoConfig?.extra?.singleVendorCustomerDemoEmail ?? '',
-  password: Constants.expoConfig?.extra?.singleVendorCustomerDemoPassword ?? ''
-}
 
 export const useLogin = () => {
   const { t, i18n } = useTranslation()
@@ -40,18 +31,13 @@ export const useLogin = () => {
 
   const navigation = useNavigation()
   const { mode } = useAppMode()
-  const loginDocument =
-    mode === APP_MODES.SINGLE ? LOGIN_SINGLE_VENDOR : LOGIN
-  const emailExistDocument =
-    mode === APP_MODES.SINGLE ? EMAIL_EXIST_SINGLE_VENDOR : EMAIL
-  const initialEmail =
-    mode === APP_MODES.SINGLE ? singleVendorDemoCredentials.email : ''
+  const loginDocument = LOGIN
+  const emailExistDocument = EMAIL
+  const initialEmail = ''
   const [email, setEmail] = useState(initialEmail)
   const emailRef = useRef(initialEmail)
   const [password, setPassword] = useState(
-    mode === APP_MODES.SINGLE
-      ? singleVendorDemoCredentials.password
-      : ''
+    ''
   )
   const [showPassword, setShowPassword] = useState(true)
   const [emailError, setEmailError] = useState(null)
@@ -83,12 +69,7 @@ export const useLogin = () => {
   // Reset password when registeredEmail becomes true
   useEffect(() => {
     if (registeredEmail) {
-      if (
-        mode === APP_MODES.SINGLE &&
-        emailRef.current === singleVendorDemoCredentials.email
-      ) {
-        setPassword(singleVendorDemoCredentials.password)
-      } else if (emailRef.current === 'demo-customer@enatega.com') {
+      if (emailRef.current === 'demo-customer@enatega.com') {
         setPassword('123123')
       } else {
         setPassword('')

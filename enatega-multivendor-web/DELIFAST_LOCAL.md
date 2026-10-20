@@ -1,11 +1,10 @@
 # Delifast Multivendor — parcours web local
 
-Le parcours isolé est disponible sur `/delifast` (et `/` redirige vers cette route quand `DELIFAST_LOCAL_MODE=true`). Il couvre uniquement restaurants, menu, panier mono-restaurant, calcul serveur XOF et création d'une commande `PAYMENT_PENDING`. Aucun paiement, COD, Stripe, PayPal ou livraison réelle n'est déclenché.
+Le parcours isolé est disponible sur `/delifast` (et `/` redirige toujours vers cette route). Il couvre uniquement restaurants, menu, panier mono-restaurant, calcul serveur XOF et création d'une commande `PAYMENT_PENDING`. Aucun paiement, COD, Stripe, PayPal ou livraison réelle n'est déclenché.
 
 ## Configuration
 
 ```bash
-DELIFAST_LOCAL_MODE=true
 DELIFAST_API_URL=http://localhost:4000/graphql
 ```
 

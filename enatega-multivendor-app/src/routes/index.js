@@ -64,14 +64,14 @@ import UserContext from '../context/User'
 import ConfigurationContext from '../context/Configuration'
 import { ActivityIndicator, Easing, StyleSheet, View } from 'react-native'
 import { SLIDE_RIGHT_WITH_CURVE_ANIM, SLIDE_UP_RIGHT_ANIMATION, AIMATE_FROM_CENTER, SLIDE_UP_RIGHT_ANIMATION_FIXED_HEADER } from '../utils/constants'
-import ModeProfileTab from '../components/VendorModeToggle/ModeProfileTab'
+import ProfileTab from '../components/Account/ProfileTab'
 import useMultivendorTheme from '../ui/designSystem/useMultivendorTheme'
 
 const NavigationStack = createStackNavigator()
 const Location = createStackNavigator()
 const Tab = createBottomTabNavigator()
 const MultiVendorProfileTab = props => (
-  <ModeProfileTab
+  <ProfileTab
     {...props}
     AuthenticatedComponent={Profile}
     GuestComponent={CreateAccount}
@@ -292,7 +292,7 @@ function BottomTabNavigator() {
           flex: 1
         },
         tabBarLabelPosition: 'below-icon',
-        tabBarActiveTintColor: currentTheme.singleVendorBrandForeground,
+        tabBarActiveTintColor: currentTheme.primaryBlue,
         tabBarInactiveTintColor: currentTheme.fontNewColor,
         headerRight: () => <RightButton icon='cart' iconColor={currentTheme.iconColor} menuHeader={false} t={t} />
       })}

@@ -13,7 +13,6 @@ import { dismissSessionExpiredModal, isLogoutInProgress, setLogoutInProgress, su
 import { clearPublicToken } from '../utils/publicAccessToken'
 import { deleteToken } from '../utils/secureToken'
 import { useAppMode } from '../mode/AppModeContext'
-import { APP_MODES } from '../mode/constants'
 import {
   getModeItem,
   migrateMultivendorStorage,
@@ -27,36 +26,6 @@ const v1options = {
 
 const PROFILE = gql`
   ${profile}
-`
-
-const SINGLE_VENDOR_PROFILE = gql`
-  query SingleVendorProfile {
-    profile {
-      _id
-      name
-      phone
-      phoneIsVerified
-      email
-      emailIsVerified
-      notificationToken
-      userType
-      isActive
-      isOrderNotification
-      isOfferNotification
-      addresses {
-        _id
-        label
-        deliveryAddress
-        details
-        location {
-          coordinates
-        }
-        selected
-      }
-      favourite
-      stripe_plan_id
-    }
-  }
 `
 
 const UserContext = React.createContext({})
@@ -112,7 +81,7 @@ export const UserProvider = (props) => {
     refetch: refetchProfile,
     networkStatus
   } = useQuery(
-    mode === APP_MODES.SINGLE ? SINGLE_VENDOR_PROFILE : PROFILE,
+    PROFILE,
     {
       fetchPolicy: 'cache-and-network',
       nextFetchPolicy: 'cache-first',
@@ -126,7 +95,7 @@ export const UserProvider = (props) => {
   useEffect(() => {
     let isSubscribed = true
     ;(async () => {
-      if (mode === APP_MODES.MULTI) await migrateMultivendorStorage()
+      await migrateMultivendorStorage()
 
       const restaurant = await getModeItem('restaurant', mode)
       const cart = await getModeItem('cartItems', mode)
@@ -140,35 +109,6 @@ export const UserProvider = (props) => {
     }
   }, [mode])
 
-  useEffect(() => {
-    if (
-      mode !== APP_MODES.SINGLE ||
-      !isLocationLoaded ||
-      location ||
-      !dataProfile?.profile
-    ) return
-
-    const selectedAddress = dataProfile.profile.addresses?.find(
-      address => address?.selected
-    )
-    const coordinates = selectedAddress?.location?.coordinates
-    if (!selectedAddress || !Array.isArray(coordinates)) return
-
-    setLocation({
-      _id: selectedAddress._id,
-      label: selectedAddress.label,
-      latitude: Number(coordinates[1]),
-      longitude: Number(coordinates[0]),
-      deliveryAddress: selectedAddress.deliveryAddress,
-      details: selectedAddress.details
-    })
-  }, [
-    dataProfile?.profile,
-    isLocationLoaded,
-    location,
-    mode,
-    setLocation
-  ])
 
   const saveCoupon = useCallback(async (couponData) => {
     setCoupon(couponData)
@@ -282,7 +222,7 @@ export const UserProvider = (props) => {
         await deleteToken(mode)
       }
       await clearCart()
-      if (mode === APP_MODES.MULTI) await clearPublicToken()
+      await clearPublicToken()
       setToken(null)
       setCoupon(null)
       setCart([])
@@ -301,14 +241,7 @@ export const UserProvider = (props) => {
           id: `${dataProfile.profile.__typename}:${dataProfile.profile._id}`
         })
       }
-      // resetStore refetches every active query. On the single-vendor guest
-      // flow that can turn one unavailable/401 response into an endless loop.
-      // Its cache is mode-isolated, so clearing it is the correct logout action.
-      if (mode === APP_MODES.SINGLE) {
-        await client.clearStore()
-      } else {
-        await client.resetStore()
-      }
+      await client.resetStore()
       await dismissSessionExpiredModal()
 
       // Do NOT navigate here. The root navigator is auth-gated with

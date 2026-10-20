@@ -35,7 +35,7 @@ const ContinueWithPhoneButton = ({
         ? (
           <Spinner
             backColor='transparent'
-            spinnerColor={currentTheme.singleVendorOnBrand}
+            spinnerColor={currentTheme.onPrimary}
           />
           )
         : (

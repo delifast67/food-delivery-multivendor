@@ -3,7 +3,7 @@ import { METRICS_GENERAL } from '../apollo/publicAccess'
 import { savePublicToken, getOrCreateNonce, isTokenExpired, getPublicToken, getTokenExpiry } from '../utils/publicAccessToken'
 import { Platform } from 'react-native'
 
-// Multi-vendor and single-vendor are different backends with different public
+// Multi-vendor and multivendor are different backends with different public
 // tokens, so in-flight refreshes and refresh timers are tracked per GraphQL URL.
 // A shared slot let one backend's request await (and use) the other's token.
 const tokenRefreshPromises = new Map()

@@ -885,32 +885,32 @@ Discovery Caurousal
 
 /* Product rows share the discovery carousel controls, but product cards need
    their natural content height instead of the compact cuisine-card height. */
-.single-vendor-product-carousel .p-carousel-items .p-carousel-item {
+.multi-vendor-product-carousel .p-carousel-items .p-carousel-item {
   display: flex;
   height: auto !important;
 }
 
-.single-vendor-product-carousel .p-carousel-items .p-carousel-item > div {
+.multi-vendor-product-carousel .p-carousel-items .p-carousel-item > div {
   width: 100%;
 }
 
-.single-vendor-product-carousel.low-count-carousel .p-carousel-items-container {
+.multi-vendor-product-carousel.low-count-carousel .p-carousel-items-container {
   justify-content: flex-start !important;
 }
 
-.single-vendor-product-carousel.low-count-carousel .p-carousel-item {
+.multi-vendor-product-carousel.low-count-carousel .p-carousel-item {
   flex: 0 0 var(--single-product-column-width) !important;
   max-width: var(--single-product-column-width) !important;
 }
 
 @media (max-width: 768px) {
-  .single-vendor-product-carousel .p-carousel-items .p-carousel-item {
+  .multi-vendor-product-carousel .p-carousel-items .p-carousel-item {
     height: auto !important;
   }
 }
 
 @media (max-width: 480px) {
-  .single-vendor-product-carousel .p-carousel-items .p-carousel-item {
+  .multi-vendor-product-carousel .p-carousel-items .p-carousel-item {
     height: auto !important;
   }
 }

@@ -19,8 +19,6 @@ import AuthContext from '../../context/Auth'
 import { useTranslation } from 'react-i18next'
 import { useAppMode } from '../../mode/AppModeContext'
 import { getModeHomeRoute } from '../../mode/navigation'
-import { APP_MODES } from '../../mode/constants'
-import { LOGIN_SINGLE_VENDOR } from '../../singlevendor/apollo/mutations'
 import * as WebBrowser from 'expo-web-browser'
 import * as Google from 'expo-auth-session/providers/google'
 import {
@@ -40,7 +38,6 @@ export const useCreateAccount = () => {
   const navigation = useNavigation()
   const { mode } = useAppMode()
   const loginDocument =
-    mode === APP_MODES.SINGLE ? LOGIN_SINGLE_VENDOR : LOGIN
   const { t, i18n } = useTranslation()
   const [mutate] = useMutation(loginDocument, { onCompleted, onError })
   const [enableApple, setEnableApple] = useState(false)
@@ -310,7 +307,7 @@ export const useCreateAccount = () => {
 
       if (needsName) {
         logStep('onCompleted: Apple account has no persisted name → request name')
-        navigation.navigate(mode === APP_MODES.SINGLE ? 'EditNameSingleVendor' : 'EditName', {
+        navigation.navigate('EditName', {
           name: '',
           onboarding: true,
           needsPhone

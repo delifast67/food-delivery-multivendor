@@ -1,8 +1,8 @@
 import { StyleSheet } from 'react-native'
 import { scale } from '../../../utils/scaling'
-import { DISCOVERY_GUTTER } from '../../../singlevendor/components/Home/discoveryLayout'
+const DISCOVERY_GUTTER = scale(16)
 
-// Same anatomy as the single-vendor HomeCart card, with tighter padding and
+// Same anatomy as the multivendor HomeCart card, with tighter padding and
 // smaller fixed-width elements so it reads as a compact live activity.
 const styles = (tokens) => {
   const { colors } = tokens

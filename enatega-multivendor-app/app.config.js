@@ -11,7 +11,11 @@ module.exports = () => ({
   ios: {
     bundleIdentifier: 'com.enatega.multivendor',
     supportsTablet: true,
-    infoPlist: { ITSAppUsesNonExemptEncryption: false }
+    infoPlist: { ITSAppUsesNonExemptEncryption: false },
+    privacyManifests: {
+      NSPrivacyTracking: false,
+      NSPrivacyTrackingDomains: []
+    }
   },
   android: {
     package: 'com.enatega.multivendor',

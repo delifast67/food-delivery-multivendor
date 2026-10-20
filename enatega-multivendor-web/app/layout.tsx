@@ -18,13 +18,6 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  if (process.env.DELIFAST_LOCAL_MODE === "true") {
-    return (
-      <html lang="fr" dir="ltr">
-        <body>{children}</body>
-      </html>
-    );
-  }
   const locale = await getLocale();
   const rtlLocales = ["ar", "hr", "fa", "ur"];
   const baseLocale = locale.split("-")[0];

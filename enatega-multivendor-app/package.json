@@ -9,8 +9,6 @@
     "eject": "expo eject",
     "format": "prettier --write '**/*.js'",
     "lint:fix": "eslint . --ext .js --fix",
-    "check:single-vendor-imports": "node scripts/check-single-vendor-imports.js",
-    "check:single-vendor-schema": "node scripts/check-single-vendor-schema.js",
     "check:order-pricing": "node scripts/check-order-pricing.js",
     "check:ios-privacy": "node scripts/check-ios-privacy.js",
     "check:multivendor-design": "node scripts/check-multivendor-design.js",

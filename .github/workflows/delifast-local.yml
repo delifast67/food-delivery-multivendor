@@ -42,7 +42,6 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       MONGODB_URI: mongodb://127.0.0.1:27017/delifast_ci
-      DELIFAST_LOCAL_MODE: 'true'
       DELIFAST_API_URL: http://127.0.0.1:4000/graphql
       # Simulation réservée à cette base de test, jamais un paiement réel.
       DELIFAST_DEMO_PAYMENTS: 'true'
@@ -71,6 +70,7 @@ jobs:
         run: npm ci --prefix enatega-multivendor-web --ignore-scripts --no-audit --no-fund
       - name: Tester le contrat et compiler le web local
         run: |
+          node --test scripts/delifast-client-multivendor.test.mjs
           node scripts/delifast-contract.mjs
           npm test --prefix enatega-multivendor-web
           npm run build --prefix enatega-multivendor-web
@@ -125,6 +125,7 @@ jobs:
           npm ci --prefix enatega-multivendor-app --ignore-scripts --no-audit --no-fund
       - name: Tester le parcours mobile et son isolation
         run: |
+          node --test scripts/delifast-client-multivendor.test.mjs
           node --test scripts/delifast-mobile-entry.test.mjs
           npm run test:delifast --prefix enatega-multivendor-app
           node scripts/delifast-mobile-contract.mjs

@@ -13,8 +13,6 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { useAppMode } from "@/lib/mode";
-import { SINGLE_VENDOR_ACTIVE_ORDERS } from "@/lib/api/graphql/single-vendor";
 
 const COUPON_STORAGE_KEY = "applied_coupon";
 const COUPON_TEXT_STORAGE_KEY = "coupon_text";
@@ -30,7 +28,6 @@ export default function StripeSuccessScreen() {
   const searchParams = useSearchParams();
   const client = useApolloClient();
   const { clearCart } = useUser();
-  const { isSingleVendor } = useAppMode();
   const [isTimedOut, setIsTimedOut] = useState(false);
   const finalizingRef = useRef(false);
 
@@ -80,10 +77,10 @@ export default function StripeSuccessScreen() {
       finalizingRef.current = true;
       await cleanupConfirmedOrder();
       router.replace(
-        `/order/${isSingleVendor ? order.orderId : order._id}/tracking`,
+        `/order/${order._id}/tracking`,
       );
     },
-    [cleanupConfirmedOrder, isSingleVendor, router],
+    [cleanupConfirmedOrder, router],
   );
 
   const findConfirmedOrder = useCallback(async () => {
@@ -91,15 +88,12 @@ export default function StripeSuccessScreen() {
 
     try {
       const result = await client.query<IOrdersResponse>({
-        query: isSingleVendor ? SINGLE_VENDOR_ACTIVE_ORDERS : ORDERS,
+        query: ORDERS,
         variables: { page: 1, limit: 300 },
         fetchPolicy: "network-only",
       });
 
-      const orders = isSingleVendor
-        ? ((result.data as unknown as { getUsersActiveOrders?: IOrder[] })
-            .getUsersActiveOrders ?? [])
-        : (result.data?.orders ?? []);
+      const orders = result.data?.orders ?? [];
 
       return (
         orders.find(
@@ -110,7 +104,7 @@ export default function StripeSuccessScreen() {
     } catch {
       return null;
     }
-  }, [client, isSingleVendor, pendingOrderId]);
+  }, [client, pendingOrderId]);
 
   useEffect(() => {
     if (!pendingOrderId) {

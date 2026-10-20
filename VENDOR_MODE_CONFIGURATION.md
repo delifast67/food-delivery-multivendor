@@ -1,19 +1,41 @@
-# Retrait de l’administration mono-restaurant
+# Delifast : démarrage multivendeur des clients
 
-Le répertoire `enatega-singlevendor-admin` a été retiré conformément au cahier des charges. Son code reste récupérable dans l’historique Git. Les liens et la variable `NEXT_PUBLIC_SINGLE_VENDOR_ADMIN_URL` ont été supprimés de l’ancien back-office multivendeur. La notice de licence tierce est conservée dans `docs/historique/LICENSE_CREATIVE_TIM.txt`.
+Les clients web (`enatega-multivendor-web`) et Expo (`enatega-multivendor-app`) démarrent directement sur le parcours multirestaurant Delifast. Ils ne proposent plus de bascule vers un catalogue mono-vendeur. Un panier reste limité à un restaurant : cette contrainte de commande ne constitue pas un mode single-vendor de la plateforme.
 
-## Ce qui est utilisable maintenant
+Le parcours autonome conserve les restaurants fictifs, menus et options, le calcul serveur en XOF, la commande persistée, la reprise idempotente et le suivi. L’espace personnel web reste distinct à `/delifast/operations`. Aucun paiement réel, merge, push ou déploiement n’est effectué par ce retrait.
 
-L’espace autonome de recette est `/delifast/operations` dans le site web. Il propose les connexions admin, restaurant et livreur sur l’API locale Delifast. Les permissions sont appliquées côté serveur. Le [guide local](README_DELIFAST_LOCAL.md) décrit les comptes fictifs et le démarrage.
+## Ce qui est retiré des clients
 
-`enatega-multivendor-admin` reste un client historique : il n’est pas intégralement raccordé à la nouvelle API. Il ne faut pas le déployer comme un back-office Delifast terminé. Aucun environnement existant, domaine ou compte de production n’a été modifié par ce lot.
+Les modules, routes spécifiques, appels GraphQL, bascules d’interface, variables d’environnement et scripts de validation mono-vendeur propres aux deux clients sont retirés. Les anciennes URL spécifiques ne redonnent pas accès au mode supprimé. Les tests de ce mode sont remplacés par des garde-fous multivendeurs et les tests Delifast existants sont conservés.
 
-## Migration restant à terminer
+```bash
+node --test scripts/delifast-client-multivendor.test.mjs
+npm test --prefix enatega-multivendor-web
+npm run test:delifast --prefix enatega-multivendor-app
+```
 
-Les écrans, routes, appels GraphQL, tests, bascules et configurations mono-restaurant présents dans les clients web/mobile historiques ne sont pas encore tous supprimés. Leur suppression exige de terminer et de tester leurs remplacements multivendeurs. Les routes historiques du site sont bloquées dans le mode local ; ce blocage n’est pas présenté comme une suppression globale.
+Le [guide local](README_DELIFAST_LOCAL.md) décrit le démarrage, les contrôles exécutés et les limites. Les exports JS Android/iOS ne sont pas des APK/IPA signés ni une validation sur téléphone.
 
-Avant une bascule réelle, il faudra raccorder l’admin définitif, migrer les autres clients, régénérer les lockfiles concernés, compiler chaque surface, retirer les anciens endpoints et paiements, et vérifier les bundles. Il faudra également confirmer les identifiants mobiles existants avant toute modification des bundle IDs.
+## Ce qui reste volontairement hors de ce lot
 
-## Vérifications de ce lot
+- Le client restaurant conserve sa couche historique de modes, ses appels GraphQL et ses scripts mono-vendeur.
+- Le client livreur conserve sa couche historique de modes, ses appels GraphQL, ses variables et ses scripts mono-vendeur.
+- Dans l’admin, `ISingleVendorResponseGraphQL` désigne la réponse de profil d’un vendeur individuel. Ce nom ne prouve pas à lui seul l’existence d’un mode mono-vendeur à supprimer.
+- L’archive documentaire, les médias historiques et les notices de licence restent conservés. Ils ne sont pas des parcours client exécutables.
 
-Le module mono-restaurant est absent et les deux anciens écrans admin modifiés ne contiennent plus de lien vers lui. Leur syntaxe TSX a été contrôlée, mais le build complet de l’ancien back-office n’a pas été exécuté. La compilation et les tests complets portent sur l’API autonome et le site local, pas sur les trois applications mobiles ni l’ancien admin.
+Ces éléments ne sont pas présentés comme nettoyés. Les parcours locaux restaurant, livreur et admin déjà développés restent utilisables, sans migration intégrale de toutes leurs fonctions historiques.
+
+## Licences et historique
+
+Le répertoire `enatega-singlevendor-admin` avait déjà été retiré ; son code reste dans l’historique Git. La notice tierce est conservée dans `docs/historique/LICENSE_CREATIVE_TIM.txt`. La licence MIT du dépôt et les licences des dépendances ne sont pas modifiées. Les données de migration et les contrats de l’API ne sont pas changés par ce lot.
+
+## Recherche reproductible des références restantes
+
+```bash
+# Aucun résultat exécutable attendu dans les deux clients :
+node --test scripts/delifast-client-multivendor.test.mjs
+# Inventaire volontairement conservé dans les autres surfaces :
+git grep -n -i -E 'single[-_]?vendor' -- enatega-multivendor-store enatega-multivendor-rider enatega-multivendor-admin ':!*lock*'
+```
+
+L’inventaire hors clients contient 46 lignes dans 14 fichiers restaurant, 67 lignes dans 15 fichiers livreur, et 9 lignes dans 5 fichiers admin. Le restaurant et le livreur conservent notamment `environment.ts`, `eas.json`, les contextes de mode, les documents Apollo et les scripts de contrôle historiques. L’API Delifast ne contient aucune référence correspondante. Ces nombres comptent les lignes correspondantes, pas les occurrences individuelles ni les capacités métier.

@@ -8,7 +8,7 @@ Le site local et le nouveau parcours mobile client permettent de consulter deux 
 
 L’application Expo `enatega-multivendor-app` démarre maintenant directement sur le parcours Delifast : restaurants, catégories, plats/options, panier mono-restaurant, total serveur, adresse fictive, création en attente de paiement et suivi. La reprise d’une tentative réseau incertaine utilise une clé d’idempotence et son payload exact conservés dans SecureStore. Le suivi est accessible après redémarrage avec la référence de la dernière commande ; il n’y a pas de compte client synchronisé entre appareils.
 
-Le [guide mobile](enatega-multivendor-app/src/delifast/README.md) détaille les commandes Expo, les URL émulateur/téléphone, les tests et les limites. Le point d’entrée local ne charge plus les prestataires ou les bascules historiques ; les sources historiques restent présentes mais ne sont pas une application migrée intégralement. Les identifiants natifs ne sont pas modifiés sans décision du propriétaire. Les exports JS Android/iOS ne constituent ni un APK/IPA signé, ni une recette sur téléphone, ni une publication.
+Le [guide mobile](enatega-multivendor-app/src/delifast/README.md) détaille les commandes Expo, les URL émulateur/téléphone, les tests et les limites. Le point d’entrée ne charge plus les prestataires ou les bascules historiques ; le mode mono-vendeur est retiré des clients web et mobile. Le code multivendeur historique conservé n’est pas présenté comme intégralement raccordé à l’API Delifast. Les identifiants natifs ne sont pas modifiés sans décision du propriétaire. Les exports JS Android/iOS ne constituent ni un APK/IPA signé, ni une recette sur téléphone, ni une publication.
 
 ```bash
 npm run test:delifast --prefix enatega-multivendor-app
@@ -117,10 +117,10 @@ DELIFAST_DEMO_PAYMENTS=true npm start --prefix delifast-api
 Dans un troisième terminal :
 
 ```bash
-DELIFAST_LOCAL_MODE=true DELIFAST_API_URL=http://127.0.0.1:4000/graphql npm run dev --prefix enatega-multivendor-web -- --port 3000
+DELIFAST_API_URL=http://127.0.0.1:4000/graphql npm run dev --prefix enatega-multivendor-web -- --port 3000
 ```
 
-`DELIFAST_API_URL` est une variable serveur. Le navigateur utilise le proxy same-origin `/api/delifast/graphql`, qui transmet l’authentification du personnel sans appeler un serveur métier historique. Le mode local isole `/delifast` des routes historiques.
+`DELIFAST_API_URL` est une variable serveur. Le navigateur utilise le proxy same-origin `/api/delifast/graphql`, qui transmet l’authentification du personnel sans appeler un serveur métier historique. La racine redirige toujours vers `/delifast`, sans drapeau de mode ; les routes et API historiques ne sont pas réactivées en son absence. Le drapeau `DELIFAST_LOCAL_MODE` reste propre à l’admin historique, hors de ce nettoyage client.
 
 ## Vérifications reproductibles
 
@@ -129,9 +129,10 @@ npm run build --prefix delifast-api
 npm test --prefix delifast-api
 node scripts/delifast-persistence.mjs
 node scripts/delifast-backup-test.mjs
+node --test scripts/delifast-client-multivendor.test.mjs
 npm test --prefix enatega-multivendor-web
 node scripts/delifast-contract.mjs
-DELIFAST_LOCAL_MODE=true npm run build --prefix enatega-multivendor-web
+npm run build --prefix enatega-multivendor-web
 # Avec MongoDB, API (simulateur activé) et web déjà démarrés :
 node scripts/delifast-smoke.mjs
 node scripts/delifast-operations-smoke.mjs
@@ -171,9 +172,9 @@ Les montants sont relus dans le catalogue serveur puis figés dans la commande. 
 
 Les prix, taxes, zones et frais du seed ne sont **pas des décisions commerciales validées**. La ville de démonstration est Ouagadougou ; aucune livrabilité GPS, plage horaire réelle ou réserve de stock concurrentielle n’est revendiquée.
 
-Pour un pilote réel, Hilton doit valider le prestataire et ses accès marchands, les restaurants/menus, zones/frais/commissions et règles d’annulation. Il reste du développement indépendant de ces validations : migration complète des trois applications mobiles et de l’ancien admin, retrait des anciens paiements et chemins mono-restaurant restants, rebranding global, photos et gestion des horaires/zones, comptes clients, suivi GPS, notifications, support, finances/rapprochement, jobs et stockage objet. Ces décisions ne sont pas nécessaires pour continuer le développement local ; aucun accès marchand n’est demandé par le lot catalogue.
+Pour un pilote réel, Hilton doit valider le prestataire et ses accès marchands, les restaurants/menus, zones/frais/commissions et règles d’annulation. Il reste du développement indépendant de ces validations : migration complète des fonctions historiques des applications mobiles et de l’admin, retrait des anciens paiements et des modes mono-vendeur des autres surfaces, rebranding global, photos et gestion des horaires/zones, comptes clients, suivi GPS, notifications, support, finances/rapprochement, jobs et stockage objet. Ces décisions ne sont pas nécessaires pour continuer le développement local ; aucun accès marchand n’est demandé par le nettoyage client.
 
-Le module `enatega-singlevendor-admin` a été supprimé et les liens qui y menaient retirés. Cela ne signifie pas que tout le code mono-restaurant historique a disparu. Le back-office local des opérations ne remplace pas encore toutes les fonctionnalités administratives demandées. Les builds mobiles, la publication stores et le déploiement de préproduction ne sont pas exécutés dans ce lot. La PR n’est ni fusionnée ni déployée en production.
+Le module `enatega-singlevendor-admin` avait déjà été supprimé et les liens qui y menaient retirés. Le nettoyage client est détaillé dans [la note de configuration](VENDOR_MODE_CONFIGURATION.md) ; le restaurant et le livreur conservent leur support historique mono-vendeur. Le back-office local des opérations ne remplace pas encore toutes les fonctionnalités administratives demandées. Des exports JS mobiles sont vérifiés, pas des builds natifs signés. La publication stores et le déploiement de préproduction ne sont pas exécutés. La PR n’est ni fusionnée ni déployée en production.
 
 Les dépendances historiques web conservent notamment des alertes Firebase/Firestore/gRPC. Un correctif automatique impliquant un changement majeur n’a pas été appliqué aveuglément. Le blocage explicite `NODE_ENV=production` côté API reste en place.
 
@@ -266,3 +267,46 @@ Cette gestion minimale ne constitue pas une inscription marchande complète : va
 Vérifications réellement exécutées : **182 tests API** (14 fichiers), **15 tests admin** (transport, parseurs et inspection ciblée du modèle UI), **5 tests d’entrée admin**, **128 tests web**, **46 tests client mobile**, **43 tests restaurant** et **55 tests livreur**. Les **21 documents GraphQL web/opérations** et les **5 documents de chacun des clients mobiles** restent valides. Typecheck/build API, TypeScript admin local et build Next.js admin local passent. La recette à travers le vrai proxy admin réussit ses **9 contrôles HTTP** avec API/MongoDB jetables, dont création/modification de profil, droits, validation, zone inconnue, rattachement, détachement et conflits. La persistance des profils après reconnexion MongoDB est testée ; la recette indépendante de redémarrage complet MongoDB/API et la sauvegarde/restauration passent aussi.
 
 Aucun scénario Cypress en navigateur réel, build natif signé, essai sur téléphone ou nouveau build web client n’a été exécuté pour ce lot. L’inspection du modèle UI n’est pas un test d’interaction navigateur. Aucun paiement, même marchand sandbox, n’a été déclenché ; les commandes marquées payées dans la recette sont exclusivement des fixtures de base jetable. L’ajout d’une zone et son rattachement utilisent un CAS et une compensation, pas une transaction multi-document : les limites face à une panne brutale sont détaillées dans le guide API. Le code est préparé uniquement en commit local ; aucune exécution CI distante, publication, fusion ou mise en ligne n’est revendiquée.
+
+## Retrait du mode mono-vendeur dans les clients web et mobile
+
+Le site démarre directement sur `/delifast`, sans `DELIFAST_LOCAL_MODE`. L’application Expo continue de démarrer sur `src/delifast/App`. Les modules, requêtes GraphQL, routes spécifiques, variables, traductions et bascules du mode mono-vendeur sont retirés des deux clients. Les branches multivendeurs partagées sont conservées, notamment l’authentification, les commandes, les catégories et le panier local historiques. Un panier limité à un restaurant reste compatible avec une plateforme multivendeur.
+
+Les anciens espaces de stockage ne sont pas effacés. Le web ignore un mode persistant devenu obsolète, garde le namespace `@enatega/multi/` et copie les données non scopées sans écraser un panier déjà migré. Les valeurs historiques `SINGLE` et `@enatega/single/cartItems` ne subsistent que comme fixtures de test de non-destruction, pas comme capacité de navigation. Les helpers mobiles gardent leurs objets `{ name, params }` et les paramètres de profil attendus par les parcours multivendeurs conservés.
+
+### Résultats exécutés pour ce lot
+
+| Vérification | Résultat |
+| --- | --- |
+| Compilation et typecheck API | Réussis |
+| Tests API | 182/182 |
+| Tests web, dont stockage et démarrage sans drapeau | 96/96 |
+| Typecheck et build web | Réussis |
+| Tests client mobile, dont compatibilité navigation/configuration | 50/50 |
+| Garde-fou client et tests entrée/configuration mobile | 6/6 et 3/3 |
+| Tests restaurant / livreur / admin | 43/43, 55/55, 15/15 |
+| Tests d’entrée restaurant / livreur / admin | 3/3, 3/3, 5/5 |
+| Documents GraphQL web / client / restaurant / livreur | 21, 5, 5, 5 conformes |
+| HTTP client / opérations / catalogue / options / client mobile | 14, 9, 5, 6, 7 contrôles réussis |
+| HTTP autonomes restaurant / livreur / admin | 9, 13, 9 contrôles réussis |
+| Persistance et sauvegarde/restauration MongoDB | Réussies sur bases jetables |
+| Contrôles mobiles prix / design / confidentialité iOS | Réussis ; 58 constats design historiques, aucun nouveau |
+| Export client mobile Android et iOS | JS/Hermes générés, aucune publication |
+
+Les tests propres aux fonctionnalités supprimées sont retirés : la baisse du nombre total web par rapport aux 128 tests précédents n’est pas une désactivation des tests Delifast. Les garde-fous de migration, la compatibilité mobile conservée et le démarrage sans drapeau sont testés explicitement.
+
+```bash
+node --test scripts/delifast-client-multivendor.test.mjs scripts/delifast-mobile-entry.test.mjs
+npm test --prefix enatega-multivendor-web
+(cd enatega-multivendor-web && npx tsc --noEmit)
+npm run build --prefix enatega-multivendor-web
+npm run test:delifast --prefix enatega-multivendor-app
+npm run check:order-pricing --prefix enatega-multivendor-app
+npm run check:multivendor-design --prefix enatega-multivendor-app
+npm run check:ios-privacy --prefix enatega-multivendor-app
+CI=1 EXPO_NO_TELEMETRY=1 npm run export:delifast --prefix enatega-multivendor-app
+```
+
+Le [relevé des références conservées ailleurs](VENDOR_MODE_CONFIGURATION.md) distingue le restaurant, le livreur et les types de profil admin. Leurs sources et celles de l’API ne sont pas modifiées par ce lot ; aucune migration métier, dépendance ou notice de licence n’est retirée.
+
+Limites : le graphe mobile historique présente cinq imports relatifs non résolus déjà identiques avant ce lot, dans `Account/EditName/screenOptions.js` (trois chemins), `CartItem/suggestedItems/index.js` et `MyOrders/screenOptions.js`. Ils n’appartiennent pas au point d’entrée Delifast exporté ; aucun nouvel import relatif cassé n’a été introduit par le retrait. Leur présence ne permet pas de présenter toute l’application historique comme recettée. Aucun essai physique, APK/IPA signé, encaissement, fusion, push ou déploiement n’est inclus. Les workflows CI sont mis à jour localement, sans exécution GitHub revendiquée.

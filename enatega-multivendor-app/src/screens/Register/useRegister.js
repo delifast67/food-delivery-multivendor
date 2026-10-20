@@ -12,8 +12,6 @@ import { FlashMessage } from '../../ui/FlashMessage/FlashMessage'
 import { Alert } from 'react-native'
 import { useCountryFromIP } from '../../utils/useCountryFromIP'
 import { useAppMode } from '../../mode/AppModeContext'
-import { APP_MODES } from '../../mode/constants'
-import { PHONE_EXIST_SINGLE_VENDOR } from '../../singlevendor/apollo/mutations'
 
 const PHONE = gql`
   ${phoneExist}
@@ -48,7 +46,6 @@ const useRegister = () => {
   } = useCountryFromIP()
 
   const phoneExistDocument =
-    mode === APP_MODES.SINGLE ? PHONE_EXIST_SINGLE_VENDOR : PHONE
 
   const [phoneExist, { loading }] = useMutation(phoneExistDocument, {
     onCompleted,

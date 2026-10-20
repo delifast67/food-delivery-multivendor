@@ -1,12 +1,13 @@
 import React, { useCallback } from 'react'
 import { useNavigation } from '@react-navigation/native'
-import HomeBanner from '../../../singlevendor/components/Home/HomeBanner'
+import { Image, View } from 'react-native'
+const HomeBanner = ({ image, style }) => <Image source={{ uri: image }} style={style} resizeMode='cover' />
 import { BANNER_PARAMETERS } from '../../../utils/banner-routes'
 import { normalizeMediaUrl } from '../../../utils/mediaUrl'
 
 const resolveMultivendorMedia = (url) => normalizeMediaUrl(url)
 
-// Multivendor Discovery uses the single-vendor carousel (gutter, peeking next
+// Multivendor Discovery uses the multivendor carousel (gutter, peeking next
 // slide, pagination) and only supplies its own banner routing.
 const Banner = ({ banners }) => {
   const navigation = useNavigation()
