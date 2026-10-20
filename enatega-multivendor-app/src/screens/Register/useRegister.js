@@ -45,7 +45,7 @@ const useRegister = () => {
     refetch
   } = useCountryFromIP()
 
-  const phoneExistDocument =
+  const phoneExistDocument = PHONE
 
   const [phoneExist, { loading }] = useMutation(phoneExistDocument, {
     onCompleted,

@@ -35,7 +35,7 @@ const LOGIN = gql`
 export const useCreateAccount = () => {
   const navigation = useNavigation()
   const { mode } = useAppMode()
-  const loginDocument =
+  const loginDocument = LOGIN
   const { t, i18n } = useTranslation()
   const [mutate] = useMutation(loginDocument, { onCompleted, onError })
   const [enableApple, setEnableApple] = useState(false)
