@@ -61,6 +61,45 @@
 .df-header-note strong {
   color: var(--df-green);
 }
+.df-account {
+  display: inline-block;
+  position: relative;
+  margin-left: 12px;
+  vertical-align: middle;
+}
+.df-account-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--df-green);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+}
+.df-account-panel {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  top: calc(100% + 18px);
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(76vh, 720px);
+  overflow: auto;
+  padding: 20px;
+  background: var(--df-card);
+  border: 1px solid var(--df-line);
+  box-shadow: 0 14px 35px rgba(23, 34, 30, 0.15);
+  color: var(--df-ink);
+  text-align: left;
+}
+.df-account-panel .df-section-head { align-items: center; }
+.df-account-panel h2 { margin: 5px 0 0; font-size: 21px; }
+.df-account-panel .df-form { margin-top: 14px; }
+.df-account-panel label { display: block; color: var(--df-muted); font-size: 11px; }
+.df-account-panel .df-card { margin: 10px 0; padding: 14px; }
+.df-account-panel .df-card p { margin: 5px 0; font-size: 12px; }
+.df-account-panel .df-card small { color: var(--df-muted); font-size: 11px; }
+.df-account-panel .df-card button { margin: 10px 8px 0 0; }
+.df-address-list { max-height: 260px; overflow: auto; }
 .df-nav {
   display: flex;
   align-items: center;

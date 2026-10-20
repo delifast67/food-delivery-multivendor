@@ -8,6 +8,7 @@ import {
   formatXof,
   makeIdempotencyKey,
   canonicalCartLineKey,
+  deliveryAddressInput,
   type CartLine,
   type MenuItem,
   type MenuOptionGroup,
@@ -20,6 +21,7 @@ import {
   type DeliveryPoint,
 } from "@/lib/delifast/api";
 import "./delifast.css";
+import CustomerAccount from "./CustomerAccount";
 
 const emptyAddress: DeliveryAddress = {
   recipientName: "",
@@ -344,6 +346,15 @@ export default function DelifastPage() {
     setAddress((current) => ({ ...current, point: nextPoint }));
     setCheckout(null);
   };
+  const chooseSavedAddress = (saved: DeliveryAddress) => {
+    if (locked) return;
+    setAddress(deliveryAddressInput(saved));
+    if (saved.point) {
+      setPoint(saved.point);
+      setCheckout(null);
+    }
+    setNotice("Adresse sélectionnée. Restaurants et tarifs recalculés par le serveur.");
+  };
   const saveAttempt = (value: OrderAttempt) => {
     localStorage.setItem(attemptStorageKey, JSON.stringify(value));
     setAttempt(value);
@@ -441,7 +452,7 @@ export default function DelifastPage() {
   if (order)
     return (
       <main className="df-shell">
-        <Header cartCount={cartCount} />
+        <Header cartCount={cartCount} onChooseAddress={chooseSavedAddress} />
         <section className="df-success">
           <span className="df-kicker">COMMANDE ENREGISTRÉE</span>
           <h1>{statusTitle[order.status] || "Suivi de votre commande"}</h1>
@@ -515,7 +526,7 @@ export default function DelifastPage() {
     );
   return (
     <main className="df-shell">
-      <Header cartCount={cartCount} />
+      <Header cartCount={cartCount} onChooseAddress={chooseSavedAddress} />
       <div className="df-banner">
         DÉMO LOCALE · Ouagadougou · XOF · aucun paiement ou service de livraison
         réel
@@ -988,7 +999,7 @@ export default function DelifastPage() {
     </main>
   );
 }
-function Header({ cartCount }: { cartCount: number }) {
+function Header({ cartCount, onChooseAddress }: { cartCount: number; onChooseAddress: (address: DeliveryAddress) => void }) {
   return (
     <header className="df-header">
       <a className="df-brand" href="/delifast">
@@ -997,6 +1008,7 @@ function Header({ cartCount }: { cartCount: number }) {
       <div className="df-header-note">
         OUAGADOUGOU / <strong>XOF</strong>{" "}
         <span className="df-cart-pill">{cartCount}</span>
+        <CustomerAccount onChooseAddress={onChooseAddress} />
         <a className="df-ops-link" href="/delifast/operations">
           Opérations
         </a>

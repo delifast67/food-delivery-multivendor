@@ -2,6 +2,7 @@
 const { addToCart, changeQuantity, validateSelections, validatePoint, validateAddress, makeIdempotencyKey } = require('./model')
 const ATTEMPT_KEY = 'delifast-order-attempt'
 const LAST_ORDER_KEY = 'delifast-last-order'
+const CUSTOMER_TOKEN_KEY = 'delifast-customer-token'
 const clone = (value) => (value == null ? value : JSON.parse(JSON.stringify(value)))
 const errorView = (error) => ({ message: error?.message || String(error), kind: error?.kind || 'unknown', code: error?.code })
 const validQuote = (quote) => quote && quote.currency === 'XOF' && Number.isSafeInteger(quote.total) && quote.total >= 0 && Array.isArray(quote.items)
@@ -21,13 +22,29 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
     pending: null,
     restored: false,
     order: null,
-    lastOrder: null
+    lastOrder: null,
+    customer: null,
+    addresses: [],
+    authBusy: false
   }
   let inFlight = null
   let restorePromise = null
   let pollTimer = null
   let restaurantRequest = 0
   let discoveryRequest = 0
+  let authEpoch = 0
+  let authInFlight = null
+  const ADDRESS_FIELDS = ['recipientName', 'phone', 'city', 'neighborhood', 'landmark', 'instructions', 'point']
+  const serializeAddress = (input) => {
+    const value = input && typeof input === 'object' ? input : {}
+    return Object.fromEntries(ADDRESS_FIELDS.filter(key => value[key] !== undefined).map(key => [key, key === 'point' && value[key] ? { latitude: value[key].latitude, longitude: value[key].longitude } : value[key]]))
+  }
+  const authExclusive = (work) => {
+    if (authInFlight) return Promise.reject(new Error('Une opération du compte est déjà en cours.'))
+    set({ authBusy: true, error: null })
+    authInFlight = Promise.resolve().then(work).finally(() => { authInFlight = null; set({ authBusy: false }) })
+    return authInFlight
+  }
   const set = (patch) => {
     state = { ...state, ...patch }
     onChange(clone(state))
@@ -261,6 +278,85 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
       pollTimer = setInterval(() => actions.track(id, accessToken).catch(() => {}), pollMs)
       return actions.stopPolling
     },
+    async restoreCustomer() {
+      if (!api.customerMe || !api.setCustomerToken) return null
+      const epoch = authEpoch
+      storageReady()
+      const token = await storage.getItem(CUSTOMER_TOKEN_KEY)
+      if (epoch !== authEpoch) return null
+      if (!token) return null
+      api.setCustomerToken(token)
+      try {
+        const customer = await api.customerMe()
+        if (epoch !== authEpoch) return null
+        if (!customer || typeof customer.id !== 'string' || typeof customer.phone !== 'string') throw new Error('Session client invalide')
+        const addresses = api.customerAddresses ? await api.customerAddresses() : []
+        if (epoch !== authEpoch) return null
+        set({ customer: clone(customer), addresses: clone(addresses) || [] })
+        return clone(customer)
+      } catch (error) {
+        if (epoch !== authEpoch) return null
+        api.setCustomerToken(null); await storage.removeItem(CUSTOMER_TOKEN_KEY); set({ customer: null, addresses: [] })
+        if (error.kind === 'unavailable') throw error
+        return null
+      }
+    },
+    async requestCustomerOtp(phone) {
+      if (!api.requestCustomerOtp) throw new Error('La connexion réelle est momentanément indisponible.')
+      const value = String(phone || '').trim()
+      if (!/^\+226\d{8}$/.test(value)) throw new Error('Téléphone BF invalide (+226, format E.164 requis)')
+      return authExclusive(() => api.requestCustomerOtp(value))
+    },
+    async resendCustomerOtp(challengeId) {
+      if (!api.resendCustomerOtp) throw new Error('La connexion réelle est momentanément indisponible.')
+      if (!challengeId) throw new Error('Challenge OTP invalide')
+      return authExclusive(() => api.resendCustomerOtp(challengeId))
+    },
+    async verifyCustomerOtp(challengeId, code) {
+      if (!api.verifyCustomerOtp) throw new Error('La connexion réelle est momentanément indisponible.')
+      if (!challengeId || !/^\d{6}$/.test(String(code || ''))) throw new Error('Code de vérification invalide')
+      if (authInFlight) throw new Error('Une opération du compte est déjà en cours.')
+      const epoch = ++authEpoch
+      return authExclusive(async() => {
+        const session = await api.verifyCustomerOtp(challengeId, String(code))
+        if (epoch !== authEpoch) throw new Error('Connexion annulée')
+        if (!session || typeof session.token !== 'string' || !session.customer) throw new Error('Session client incomplète')
+        storageReady(); await storage.setItem(CUSTOMER_TOKEN_KEY, session.token)
+        if (epoch !== authEpoch) { await storage.removeItem(CUSTOMER_TOKEN_KEY); throw new Error('Connexion annulée') }
+        api.setCustomerToken(session.token)
+        set({ customer: clone(session.customer), addresses: [] })
+        const addresses = api.customerAddresses ? await api.customerAddresses() : []
+        if (epoch !== authEpoch) { api.setCustomerToken(null); await storage.removeItem(CUSTOMER_TOKEN_KEY); throw new Error('Connexion annulée') }
+        set({ customer: clone(session.customer), addresses: clone(addresses) || [] })
+        return clone(session.customer)
+      })
+    },
+    async logoutCustomer() {
+      ++authEpoch
+      // Start revocation with the current token, then clear local access synchronously.
+      let failure
+      const revoked = (async() => { try { if (api.customerLogout) await api.customerLogout() } catch (error) { failure = error } })()
+      if (api.setCustomerToken) api.setCustomerToken(null)
+      set({ customer: null, addresses: [] })
+      try { if (storage.removeItem) await storage.removeItem(CUSTOMER_TOKEN_KEY) } finally { await revoked }
+      if (failure) throw failure
+      return true
+    },
+    async createCustomerAddress(input) {
+      if (!state.customer || !api.createCustomerAddress) throw new Error('Connexion client requise')
+      const epoch = authEpoch; const payload = serializeAddress(input)
+      return authExclusive(async() => { const value = await api.createCustomerAddress(payload); if (epoch !== authEpoch) throw new Error('Connexion annulée'); set({ addresses: [...state.addresses, clone(value)] }); return clone(value) })
+    },
+    async updateCustomerAddress(id, input) {
+      if (!state.customer || !api.updateCustomerAddress) throw new Error('Connexion client requise')
+      const epoch = authEpoch; const payload = serializeAddress(input)
+      return authExclusive(async() => { const value = await api.updateCustomerAddress(id, payload); if (epoch !== authEpoch) throw new Error('Connexion annulée'); set({ addresses: state.addresses.map(item => item.id === id ? clone(value) : item) }); return clone(value) })
+    },
+    async deleteCustomerAddress(id) {
+      if (!state.customer || !api.deleteCustomerAddress) throw new Error('Connexion client requise')
+      const epoch = authEpoch
+      return authExclusive(async() => { const value = await api.deleteCustomerAddress(id); if (epoch !== authEpoch) throw new Error('Connexion annulée'); if (value) set({ addresses: state.addresses.filter(item => item.id !== id) }); return value })
+    },
     stopPolling() {
       if (pollTimer) clearInterval(pollTimer)
       pollTimer = null
@@ -268,4 +364,4 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
   }
   return actions
 }
-module.exports = { createController, ATTEMPT_KEY, LAST_ORDER_KEY }
+module.exports = { createController, ATTEMPT_KEY, LAST_ORDER_KEY, CUSTOMER_TOKEN_KEY }

@@ -19,6 +19,8 @@ import {
   assign,
 } from "./orders.js";
 import { authenticate, login, logout, requireRole } from "./auth.js";
+import { authenticateCustomer } from "./customer-auth.js";
+import { createD7Provider, requestOtp, resendOtp, verifyOtp, customerLogout, listAddresses, createAddress, updateAddress, deleteAddress, requireCustomer, type OtpProvider } from "./customer-auth.js";
 import {
   publicRestaurants,
   publicRestaurant,
@@ -77,6 +79,14 @@ const knownCodes = new Set([
   "PAYMENT_NOT_ALLOWED",
   "PAYMENT_UNAVAILABLE",
   "ZONE_NOT_FOUND",
+  "AUTH_UNAVAILABLE",
+  "RATE_LIMITED",
+  "CHALLENGE_ACTIVE",
+  "INVALID_CHALLENGE",
+  "OTP_REJECTED",
+  "CONCURRENT_REQUEST",
+  "ADDRESS_NOT_FOUND",
+  "DELIVERY_POINT_REQUIRED",
 ]);
 function complexityRule(context: ValidationContext) {
   let depth = 0,
@@ -163,6 +173,8 @@ const resolvers: any = {
     availableRiders: (_: any, _a: any, ctx: any) =>
       availableRiders(getDb(), requireRole(ctx, ["ADMIN"])),
     me: (_: any, _a: any, ctx: any) => ctx.user || null,
+    customerMe: (_: any, _a: any, ctx: any) => ctx.customer || null,
+    customerAddresses: (_: any, _a: any, ctx: any) => listAddresses(getDb(), ctx),
   },
   Restaurant: {
     deliveryZoneIds: (r: any) => restaurantZoneIds(getDb(), r),
@@ -289,10 +301,18 @@ const resolvers: any = {
         expectedVersion,
         archived,
       ),
+    requestCustomerOtp: (_: any, { phone }: any, ctx: any) => requestOtp(getDb(), ctx.otpProvider, phone, ctx.peerIp),
+    resendCustomerOtp: (_: any, { challengeId }: any, ctx: any) => resendOtp(getDb(), ctx.otpProvider, challengeId, ctx.peerIp),
+    verifyCustomerOtp: (_: any, { challengeId, code }: any, ctx: any) => verifyOtp(getDb(), ctx.otpProvider, challengeId, code),
+    customerLogout: (_: any, _a: any, ctx: any) => customerLogout(getDb(), ctx),
+    createCustomerAddress: (_: any, { input }: any, ctx: any) => createAddress(getDb(), ctx, input),
+    updateCustomerAddress: (_: any, { id, input }: any, ctx: any) => updateAddress(getDb(), ctx, id, input),
+    deleteCustomerAddress: (_: any, { id }: any, ctx: any) => deleteAddress(getDb(), ctx, id),
   },
 };
 export async function createApp(
   gateway: CheckoutGateway | undefined = createPaymentGateway(),
+  otpProvider: OtpProvider = createD7Provider(),
 ) {
   await connect();
   const payments = new PaymentService(getDb(), gateway);
@@ -376,6 +396,9 @@ export async function createApp(
     expressMiddleware(apollo, {
       context: async ({ req }) => ({
         ...(await authenticate(getDb(), req.headers.authorization)),
+        ...(await authenticateCustomer(getDb(), req.headers.authorization)),
+        otpProvider,
+        peerIp: req.socket.remoteAddress || "unknown",
         payments,
       }),
     }),

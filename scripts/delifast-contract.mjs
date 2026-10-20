@@ -34,7 +34,7 @@ for (const [name, node] of constants) {
   count++;
   console.log(`OK — ${name} compatible avec le schéma local versionné`);
 }
-for (const required of ['Restaurants', 'Restaurant', 'CalculateCheckout', 'PlaceOrder', 'Order', 'StaffLogin', 'OperationsOrders', 'AvailableRiders', 'Me', 'StaffLogout', 'SimulateDemoPayment', 'TransitionOrder', 'AssignRider', 'OperationsRestaurants', 'CreateMenuItem', 'UpdateMenuItem', 'SetMenuItemArchived', 'SetRestaurantOpen', 'CreateMenuCategory', 'UpdateMenuCategory', 'SetMenuCategoryArchived']) {
+for (const required of ['Restaurants', 'Restaurant', 'CalculateCheckout', 'PlaceOrder', 'Order', 'StaffLogin', 'OperationsOrders', 'AvailableRiders', 'Me', 'StaffLogout', 'SimulateDemoPayment', 'TransitionOrder', 'AssignRider', 'OperationsRestaurants', 'CreateMenuItem', 'UpdateMenuItem', 'SetMenuItemArchived', 'SetRestaurantOpen', 'CreateMenuCategory', 'UpdateMenuCategory', 'SetMenuCategoryArchived', 'CustomerMe', 'CustomerAddresses', 'RequestCustomerOtp', 'ResendCustomerOtp', 'VerifyCustomerOtp', 'CustomerLogout', 'CreateCustomerAddress', 'UpdateCustomerAddress', 'DeleteCustomerAddress']) {
   assert.ok(operations.has(required), `Opération obligatoire absente du contrôle : ${required}`);
 }
 console.log(`SUCCÈS — ${count} documents GraphQL client/opérations validés sans exécution de code.`);

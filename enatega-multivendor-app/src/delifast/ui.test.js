@@ -119,3 +119,44 @@ test('la tentative restaurée verrouille les restaurants et permet une reprise v
   assert.doesNotMatch(treeText(tree), /never-show-this-token/)
   await unmount(tree)
 })
+
+// Compte client : seuls des métadonnées/échecs protocolaires sont simulés,
+// jamais un SMS reçu ou une connexion réussie dans l’interface.
+test('compte mobile sans fournisseur : aucune annonce de code envoyé ou de connexion réussie', async () => {
+  const tree = await mount()
+  await press(tree, 'Compte', 'TouchableOpacity')
+  await renderer.act(async () => { tree.root.findByType('TextInput').props.onChangeText('+22670123456') })
+  await press(tree, 'Demander un code')
+  assert.match(treeText(tree), /La connexion réelle est momentanément indisponible/)
+  assert.doesNotMatch(treeText(tree), /code envoyé|connexion réussie|Téléphone :/i)
+  assert.equal(tree.root.findAllByType('TextInput').length, 1)
+  await unmount(tree)
+})
+test('compte mobile : un numéro hors E.164 est refusé avant tout appel', async () => {
+  let calls = 0
+  const tree = await mount(api({ requestCustomerOtp: async () => { calls++; throw new Error('Ne doit pas être appelé') } }))
+  await press(tree, 'Compte', 'TouchableOpacity')
+  await renderer.act(async () => { tree.root.findByType('TextInput').props.onChangeText('70123456') })
+  await press(tree, 'Demander un code')
+  assert.equal(calls, 0)
+  assert.match(treeText(tree), /format E.164 requis/)
+  assert.equal(tree.root.findAllByType('TextInput').length, 1)
+  await unmount(tree)
+})
+test('compte mobile : le délai de renvoi vient du challenge et changer de téléphone efface la demande', async () => {
+  let resends = 0
+  const tree = await mount(api({ requestCustomerOtp: async () => ({ challengeId: 'protocol-only-challenge', expiresIn: 120, retryAfter: 60 }), resendCustomerOtp: async () => { resends++; throw new Error('Renvoi interdit pendant le délai') } }))
+  await press(tree, 'Compte', 'TouchableOpacity')
+  await renderer.act(async () => { tree.root.findByType('TextInput').props.onChangeText('+22670123456') })
+  await press(tree, 'Demander un code')
+  const resend = tree.root.findAllByType('Button').find(node => /Renvoyer dans/.test(node.props.title))
+  assert.ok(resend)
+  assert.equal(resend.props.disabled, true)
+  await renderer.act(async () => { await resend.props.onPress() })
+  assert.equal(resends, 0)
+  assert.doesNotMatch(treeText(tree), /code envoyé|connexion réussie|Téléphone :/i)
+  await press(tree, 'Changer de téléphone')
+  assert.equal(tree.root.findAllByType('TextInput').length, 1)
+  assert.equal(tree.root.findByType('TextInput').props.editable, true)
+  await unmount(tree)
+})

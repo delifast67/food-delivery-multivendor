@@ -18,16 +18,35 @@ const restaurantFields = `id name description open version categories { ${catego
 const checkout = 'currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } }'
 const deliveryFields = 'delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo }'
 const orderFields = `id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions point { latitude longitude } } history { status at actorRole } checkout { ${checkout} ${deliveryFields} }`
+const customerFields = 'id phone'
+const sessionFields = `token customer { ${customerFields} }`
+const challengeFields = 'challengeId expiresIn retryAfter'
+const addressFields = 'id recipientName phone city neighborhood landmark instructions point { latitude longitude }'
+const addressInputFields = ['recipientName', 'phone', 'city', 'neighborhood', 'landmark', 'instructions', 'point']
+const serializeDeliveryAddressInput = input => {
+  const value = input && typeof input === 'object' ? input : {}
+  return Object.fromEntries(addressInputFields.filter(key => value[key] !== undefined).map(key => [key, key === 'point' && value[key] ? { latitude: value[key].latitude, longitude: value[key].longitude } : value[key]]))
+}
 const documents = {
   restaurants: `query MobileRestaurants($point: DeliveryPointInput) { restaurants(point: $point) { ${restaurantFields} } }`,
   restaurant: `query MobileRestaurant($id: ID!) { restaurant(id: $id) { ${restaurantFields} } }`,
   calculateCheckout: `query MobileCalculateCheckout($input: CartInput!) { calculateCheckout(input: $input) { ${checkout} ${deliveryFields} } }`,
   placeOrder: `mutation MobilePlaceOrder($input: PlaceOrderInput!) { placeOrder(input: $input) { ${orderFields} } }`,
-  order: `query MobileOrder($id: ID!, $accessToken: String!) { order(id: $id, accessToken: $accessToken) { ${orderFields} } }`
+  order: `query MobileOrder($id: ID!, $accessToken: String!) { order(id: $id, accessToken: $accessToken) { ${orderFields} } }`,
+  customerMe: `query CustomerMe { customerMe { ${customerFields} } }`,
+  customerAddresses: `query CustomerAddresses { customerAddresses { ${addressFields} } }`,
+  requestCustomerOtp: `mutation RequestCustomerOtp($phone: String!) { requestCustomerOtp(phone: $phone) { ${challengeFields} } }`,
+  resendCustomerOtp: `mutation ResendCustomerOtp($challengeId: ID!) { resendCustomerOtp(challengeId: $challengeId) { ${challengeFields} } }`,
+  verifyCustomerOtp: `mutation VerifyCustomerOtp($challengeId: ID!, $code: String!) { verifyCustomerOtp(challengeId: $challengeId, code: $code) { ${sessionFields} } }`,
+  customerLogout: 'mutation CustomerLogout { customerLogout }',
+  createCustomerAddress: `mutation CreateCustomerAddress($input: DeliveryAddressInput!) { createCustomerAddress(input: $input) { ${addressFields} } }`,
+  updateCustomerAddress: `mutation UpdateCustomerAddress($id: ID!, $input: DeliveryAddressInput!) { updateCustomerAddress(id: $id, input: $input) { ${addressFields} } }`,
+  deleteCustomerAddress: 'mutation DeleteCustomerAddress($id: ID!) { deleteCustomerAddress(id: $id) }'
 }
 function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetch, timeoutMs = 15000 } = {}) {
   if (!/^https?:\/\//.test(endpoint)) throw new Error('Une URL HTTP(S) Delifast explicite est requise')
-  async function request(query, variables) {
+  let customerToken = null
+  async function request(query, variables, privateRequest = false) {
     const controller = new AbortController()
     let timer
     try {
@@ -44,7 +63,7 @@ function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetc
           try {
             response = await fetchImpl(endpoint, {
               method: 'POST',
-              headers: { 'content-type': 'application/json' },
+              headers: { 'content-type': 'application/json', ...(privateRequest && customerToken ? { authorization: `Bearer ${customerToken}` } : {}) },
               signal: controller.signal,
               body: JSON.stringify({ query, variables })
             })
@@ -71,8 +90,8 @@ function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetc
       clearTimeout(timer)
     }
   }
-  async function field(name, variables) {
-    const data = await request(documents[name], variables)
+  async function field(name, variables, privateRequest = false) {
+    const data = await request(documents[name], variables, privateRequest)
     const key = name
     if (!Object.prototype.hasOwnProperty.call(data, key)) throw new DelifastApiError('Réponse backend incomplète', 'unavailable')
     return data[key]
@@ -82,7 +101,17 @@ function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetc
     restaurant: (id) => field('restaurant', { id }),
     calculateCheckout: (input) => field('calculateCheckout', { input }),
     placeOrder: (input) => field('placeOrder', { input }),
-    order: (id, accessToken) => field('order', { id, accessToken })
+    order: (id, accessToken) => field('order', { id, accessToken }),
+    setCustomerToken(token) { customerToken = token || null },
+    customerMe: () => field('customerMe', {}, true),
+    customerAddresses: () => field('customerAddresses', {}, true),
+    requestCustomerOtp: phone => field('requestCustomerOtp', { phone }),
+    resendCustomerOtp: challengeId => field('resendCustomerOtp', { challengeId }),
+    verifyCustomerOtp: (challengeId, code) => field('verifyCustomerOtp', { challengeId, code }),
+    customerLogout: () => field('customerLogout', {}, true),
+    createCustomerAddress: input => field('createCustomerAddress', { input: serializeDeliveryAddressInput(input) }, true),
+    updateCustomerAddress: (id, input) => field('updateCustomerAddress', { id, input: serializeDeliveryAddressInput(input) }, true),
+    deleteCustomerAddress: id => field('deleteCustomerAddress', { id }, true)
   }
 }
-module.exports = { createClient, DelifastApiError, DEFAULT_ENDPOINT, documents }
+module.exports = { createClient, DelifastApiError, DEFAULT_ENDPOINT, documents, serializeDeliveryAddressInput }

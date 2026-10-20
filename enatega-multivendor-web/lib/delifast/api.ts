@@ -130,6 +130,21 @@ export type StaffUser = {
   restaurantId?: string | null;
 };
 export type StaffSession = { token: string; user: StaffUser };
+export type Customer = { id: string; phone: string };
+export type CustomerSession = { token: string; customer: Customer };
+export type CustomerOtpChallenge = { challengeId: string; expiresIn: number; retryAfter: number };
+export type CustomerAddress = DeliveryAddress & { id: string; point: DeliveryPoint };
+export function deliveryAddressInput(input: DeliveryAddress): DeliveryAddress {
+  return {
+    recipientName: input.recipientName,
+    phone: input.phone,
+    city: input.city,
+    neighborhood: input.neighborhood,
+    landmark: input.landmark,
+    instructions: input.instructions,
+    ...(input.point ? { point: { latitude: input.point.latitude, longitude: input.point.longitude } } : {}),
+  };
+}
 export type MenuItemInput = {
   name: string;
   description: string;
@@ -163,6 +178,17 @@ const SET_RESTAURANT_OPEN = `mutation SetRestaurantOpen($id: ID!, $expectedVersi
 const AVAILABLE_RIDERS = `query AvailableRiders { availableRiders { id name role restaurantId } }`;
 const ME = `query Me { me { id name role restaurantId } }`;
 const STAFF_LOGOUT = `mutation StaffLogout { staffLogout }`;
+const CUSTOMER_FIELDS = `id phone`;
+const CUSTOMER_ADDRESS_FIELDS = `id recipientName phone city neighborhood landmark instructions point { latitude longitude }`;
+const CUSTOMER_ME = `query CustomerMe { customerMe { ${CUSTOMER_FIELDS} } }`;
+const CUSTOMER_ADDRESSES = `query CustomerAddresses { customerAddresses { ${CUSTOMER_ADDRESS_FIELDS} } }`;
+const REQUEST_CUSTOMER_OTP = `mutation RequestCustomerOtp($phone: String!) { requestCustomerOtp(phone: $phone) { challengeId expiresIn retryAfter } }`;
+const RESEND_CUSTOMER_OTP = `mutation ResendCustomerOtp($challengeId: ID!) { resendCustomerOtp(challengeId: $challengeId) { challengeId expiresIn retryAfter } }`;
+const VERIFY_CUSTOMER_OTP = `mutation VerifyCustomerOtp($challengeId: ID!, $code: String!) { verifyCustomerOtp(challengeId: $challengeId, code: $code) { token customer { ${CUSTOMER_FIELDS} } } }`;
+const CUSTOMER_LOGOUT = `mutation CustomerLogout { customerLogout }`;
+const CREATE_CUSTOMER_ADDRESS = `mutation CreateCustomerAddress($input: DeliveryAddressInput!) { createCustomerAddress(input: $input) { ${CUSTOMER_ADDRESS_FIELDS} } }`;
+const UPDATE_CUSTOMER_ADDRESS = `mutation UpdateCustomerAddress($id: ID!, $input: DeliveryAddressInput!) { updateCustomerAddress(id: $id, input: $input) { ${CUSTOMER_ADDRESS_FIELDS} } }`;
+const DELETE_CUSTOMER_ADDRESS = `mutation DeleteCustomerAddress($id: ID!) { deleteCustomerAddress(id: $id) }`;
 const SIMULATE_PAYMENT = `mutation SimulateDemoPayment($orderId: ID!) { simulateDemoPayment(orderId: $orderId) { ${ORDER_OPERATIONS_FIELDS} } }`;
 const TRANSITION = `mutation TransitionOrder($orderId: ID!, $status: String!, $expectedStatus: String!) { transitionOrder(orderId: $orderId, status: $status, expectedStatus: $expectedStatus) { ${ORDER_OPERATIONS_FIELDS} } }`;
 const ASSIGN = `mutation AssignRider($orderId: ID!, $riderId: ID!, $expectedStatus: String!) { assignRider(orderId: $orderId, riderId: $riderId, expectedStatus: $expectedStatus) { ${ORDER_OPERATIONS_FIELDS} } }`;
@@ -275,7 +301,9 @@ export const delifastApi = {
     idempotencyKey: string;
     deliveryAddress: DeliveryAddress;
   }) =>
-    request<{ placeOrder: Order }>(PLACE_ORDER, { input }).then(
+    request<{ placeOrder: Order }>(PLACE_ORDER, {
+      input: { ...input, deliveryAddress: deliveryAddressInput(input.deliveryAddress) },
+    }).then(
       (data) => data.placeOrder,
     ),
   order: (id: string, accessToken: string) =>
@@ -287,6 +315,24 @@ export const delifastApi = {
       email,
       password,
     }).then((data) => data.staffLogin),
+  customerMe: (token: string) =>
+    request<{ customerMe: Customer | null }>(CUSTOMER_ME, undefined, token).then((data) => data.customerMe),
+  customerAddresses: (token: string) =>
+    request<{ customerAddresses: CustomerAddress[] }>(CUSTOMER_ADDRESSES, undefined, token).then((data) => data.customerAddresses),
+  requestCustomerOtp: (phone: string) =>
+    request<{ requestCustomerOtp: CustomerOtpChallenge }>(REQUEST_CUSTOMER_OTP, { phone }).then((data) => data.requestCustomerOtp),
+  resendCustomerOtp: (challengeId: string) =>
+    request<{ resendCustomerOtp: CustomerOtpChallenge }>(RESEND_CUSTOMER_OTP, { challengeId }).then((data) => data.resendCustomerOtp),
+  verifyCustomerOtp: (challengeId: string, code: string) =>
+    request<{ verifyCustomerOtp: CustomerSession }>(VERIFY_CUSTOMER_OTP, { challengeId, code }).then((data) => data.verifyCustomerOtp),
+  customerLogout: (token: string) =>
+    request<{ customerLogout: boolean }>(CUSTOMER_LOGOUT, undefined, token).then((data) => data.customerLogout),
+  createCustomerAddress: (token: string, input: DeliveryAddress) =>
+    request<{ createCustomerAddress: CustomerAddress }>(CREATE_CUSTOMER_ADDRESS, { input: deliveryAddressInput(input) }, token).then((data) => data.createCustomerAddress),
+  updateCustomerAddress: (token: string, id: string, input: DeliveryAddress) =>
+    request<{ updateCustomerAddress: CustomerAddress }>(UPDATE_CUSTOMER_ADDRESS, { id, input: deliveryAddressInput(input) }, token).then((data) => data.updateCustomerAddress),
+  deleteCustomerAddress: (token: string, id: string) =>
+    request<{ deleteCustomerAddress: boolean }>(DELETE_CUSTOMER_ADDRESS, { id }, token).then((data) => data.deleteCustomerAddress),
   me: (token: string) =>
     request<{ me: StaffUser | null }>(ME, undefined, token).then(
       (data) => data.me,

@@ -1,6 +1,7 @@
 name: delifast-local
 
-# Démonstration locale uniquement : aucun paiement ou envoi réel.
+# Démonstration locale : paiement désactivé et D7 inactif par défaut.
+# Activer D7 peut envoyer des SMS réels : autorisation destinataire/coût requise.
 # Redis est provisionné pour les lots suivants, pas utilisé pour l'idempotence.
 services:
   mongo:
@@ -47,6 +48,15 @@ services:
       MONGODB_URI: mongodb://mongo:27017/delifast
       # Désactivé par défaut. Démonstration fictive, aucun encaissement réel.
       DELIFAST_DEMO_PAYMENTS: ${DELIFAST_DEMO_PAYMENTS:-false}
+      # Serveur uniquement ; ne pas activer avant autorisation du premier SMS.
+      D7_VERIFY_ENABLED: ${D7_VERIFY_ENABLED:-false}
+      D7_API_TOKEN: ${D7_API_TOKEN:-}
+      D7_VERIFY_ORIGINATOR: ${D7_VERIFY_ORIGINATOR:-D7VERIFY}
+      D7_VERIFY_TEMPLATE_ID: ${D7_VERIFY_TEMPLATE_ID:-}
+      D7_VERIFY_CONTENT: ${D7_VERIFY_CONTENT:-}
+      D7_VERIFY_TIMEOUT_MS: ${D7_VERIFY_TIMEOUT_MS:-8000}
+      D7_VERIFY_MAX_RESPONSE_BYTES: ${D7_VERIFY_MAX_RESPONSE_BYTES:-32768}
+      CUSTOMER_OTP_IP_MAX: ${CUSTOMER_OTP_IP_MAX:-5}
     ports:
       - "127.0.0.1:4000:4000"
     depends_on:

@@ -7,7 +7,10 @@ const { buildSchema, parse, validate, Kind } = apiRequire('graphql');
 const mobileRequire = createRequire(new URL('../enatega-multivendor-app/package.json', import.meta.url));
 const { documents } = mobileRequire('./src/delifast/api.js');
 const schema = buildSchema(readFileSync(new URL('../delifast-api/schema/v1.graphql', import.meta.url), 'utf8'));
-assert.deepEqual(Object.keys(documents).sort(), ['calculateCheckout', 'order', 'placeOrder', 'restaurant', 'restaurants']);
+const required = ['calculateCheckout', 'order', 'placeOrder', 'restaurant', 'restaurants',
+  'requestCustomerOtp', 'resendCustomerOtp', 'verifyCustomerOtp', 'customerLogout',
+  'customerMe', 'customerAddresses', 'createCustomerAddress', 'updateCustomerAddress', 'deleteCustomerAddress'];
+assert.deepEqual(Object.keys(documents).sort(), required.sort());
 for (const [name, document] of Object.entries(documents)) {
   const ast = parse(document);
   assert.deepEqual(validate(schema, ast).map(e => e.message), [], name);
@@ -18,4 +21,4 @@ for (const [name, document] of Object.entries(documents)) {
   assert.doesNotMatch(document, /simulateDemoPayment|staffLogin|transitionOrder|assignRider|paymentMethod/i);
   console.log(`OK — mobile ${name} compatible avec le contrat Delifast`);
 }
-console.log('SUCCÈS — 5 documents GraphQL mobiles validés ; aucune mutation de paiement/personnel.');
+console.log(`SUCCÈS — ${required.length} documents GraphQL mobiles validés ; aucune mutation de paiement/personnel.`);

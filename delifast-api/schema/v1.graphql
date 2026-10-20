@@ -11,6 +11,8 @@ type Query {
   operationsRestaurants: [Restaurant!]!
   availableRiders: [StaffUser!]!
   me: StaffUser
+  customerMe: Customer
+  customerAddresses: [CustomerAddress!]!
 }
 type Mutation {
   placeOrder(input: PlaceOrderInput!): Order!
@@ -32,8 +34,19 @@ type Mutation {
   createMenuCategory(restaurantId: ID!, input: MenuCategoryInput!): MenuCategory!
   updateMenuCategory(id: ID!, expectedVersion: Int!, input: MenuCategoryInput!): MenuCategory!
   setMenuCategoryArchived(id: ID!, expectedVersion: Int!, archived: Boolean!): MenuCategory!
+  requestCustomerOtp(phone: String!): CustomerOtpChallenge!
+  resendCustomerOtp(challengeId: ID!): CustomerOtpChallenge!
+  verifyCustomerOtp(challengeId: ID!, code: String!): CustomerSession!
+  customerLogout: Boolean!
+  createCustomerAddress(input: DeliveryAddressInput!): CustomerAddress!
+  updateCustomerAddress(id: ID!, input: DeliveryAddressInput!): CustomerAddress!
+  deleteCustomerAddress(id: ID!): Boolean!
 }
 type Point { latitude: Float!, longitude: Float! }
+type Customer { id: ID!, phone: String! }
+type CustomerSession { token: String!, customer: Customer! }
+type CustomerOtpChallenge { challengeId: ID!, expiresIn: Int!, retryAfter: Int! }
+type CustomerAddress { id: ID!, recipientName: String!, phone: String!, city: String!, neighborhood: String!, landmark: String!, instructions: String!, point: Point! }
 input DeliveryPointInput { latitude: Float!, longitude: Float! }
 input RestaurantProfileInput { name: String!, description: String!, open: Boolean!, deliveryZoneIds: [ID!]! }
 type Restaurant { id: ID!, name: String!, description: String!, open: Boolean!, version: Int!, deliveryZoneIds: [ID!]!, categories: [MenuCategory!]!, menu: [MenuItem!]! }

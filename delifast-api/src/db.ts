@@ -36,9 +36,21 @@ export async function connect(
   await db
     .collection("staff_sessions")
     .createIndex({ id: 1 }, { unique: true });
-  await db
-    .collection("staff_sessions")
-    .createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+  await db.collection("staff_sessions").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+  await db.collection("customers").createIndex({ id: 1 }, { unique: true });
+  await db.collection("customers").createIndex({ phone: 1 }, { unique: true });
+  await db.collection("customer_sessions").createIndex({ id: 1 }, { unique: true });
+  await db.collection("customer_sessions").createIndex({ tokenHash: 1 }, { unique: true });
+  await db.collection("customer_sessions").createIndex({ challengeId: 1 }, { unique: true });
+  await db.collection("customer_sessions").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+  await db.collection("customer_otp_challenges").createIndex({ challengeId: 1 }, { unique: true });
+  await db.collection("customer_otp_challenges").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+  await db.collection("customer_otp_challenges").createIndex({ phone: 1, status: 1, expiresAt: 1 });
+  await db.collection("customer_otp_phone_locks").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+  await db.collection("customer_otp_rate_limits").createIndex({ key: 1, windowUntil: 1 }, { unique: true });
+  await db.collection("customer_otp_rate_limits").createIndex({ windowUntil: 1 }, { expireAfterSeconds: 0 });
+  await db.collection("customer_addresses").createIndex({ id: 1 }, { unique: true });
+  await db.collection("customer_addresses").createIndex({ customerId: 1 });
   return db;
 }
 export function getDb() {

@@ -64,9 +64,20 @@ function App({ api, storage }) {
   const [address, setAddress] = useState(initialAddress)
   const [selected, setSelected] = useState(null)
   const [localError, setLocalError] = useState('')
+  const [loginPhone, setLoginPhone] = useState('+226 ')
+  const [otp, setOtp] = useState('')
+  const [challenge, setChallenge] = useState(null)
+  const [accountAddress, setAccountAddress] = useState(initialAddress)
+  const [editingAddressId, setEditingAddressId] = useState(null)
+  const [otpNow, setOtpNow] = useState(Date.now())
+  useEffect(() => {
+    if (!challenge) return undefined
+    const timer = setInterval(() => setOtpNow(Date.now()), 250)
+    return () => clearInterval(timer)
+  }, [challenge])
 
   useEffect(() => {
-    Promise.allSettled([controller.loadRestaurants(), controller.restoreAttempt()])
+    Promise.allSettled([controller.loadRestaurants(), controller.restoreAttempt(), controller.restoreCustomer()])
     return () => {
       controller.stopPolling()
     }
@@ -130,8 +141,8 @@ function App({ api, storage }) {
         <Header
           title='Delifast'
           right={
-            <TouchableOpacity onPress={() => setScreen('tracking')}>
-              <Text style={styles.link}>Suivi</Text>
+            <TouchableOpacity onPress={() => setScreen('account')}>
+              <Text style={styles.link}>Compte</Text>
             </TouchableOpacity>
           }
         />
@@ -191,6 +202,62 @@ function App({ api, storage }) {
         </ScrollView>
       </SafeAreaView>
     )
+  }
+
+  if (screen === 'account') {
+    const customer = state.customer
+    const expiresAt = challenge && challenge.expiresAt ? challenge.expiresAt : challenge && challenge.expiresIn ? challenge.receivedAt + Number(challenge.expiresIn) * 1000 : 0
+    const retryAt = challenge && challenge.retryAt ? challenge.retryAt : challenge && challenge.retryAfter ? challenge.receivedAt + Number(challenge.retryAfter) * 1000 : 0
+    const expired = !!challenge && !!expiresAt && otpNow >= expiresAt
+    const cooldown = !!challenge && !!retryAt && otpNow < retryAt
+    const addressBusy = state.authBusy || state.busy || !!pending
+    const resetAddress = () => { setAccountAddress({ ...initialAddress }); setEditingAddressId(null) }
+    const saveAddress = async() => {
+      setLocalError('')
+      try {
+        if (editingAddressId) await controller.updateCustomerAddress(editingAddressId, accountAddress)
+        else await controller.createCustomerAddress(accountAddress)
+        resetAddress()
+      } catch (error) { setLocalError(errorText(error)) }
+    }
+    const chooseAddress = async(item) => {
+      // Guard before either local state mutation or network work: pending attempts are locked.
+      if (state.busy || pending || !state.restored || state.authBusy) return
+      setLocalError('')
+      try {
+        await controller.setDeliveryPoint(item.point)
+        const live = controller.getState()
+        if (live.busy || live.pending) return
+        setAddress({ ...initialAddress, ...item, point: { ...item.point } })
+        setScreen('cart')
+      } catch (error) { setLocalError(errorText(error)) }
+    }
+    const editAddress = (item) => { if (addressBusy) return; setEditingAddressId(item.id); setAccountAddress({ ...initialAddress, ...item, point: { ...item.point } }) }
+    const removeAddress = async(id) => { if (addressBusy) return; setLocalError(''); try { await controller.deleteCustomerAddress(id) } catch (error) { setLocalError(errorText(error)) } }
+    const requestOtp = async() => { setLocalError(''); setOtp(''); try { const value = await controller.requestCustomerOtp(loginPhone); const receivedAt = Date.now(); setChallenge({ ...value, receivedAt, expiresAt: receivedAt + Number(value.expiresIn || 0) * 1000, retryAt: receivedAt + Number(value.retryAfter || 0) * 1000 }) } catch (error) { setLocalError(errorText(error)) } }
+    const verifyOtp = async() => { setLocalError(''); const submitted = otp; setOtp(''); try { await controller.verifyCustomerOtp(challenge.challengeId, submitted); setChallenge(null) } catch (error) { setLocalError(errorText(error)) } }
+    const resendOtp = async() => { if (cooldown) return; setLocalError(''); try { const value = expired ? await controller.requestCustomerOtp(loginPhone) : await controller.resendCustomerOtp(challenge.challengeId); const receivedAt = Date.now(); setChallenge({ ...value, receivedAt, expiresAt: receivedAt + Number(value.expiresIn || 0) * 1000, retryAt: receivedAt + Number(value.retryAfter || 0) * 1000 }) } catch (error) { setLocalError(errorText(error)) } }
+    const logout = async() => { setLocalError(''); setChallenge(null); setOtp(''); setLoginPhone(''); resetAddress(); try { await controller.logoutCustomer() } catch (error) { setLocalError(errorText(error)) } }
+    return <SafeAreaView style={styles.safe}><Header title='Compte client' onBack={() => setScreen('restaurants')} /><ScrollView contentContainerStyle={styles.content}>
+      {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
+      {!customer ? <>
+        <Text style={styles.sectionTitle}>Connexion par téléphone</Text><Text style={styles.subtitle}>Format E.164 obligatoire : +226 suivi de 8 chiffres. Aucun code n’est affiché ou conservé par l’application.</Text>
+        <TextInput style={styles.input} placeholder='+22670000000' value={loginPhone} onChangeText={setLoginPhone} keyboardType='phone-pad' editable={!state.authBusy && !challenge} />
+        {!challenge ? <Button title='Demander un code' disabled={state.authBusy} onPress={requestOtp} /> : <>
+          <Text style={styles.muted}>{expired ? 'Code expiré. Demandez un nouveau code.' : `Code valable encore ${Math.max(0, Math.ceil((expiresAt - otpNow) / 1000))} s.`}</Text>
+          <TextInput style={styles.input} placeholder='Code de vérification' value={otp} onChangeText={setOtp} keyboardType='number-pad' editable={!state.authBusy && !expired} secureTextEntry />
+          <Button title='Valider le code' disabled={state.authBusy || expired || !otp} onPress={verifyOtp} />
+          <Button title={cooldown ? `Renvoyer dans ${Math.ceil((retryAt - otpNow) / 1000)} s` : expired ? 'Recommencer' : 'Renvoyer le code'} disabled={state.authBusy || cooldown} onPress={resendOtp} />
+          <Button title='Changer de téléphone' disabled={state.authBusy} onPress={() => { setChallenge(null); setOtp('') }} />
+        </>}
+      </> : <>
+        <Text style={styles.sectionTitle}>Téléphone : {customer.phone}</Text><Button title='Se déconnecter' disabled={state.authBusy} onPress={logout} /><Text style={styles.sectionTitle}>Carnet d’adresses</Text>
+        {(state.addresses || []).map(item => <View style={styles.card} key={item.id}><Text style={styles.cardTitle}>{item.recipientName}</Text><Text>{item.city} · {item.neighborhood}</Text><Button title='Utiliser pour la livraison' disabled={addressBusy || !state.restored} onPress={() => chooseAddress(item)} /><Button title='Modifier' disabled={addressBusy} onPress={() => editAddress(item)} /><Button title='Supprimer' disabled={addressBusy} onPress={() => removeAddress(item.id)} /></View>)}
+        <Text style={styles.sectionTitle}>{editingAddressId ? 'Modifier l’adresse' : 'Ajouter une adresse'}</Text>
+        {['recipientName', 'phone', 'city', 'neighborhood', 'landmark', 'instructions'].map(key => <TextInput key={key} style={styles.input} placeholder={key} value={accountAddress[key] || ''} onChangeText={value => setAccountAddress({ ...accountAddress, [key]: value })} editable={!addressBusy} />)}
+        <TextInput style={styles.input} placeholder='Latitude' keyboardType='numeric' editable={!addressBusy} value={String(accountAddress.point.latitude)} onChangeText={value => setAccountAddress({ ...accountAddress, point: { ...accountAddress.point, latitude: Number(value.replace(',', '.')) } })} /><TextInput style={styles.input} placeholder='Longitude' keyboardType='numeric' editable={!addressBusy} value={String(accountAddress.point.longitude)} onChangeText={value => setAccountAddress({ ...accountAddress, point: { ...accountAddress.point, longitude: Number(value.replace(',', '.')) } })} /><Button title={editingAddressId ? 'Enregistrer les modifications' : 'Ajouter cette adresse'} disabled={addressBusy} onPress={saveAddress} />{editingAddressId && <Button title='Annuler la modification' disabled={addressBusy} onPress={resetAddress} />}
+      </>}
+    </ScrollView></SafeAreaView>
   }
 
   if (screen === 'menu') {
