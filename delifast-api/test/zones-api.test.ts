@@ -65,6 +65,38 @@ it('rejects forged fees and invalid points; no matching configured zone fails cl
  expect((await call(place,{i:{...input('no-configured-zone'),restaurantId:'unconfigured',items:[{menuItemId:'unconfigured-meal',quantity:1}]}})).errors[0].extensions.code).toBe('OUT_OF_DELIVERY_ZONE');
  expect(await db.collection('orders').countDocuments()).toBe(before);
 });
+it('stores the exact submitted delivery point and protects the address with the order token', async () => {
+ const chosen = { latitude: 12.372, longitude: -1.52 };
+ const selected = input('chosen-address-snapshot', { ...chosen });
+ selected.deliveryAddress.instructions = 'Adresse fictive choisie pour cette commande';
+ const fields = 'id accessToken deliveryAddress{recipientName phone city neighborhood landmark instructions point{latitude longitude}} checkout{delivery{zoneId deliveryFee}}';
+ const result = await call(`mutation($i:PlaceOrderInput!){placeOrder(input:$i){${fields}}}`, { i: selected });
+ expect(result.errors).toBeUndefined();
+ const order = result.data.placeOrder;
+ expect(order.deliveryAddress).toEqual(selected.deliveryAddress);
+ expect(order.checkout.delivery.zoneId).toBe(zone.id);
+ expect(order.checkout.delivery.deliveryFee).toBe(zone.feeXof);
+ const stored = await db.collection('orders').findOne({ id: order.id });
+ expect(stored.deliveryAddress).toEqual(selected.deliveryAddress);
+ selected.deliveryAddress.point.latitude = 0;
+ expect((await db.collection('orders').findOne({ id: order.id })).deliveryAddress.point).toEqual(chosen);
+ const query = `query($id:ID!,$token:String!){order(id:$id,accessToken:$token){${fields}}}`;
+ expect((await call(query, { id: order.id, token: order.accessToken })).data.order.deliveryAddress.point).toEqual(chosen);
+ expect((await call(query, { id: order.id, token: 'wrong-order-token-long-enough' })).data.order).toBeNull();
+ // A staff session is not a customer identity and cannot replace the order token.
+ expect((await call(query, { id: order.id, token: 'wrong-order-token-long-enough' }, token)).data.order).toBeNull();
+});
+it.each([
+ ['null point', null, 'DELIVERY_POINT_REQUIRED'],
+ ['invalid latitude', { latitude: -91, longitude: -1.5197 }, 'INVALID_POINT'],
+ ['invalid longitude', { latitude: 12.3714, longitude: 181 }, 'INVALID_POINT'],
+ ['outside configured delivery area', { latitude: 0, longitude: 0 }, 'OUT_OF_DELIVERY_ZONE'],
+])('rejects %s without storing an order', async (_name, location, code) => {
+ const before = await db.collection('orders').countDocuments();
+ const result = await call(place, { i: input(`address-rejection-${code}`, location) });
+ expect(result.errors[0].extensions.code).toBe(code);
+ expect(await db.collection('orders').countDocuments()).toBe(before);
+});
 it('preserves a legacy idempotent attempt without GPS but never creates another order from it',async()=>{
  const {normalizeCart,normalizeAddress}=await import('../src/validation.js');
  const legacyAddress={...address}; delete (legacyAddress as any).point;

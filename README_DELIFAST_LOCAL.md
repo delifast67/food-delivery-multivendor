@@ -4,6 +4,22 @@ Le site local et le nouveau parcours mobile client permettent de consulter deux 
 
 **Aucun paiement ou remboursement réel, aucune livraison physique, aucun SMS ou push ne sont déclenchés.** Les comptes, restaurants, menus et frais sont des données d’essai. Le paiement à la livraison n’existe pas dans le contrat. Ne pas exposer cette démonstration sur Internet avec des données personnelles réelles.
 
+## État réel du profil et des adresses client
+
+**La démonstration de commande fonctionne ; le projet complet n’est pas terminé.** Le carnet d’adresses personnel (consulter, ajouter, modifier, supprimer et sélectionner une adresse enregistrée) n’est pas implémenté. Il ne faut pas confondre l’adresse figée d’une commande avec un carnet rattaché à un compte client.
+
+Le contrat local [GraphQL](delifast-api/schema/v1.graphql) contient `DeliveryAddressInput` et `DeliveryAddress`, avec destinataire, téléphone, ville, quartier, repère, instructions et point latitude/longitude. Il ne contient aucun profil client, aucune collection exposée d’adresses enregistrées, ni opération de gestion de ces adresses. Le [seed](delifast-api/migrations/seed.ts) documente et crée seulement quatre comptes de personnel : admin, deux restaurants et livreur. Aucun utilisateur client de démonstration authentifiable n’existe. L’[authentification locale](delifast-api/src/auth.ts) accepte exclusivement les rôles `ADMIN`, `RESTAURANT` et `RIDER` ; `me` représente ce personnel, pas un client.
+
+Les documents `createAddress`, `editAddress` et `deleteAddress` conservés dans les anciens clients sont des références à un autre backend, pas des résolveurs disponibles dans l’API locale. Ils ne justifient ni un faux raccordement, ni l’utilisation d’un compte restaurant comme client, ni un carnet stocké uniquement dans le navigateur et présenté comme privé côté serveur.
+
+La consigne de réutiliser exclusivement un client authentifié existant et ses modèles API bloque donc ce lot : il faut d’abord disposer d’un contrat serveur client authentifié et d’un compte client de démonstration documenté. Aucune identité client, politique de numéro, intégration SMS/OTP, clé ou carte externe n’a été inventée. Les tests d’isolation entre clients, de reconnexion client et de persistance d’un carnet ne peuvent pas être annoncés comme réussis pour une fonctionnalité absente.
+
+Le parcours existant accepte une adresse fictive saisie pour chaque commande. Le serveur conserve exactement son point dans le snapshot et recalcule zone, horaires, disponibilité, minimum et frais lors de la création : le nom de ville et le total affiché ne remplacent pas ces contrôles. Un point absent produit `DELIVERY_POINT_REQUIRED`, des coordonnées hors limites `INVALID_POINT`, et un point sans zone admissible `OUT_OF_DELIVERY_ZONE`, sans insertion de commande. Sans géocodage externe, aucune correspondance géographique entre texte libre et coordonnées n’est prétendue.
+
+Les tests [de livraison API](delifast-api/test/zones-api.test.ts) couvrent notamment le point réellement transmis, sa conservation en base, les coordonnées absentes/invalides/hors zone et la confidentialité du suivi : le jeton propre à la commande reste requis, même avec une session admin. Le [test de persistance](scripts/delifast-persistence.mjs) vérifie le snapshot d’adresse et de livraison après arrêt complet puis redémarrage de MongoDB et de l’API, sur une base jetable. Ces garanties ne constituent pas un profil client ni une reconnexion à un compte client.
+
+Contrôle de ce lot de clarification et de non-régression : **189 tests API, 101 tests web et 50 tests client mobile réussis** ; builds API et web réussis ; exports JS/Hermes Android et iOS réussis ; persistance après redémarrage complet réussie sur base temporaire. Les cinq tests API supplémentaires renforcent les garanties du parcours existant, sans ajouter de fonctionnalité d’adresses enregistrées. Aucun compte réel, paiement, push, fusion ni déploiement n’a été effectué.
+
 ## Parcours client mobile
 
 L’application Expo `enatega-multivendor-app` démarre maintenant directement sur le parcours Delifast : restaurants, catégories, plats/options, panier mono-restaurant, total serveur, adresse fictive, création en attente de paiement et suivi. La reprise d’une tentative réseau incertaine utilise une clé d’idempotence et son payload exact conservés dans SecureStore. Le suivi est accessible après redémarrage avec la référence de la dernière commande ; il n’y a pas de compte client synchronisé entre appareils.
