@@ -10,6 +10,7 @@ type History = {
   at: string;
   actorRole: string;
   note: string;
+  actorId?: string;
 };
 type Ticket = {
   id: string;
@@ -87,7 +88,13 @@ function output(doc: any) {
     version: doc.version,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
-    history: doc.history,
+    // Explicitly project the public history shape; actorId is internal audit data.
+    history: (doc.history ?? []).map((event: any) => ({
+      status: event.status,
+      at: event.at,
+      actorRole: event.actorRole,
+      note: event.note ?? "",
+    })),
   };
 }
 function staffScope(staff: Staff) {
@@ -297,10 +304,15 @@ export async function transitionSupportTicket(
   if (!current) fail("SUPPORT_TICKET_NOT_FOUND", "Ticket introuvable");
   if (current.version !== expectedVersion)
     fail("CONCURRENT_MODIFICATION", "Le ticket a été modifié");
+  const reopening = current.status === "RESOLVED" && status === "IN_PROGRESS";
+  if (reopening && !cleanNote)
+    fail("INVALID_INPUT", "Note requise pour la réouverture");
   const allowed =
     current.status === "OPEN"
       ? status === "IN_PROGRESS"
-      : current.status === "IN_PROGRESS" && status === "RESOLVED";
+      : current.status === "IN_PROGRESS"
+        ? status === "RESOLVED"
+        : reopening;
   if (!allowed) fail("INVALID_TRANSITION", "Transition de ticket invalide");
   const at = new Date().toISOString();
   const result = await db
@@ -310,7 +322,13 @@ export async function transitionSupportTicket(
       {
         $set: { status, version: expectedVersion + 1, updatedAt: at },
         $push: {
-          history: { status, at, actorRole: staff.role, note: cleanNote },
+          history: {
+            status,
+            at,
+            actorRole: staff.role,
+            actorId: staff.id,
+            note: cleanNote,
+          },
         },
       },
       { returnDocument: "after" },

@@ -10,7 +10,11 @@
 
 ## Statuts et historique
 
-Les statuts suivent uniquement les transitions `OPEN → IN_PROGRESS → RESOLVED`. Chaque transition ajoute une entrée d’historique avec l’acteur, la date et la note. L’historique est visible dans les vues autorisées au créateur et aux opérations.
+Les transitions sont `OPEN → IN_PROGRESS → RESOLVED`, puis `RESOLVED → IN_PROGRESS` pour une réouverture. Elles sont toutes réservées à `ADMIN`, sans nouveau rôle ni nouveau droit créateur. La réouverture exige un motif non vide après trim (2 000 caractères maximum), sinon `INVALID_INPUT`. Les anciens clients restent compatibles : aucun champ obligatoire ni enum ajouté. Une nouvelle résolution puis réouverture est possible.
+
+Chaque transition est atomique avec `expectedVersion` : le statut, la version et une nouvelle entrée sont écrits ensemble. L’historique existant est conservé. Chaque nouvel événement de transition stocke aussi `actorId` issu de la session serveur pour l’audit interne ; il n’est pas exposé au créateur ni par le schéma GraphQL. Les anciens événements sans identifiant restent lisibles sans acteur inventé. La projection publique reste `status`, `at`, `actorRole`, `note` ; **les motifs et notes sont visibles par le créateur**, pas des notes internes.
+
+Une réponse perdue n’autorise pas un rejeu automatique. Rejouer la version précédente est refusé avec `CONCURRENT_MODIFICATION`, sans doubler l’événement. Le client doit relire explicitement le détail privé avant une nouvelle décision ; relire seulement la liste ne suffit pas.
 
 ## Idempotence
 
@@ -21,3 +25,9 @@ Les statuts suivent uniquement les transitions `OPEN → IN_PROGRESS → RESOLVE
 ## Compatibilité legacy et migrations
 
 Les anciens documents client sans `creatorId`/`creatorRole` sont projetés comme `creatorId = customerId`, `creatorRole = CUSTOMER`; ils restent lisibles par le client propriétaire et ne divulguent pas les champs internes d’idempotence. `connect()` et la migration suppriment sans erreur l’ancien index `customerId_1_idempotencyKey_1`, puis créent les index partiels nommés nécessaires. Leur réexécution est sûre, y compris sur une base contenant déjà les index de la nouvelle version.
+
+## Assignation : contrat encore absent
+
+Le modèle ne possède ni responsable de ticket, ni annuaire d’agents Support, ni règle approuvée d’éligibilité ou de prise en charge/transfert. Les rôles existants sont `ADMIN`, `RESTAURANT`, `RIDER` : un compte restaurant/livreur ne devient pas agent parce qu’il est assigné. Ce lot ne propose donc aucune assignation fictive, champ local non persisté ou extension implicite de lecture. Avant d’ajouter cette fonction, définir explicitement les agents éligibles (notamment ADMIN seul ou nouveau rôle), les droits de lecture/écriture, les règles de transfert/désactivation et l’audit versionné privé. La réouverture n’assigne personne et ne modifie aucun périmètre de visibilité.
+
+Limites : historique embarqué non paginé et non infalsifiable, pas de rétention/audit de consultation ni politique d’archivage, recherche/filtrage de statut global absent.

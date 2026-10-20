@@ -11,9 +11,10 @@ import {
 type Props = { client: DelifastClient; onUnauthorized: () => void };
 const LIMIT = 20;
 const statuses: SupportStatus[] = ['OPEN', 'IN_PROGRESS', 'RESOLVED'];
-const nextStatus: Record<'OPEN' | 'IN_PROGRESS', SupportStatus> = {
+const nextStatus: Record<SupportStatus, SupportStatus> = {
   OPEN: 'IN_PROGRESS',
   IN_PROGRESS: 'RESOLVED',
+  RESOLVED: 'IN_PROGRESS',
 };
 
 function errorText(error: unknown) {
@@ -125,7 +126,7 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
     if (!detail || blocked || loading || mutationRef.current || !confirmed || !note.trim()) return;
     const selectedAtStart = detail.id;
     const requestAtStart = requestId.current;
-    const target = detail.status === 'OPEN' || detail.status === 'IN_PROGRESS' ? nextStatus[detail.status] : null;
+    const target = nextStatus[detail.status];
     if (!target) return;
     mutationRef.current = true;
     setMutating(true);
@@ -154,7 +155,7 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
 
   const visibleTickets = statusFilter === 'ALL' ? tickets : tickets.filter(ticket => ticket.status === statusFilter);
   const canNext = tickets.length === LIMIT;
-  const canEdit = detail && (detail.status === 'OPEN' || detail.status === 'IN_PROGRESS');
+  const canEdit = detail && statuses.includes(detail.status);
 
   return (
     <section aria-label="Support" className="df-card df-support">
@@ -200,16 +201,17 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
           <p className="df-muted">Créateur : {detail.creatorRole} · version {detail.version}</p>
           <h3>Historique</h3>
           <ul className="df-history">{detail.history.map((event, index) => <li key={`${event.at}-${index}`}><strong>{event.status}</strong> · {new Date(event.at).toLocaleString('fr-FR')}<small>{event.actorRole}{event.note ? ` · ${event.note}` : ''}</small></li>)}</ul>
+          {detail.status === 'RESOLVED' && <p className="df-muted">Ce ticket est résolu. Un administrateur peut le rouvrir en IN_PROGRESS avec un motif visible par le créateur ; l’historique est conservé.</p>}
           {canEdit && <div className="df-profile-form">
+            {detail.status === 'RESOLVED' && <strong>Motif de réouverture obligatoire</strong>}
             <label>Note (visible par le créateur)
               <textarea maxLength={2000} rows={4} value={note} onChange={event => setNote(event.target.value)} disabled={mutating || blocked} />
             </label>
             <small>{note.length}/2000 caractères · La note sera visible par le créateur.</small>
-            <label className="df-check"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={mutating || blocked} /> Je confirme l’envoi de cette transition.</label>
-            <button onClick={() => void transition()} disabled={loading || mutating || blocked || !confirmed || !note.trim()}>{mutating ? 'Envoi…' : `Passer à ${nextStatus[detail.status as 'OPEN' | 'IN_PROGRESS']}`}</button>
+            <label className="df-check"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={mutating || blocked} /> Je confirme l’envoi de cette transition.{detail.status === 'RESOLVED' ? ' Réouverture en IN_PROGRESS.' : ''}</label>
+            <button onClick={() => void transition()} disabled={loading || mutating || blocked || !confirmed || !note.trim()}>{mutating ? 'Envoi…' : detail.status === 'RESOLVED' ? 'Rouvrir en IN_PROGRESS' : `Passer à ${nextStatus[detail.status]}`}</button>
             {blocked && <small className="df-error">Écriture verrouillée : relisez explicitement le détail pour vérifier la version.</small>}
           </div>}
-          {!canEdit && <p className="df-muted">Ce ticket est résolu ; aucune transition supplémentaire n’est autorisée.</p>}
         </aside>}
       </div>
     </section>

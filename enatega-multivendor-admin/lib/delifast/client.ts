@@ -354,6 +354,8 @@ export class DelifastClient {
       `query OperationsSupportTickets($limit: Int, $offset: Int) { operationsSupportTickets(limit: $limit, offset: $offset) { ${SUPPORT_FIELDS} } }`,
       { limit, offset }
     );
+    if (!Array.isArray(data.operationsSupportTickets) || data.operationsSupportTickets.length > limit)
+      throw new DelifastError('Liste support invalide', 'INVALID_RESPONSE');
     return data.operationsSupportTickets;
   }
   async operationsSupportTicket(id: string): Promise<SupportTicket | null> {
@@ -363,6 +365,8 @@ export class DelifastClient {
       `query OperationsSupportTicket($id: ID!) { operationsSupportTicket(id: $id) { ${SUPPORT_FIELDS} } }`,
       { id }
     );
+    if (data.operationsSupportTicket !== null && (!data.operationsSupportTicket || data.operationsSupportTicket.id !== id || !Number.isInteger(data.operationsSupportTicket.version) || !Array.isArray(data.operationsSupportTicket.history)))
+      throw new DelifastError('Détail support invalide', 'INVALID_RESPONSE');
     return data.operationsSupportTicket;
   }
   async transitionSupportTicket(
@@ -375,7 +379,10 @@ export class DelifastClient {
       `mutation TransitionSupportTicket($id: ID!, $expectedVersion: Int!, $status: SupportStatus!, $note: String!) { transitionSupportTicket(id: $id, expectedVersion: $expectedVersion, status: $status, note: $note) { ${SUPPORT_FIELDS} } }`,
       { id, expectedVersion, status, note }
     );
-    return data.transitionSupportTicket;
+    const ticket = data.transitionSupportTicket;
+    if (!ticket || ticket.id !== id || ticket.status !== status || ticket.version !== expectedVersion + 1 || !Array.isArray(ticket.history))
+      throw new DelifastError('Retour de transition support invalide', 'INVALID_RESPONSE');
+    return ticket;
   }
   async transition(
     orderId: string,

@@ -135,6 +135,47 @@ describe("support API", () => {
     expect(code(await gql("mutation($id:ID!,$v:Int!,$s:SupportStatus!,$n:String!){transitionSupportTicket(id:$id,expectedVersion:$v,status:$s,note:$n){id}}", { id, v: 2, s: "OPEN", n: "" }, staffTokens.ADMIN))).toBe("INVALID_TRANSITION");
   });
 
+  it("reopens only with a note, audits the admin internally, and deduplicates stale replays", async () => {
+    const id = (await create(aToken, "reopen-key-12345678")).body.data.createSupportTicket.id;
+    const transition = (v: number, s: string, n: string) =>
+      gql(
+        "mutation($id:ID!,$v:Int!,$s:SupportStatus!,$n:String!){transitionSupportTicket(id:$id,expectedVersion:$v,status:$s,note:$n){status version history{status note actorRole}}}",
+        { id, v, s, n },
+        staffTokens.ADMIN,
+      );
+    expect(code(await transition(0, "IN_PROGRESS", ""))).toBeUndefined();
+    expect(code(await transition(1, "RESOLVED", "done"))).toBeUndefined();
+    expect(code(await transition(2, "IN_PROGRESS", "   "))).toBe("INVALID_INPUT");
+    expect(code(await transition(2, "IN_PROGRESS", "reopened"))).toBeUndefined();
+    expect(code(await transition(3, "RESOLVED", "resolved again"))).toBeUndefined();
+    expect(code(await transition(4, "IN_PROGRESS", "reopened again"))).toBeUndefined();
+
+    const stored = await db.collection("support_tickets").findOne({ id });
+    expect(stored?.version).toBe(5);
+    expect(stored?.history).toHaveLength(6);
+    expect(stored?.history.slice(1).every((event: any) => event.actorId === "admin")).toBe(true);
+    expect(stored?.history.slice(1).every((event: any) => event.actorRole === "ADMIN")).toBe(true);
+    expect(stored?.history.slice(3).map((event: any) => event.note)).toEqual([
+      "reopened",
+      "resolved again",
+      "reopened again",
+    ]);
+
+    const publicView = await gql(
+      "query($id:ID!){operationsSupportTicket(id:$id){history{status at actorRole note}}}",
+      { id },
+      staffTokens.ADMIN,
+    );
+    expect(publicView.body.errors).toBeUndefined();
+    expect(publicView.body.data.operationsSupportTicket.history[3]).not.toHaveProperty("actorId");
+
+    const replay = await transition(4, "IN_PROGRESS", "replayed");
+    expect(code(replay)).toBe("CONCURRENT_MODIFICATION");
+    const afterReplay = await db.collection("support_tickets").findOne({ id });
+    expect(afterReplay?.version).toBe(5);
+    expect(afterReplay?.history).toHaveLength(6);
+  });
+
   it("persists support records after reconnect", async () => {
     const made = await create(aToken, "persist-12345678");
     const id = made.body.data.createSupportTicket.id;
@@ -143,4 +184,35 @@ describe("support API", () => {
     db = await dbModule.connect();
     expect((await gql("query($id:ID!){operationsSupportTicket(id:$id){id subject}}", { id }, staffTokens.ADMIN)).body.data.operationsSupportTicket.id).toBe(id);
   });
+});
+
+it("reopening keeps role boundaries, one concurrent winner, creator history and private actor audit", async () => {
+  const id = (await create(aToken, "reopen-race-12345678")).body.data.createSupportTicket.id;
+  const mutation = "mutation($id:ID!,$v:Int!,$s:SupportStatus!,$n:String!){transitionSupportTicket(id:$id,expectedVersion:$v,status:$s,note:$n){status version history{status note}}}";
+  const vars = (v: number, s: string, n = "motif conservé") => ({ id, v, s, n });
+  await gql(mutation, vars(0, "IN_PROGRESS"), staffTokens.ADMIN);
+  await gql(mutation, vars(1, "RESOLVED"), staffTokens.ADMIN);
+  const before = await db.collection("support_tickets").findOne({ id });
+  for (const [token, expected] of [[undefined, "UNAUTHENTICATED"], [aToken, "UNAUTHENTICATED"], [staffTokens.RESTAURANT, "FORBIDDEN"], [staffTokens.RIDER, "FORBIDDEN"]]) {
+    expect(code(await gql(mutation, vars(2, "IN_PROGRESS"), token))).toBe(expected);
+  }
+  expect(await db.collection("support_tickets").findOne({ id })).toEqual(before);
+  const race = await Promise.all(["motif A", "motif B"].map(n => gql(mutation, vars(2, "IN_PROGRESS", n), staffTokens.ADMIN)));
+  expect(race.filter(r => r.body.data)).toHaveLength(1);
+  expect(race.filter(r => code(r) === "CONCURRENT_MODIFICATION")).toHaveLength(1);
+  const after = await db.collection("support_tickets").findOne({ id });
+  expect(after?.version).toBe(3);
+  expect(after?.history).toHaveLength(4);
+  expect(after?.history.slice(0, 3)).toEqual(before?.history);
+  const own = await gql("query($id:ID!){customerSupportTicket(id:$id){status version history{status note}}}", { id }, aToken);
+  expect(own.body.data.customerSupportTicket.history.at(-1).note).toMatch(/^motif [AB]$/);
+  expect(own.body.data.customerSupportTicket.status).toBe("IN_PROGRESS");
+  expect((await gql("query($id:ID!){customerSupportTicket(id:$id){id}}", { id }, bToken)).body.data.customerSupportTicket).toBeNull();
+  // Projection directe : ne pas confondre absence au schéma et filtrage réel.
+  const { operationsSupportTicket } = await import("../src/support.js");
+  const view = await operationsSupportTicket(db, { id: "admin", name: "Admin", role: "ADMIN" }, id);
+  expect(view?.history).toHaveLength(4);
+  expect(view?.history.every((event: any) => !("actorId" in event))).toBe(true);
+  expect(after?.history[0]).not.toHaveProperty("actorId");
+  expect(after?.history.at(-1).actorId).toBe("admin");
 });

@@ -198,6 +198,41 @@ with sync_playwright() as p:
         assert denied.get('errors')
     assert success(page, 'query($id:ID!){staffSupportTicket(id:$id){id}}', {'id':'admin-ticket-a'}, fixtures['riderToken'])['staffSupportTicket'] is None
     checked('lecture et transition Support refusées hors ADMIN, isolation du créateur')
+    # Réouverture explicite : motif et confirmation, réponse acceptée mais perdue.
+    reopen = ticket.get_by_role('button', name='Rouvrir en IN_PROGRESS', exact=True)
+    expect(reopen).to_be_disabled()
+    ticket.get_by_role('checkbox').check()
+    expect(reopen).to_be_disabled()
+    ticket.get_by_label('Note (visible par le créateur)', exact=True).fill('Réouverture fictive — problème persistant')
+    expect(reopen).to_be_enabled()
+    lost_reopen = {'count': 0}
+    def lose_reopen(route):
+        if 'transitionSupportTicket(' in (route.request.post_data or ''):
+            lost_reopen['count'] += 1
+            response = route.fetch()
+            assert response.ok
+            route.abort('failed')
+        else: route.fallback()
+    page.route('**/api/delifast/graphql', lose_reopen)
+    reopen.click()
+    expect(ticket.get_by_text('Écriture verrouillée', exact=False)).to_be_visible()
+    expect(reopen).to_be_disabled()
+    assert lost_reopen['count'] == 1
+    page.unroute('**/api/delifast/graphql', lose_reopen)
+    # Relire seulement la page ne doit pas autoriser une seconde écriture.
+    support.get_by_role('button', name='Relire la page', exact=True).click()
+    expect(support.get_by_role('button', name='Relire la page', exact=True)).to_be_enabled()
+    expect(reopen).to_be_disabled()
+    ticket.get_by_role('button', name='Relire le détail', exact=True).click()
+    expect(ticket.get_by_role('button', name='Passer à RESOLVED', exact=True)).to_be_visible()
+    reopened = success(page, 'query($id:ID!){staffSupportTicket(id:$id){status version history{note}}}', {'id':'admin-ticket-a'}, fixtures['restaurantToken'])['staffSupportTicket']
+    assert reopened['status'] == 'IN_PROGRESS' and reopened['version'] == 3
+    assert len(reopened['history']) == 4
+    assert reopened['history'][-1]['note'] == 'Réouverture fictive — problème persistant'
+    assert reopened['history'][-2]['note'] == 'Résolution de recette — visible au créateur'
+    expect(support.get_by_role('row').filter(has=page.get_by_role('button', name='Recette support 1', exact=True)).get_by_text('IN_PROGRESS', exact=True)).to_be_visible()
+    capture(page, 'support-reopened.png')
+    checked('réouverture ADMIN : motif et confirmation, réponse perdue sans doublon, relecture détail obligatoire, historique et vue créateur conservés')
     support.get_by_role('button', name='Recette support 2', exact=True).click()
     expect(ticket.get_by_role('button', name='Passer à IN_PROGRESS', exact=True)).to_be_visible()
     lost_support = {'count':0}

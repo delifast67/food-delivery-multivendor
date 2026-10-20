@@ -79,3 +79,42 @@ test('le panneau impose les gardes de transition et la confirmation', () => {
   assert.match(panel, /maxLength=\{2000\}/);
   assert.match(panel, /onUnauthorized/);
 });
+
+test('la réouverture transmet le motif et la version résolue sans créer un droit nouveau', async () => {
+  storage();
+  const calls = transport(({ variables }) => response({ transitionSupportTicket: { ...ticket, status: 'IN_PROGRESS', version: variables.expectedVersion + 1 } }));
+  const reopened = await new DelifastClient().transitionSupportTicket(ticket.id, 4, 'IN_PROGRESS', 'Motif de réouverture');
+  assert.equal(reopened.version, 5);
+  assert.deepEqual(calls[0].variables, { id: ticket.id, expectedVersion: 4, status: 'IN_PROGRESS', note: 'Motif de réouverture' });
+  assert.equal(calls.length, 1);
+});
+
+test('retour de transition absent ou incohérent : erreur explicite et aucun rejeu', async () => {
+  storage();
+  for (const value of [undefined, null, {}, { ...ticket, id: 'autre', status: 'IN_PROGRESS', version: 5 }, { ...ticket, status: 'RESOLVED', version: 5 }, { ...ticket, status: 'IN_PROGRESS', version: 4 }, { ...ticket, status: 'IN_PROGRESS', version: 5, history: null }]) {
+    const calls = transport(() => response({ transitionSupportTicket: value }));
+    await assert.rejects(new DelifastClient().transitionSupportTicket(ticket.id, 4, 'IN_PROGRESS', 'Motif'), { code: 'INVALID_RESPONSE' });
+    assert.equal(calls.length, 1);
+  }
+});
+
+test('une réponse réseau perdue reste une erreur et n’est jamais rejouée automatiquement', async () => {
+  storage();
+  const calls = transport(() => { throw new TypeError('Réponse perdue après écriture'); });
+  await assert.rejects(new DelifastClient().transitionSupportTicket(ticket.id, 4, 'IN_PROGRESS', 'Motif'));
+  assert.equal(calls.length, 1);
+});
+
+test('une relecture support absente ou incohérente ne déverrouille pas les écritures', async () => {
+  storage();
+  for (const value of [undefined, {}, { ...ticket, id: 'autre' }, { ...ticket, version: null }, { ...ticket, history: null }]) {
+    transport(() => response({ operationsSupportTicket: value }));
+    await assert.rejects(new DelifastClient().operationsSupportTicket(ticket.id), { code: 'INVALID_RESPONSE' });
+  }
+  transport(() => response({ operationsSupportTicket: null }));
+  assert.equal(await new DelifastClient().operationsSupportTicket(ticket.id), null);
+  for (const value of [undefined, null, {}, Array(21).fill(ticket)]) {
+    transport(() => response({ operationsSupportTickets: value }));
+    await assert.rejects(new DelifastClient().operationsSupportTickets(), { code: 'INVALID_RESPONSE' });
+  }
+});

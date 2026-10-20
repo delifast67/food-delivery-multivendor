@@ -174,6 +174,76 @@ try {
   // Fixture de test UNIQUEMENT dans MongoMemoryServer : aucun appel paiement, même simulé.
   dbClient = await MongoClient.connect(mongo.getUri());
   const db = dbClient.db();
+  const supportTicketId = `support-reopen-${randomUUID()}`;
+  const supportTimes = [0, 1, 2].map(offset => new Date(Date.now() + offset).toISOString());
+  await db.collection('support_tickets').insertOne({
+    id: supportTicketId,
+    creatorId: restaurant.user.id,
+    creatorRole: 'RESTAURANT',
+    restaurantId: restaurant.user.restaurantId,
+    scopeTenant: restaurant.user.restaurantId,
+    customerId: null,
+    subject: 'Réouverture support fictive',
+    description: 'Fixture jetable pour vérifier la réouverture administrative',
+    status: 'RESOLVED',
+    version: 2,
+    createdAt: supportTimes[0],
+    updatedAt: supportTimes[2],
+    history: [
+      { status: 'OPEN', at: supportTimes[0], actorRole: 'RESTAURANT', note: '' },
+      { status: 'IN_PROGRESS', at: supportTimes[1], actorRole: 'ADMIN', note: 'Prise en charge initiale' },
+      { status: 'RESOLVED', at: supportTimes[2], actorRole: 'ADMIN', note: 'Résolution initiale' },
+    ],
+    idempotencyKey: `fixture-${randomUUID()}`,
+    payloadFingerprint: 'fixture-only',
+  });
+  const supportBefore = await client.operationsSupportTicket(supportTicketId);
+  assert.equal(supportBefore.status, 'RESOLVED');
+  assert.equal(supportBefore.version, 2);
+  assert.equal(supportBefore.history.length, 3);
+  await assert.rejects(
+    client.transitionSupportTicket(supportTicketId, supportBefore.version, 'IN_PROGRESS', '   '),
+    e => e.code === 'INVALID_INPUT',
+  );
+  for (const [token, code] of [[undefined, 'UNAUTHENTICATED'], [restaurant.token, 'FORBIDDEN'], [rider.token, 'FORBIDDEN']]) {
+    await rejected(
+      'mutation($id:ID!,$v:Int!,$s:SupportStatus!,$n:String!){transitionSupportTicket(id:$id,expectedVersion:$v,status:$s,note:$n){id}}',
+      { id: supportTicketId, v: 2, s: 'IN_PROGRESS', n: 'Tentative interdite' }, token, code,
+    );
+  }
+  const reopened = await client.transitionSupportTicket(
+    supportTicketId, supportBefore.version, 'IN_PROGRESS', 'Motif de réouverture vérifié',
+  );
+  assert.equal(reopened.status, 'IN_PROGRESS');
+  assert.equal(reopened.version, 3);
+  assert.equal(reopened.history.length, 4);
+  assert.equal(reopened.history[2].note, 'Résolution initiale');
+  assert.equal(reopened.history[3].note, 'Motif de réouverture vérifié');
+  assert.equal(reopened.history[3].actorRole, 'ADMIN');
+  assert.ok(!('actorId' in reopened.history[3]), 'actorId ne doit pas sortir du client');
+  const ownerView = (await gql(
+    'query($id:ID!){staffSupportTicket(id:$id){status version history{status note}}}',
+    { id: supportTicketId }, restaurant.token,
+  )).staffSupportTicket;
+  assert.equal(ownerView.status, 'IN_PROGRESS');
+  assert.equal(ownerView.version, 3);
+  assert.equal(ownerView.history[3].note, 'Motif de réouverture vérifié');
+  await assert.rejects(
+    client.transitionSupportTicket(supportTicketId, supportBefore.version, 'IN_PROGRESS', 'Rejeu obsolète'),
+    e => e.code === 'CONCURRENT_MODIFICATION',
+  );
+  const persistedSupport = await db.collection('support_tickets').findOne({ id: supportTicketId });
+  assert.equal(persistedSupport.version, 3);
+  assert.equal(persistedSupport.history.length, 4);
+  assert.equal(persistedSupport.history[3].actorId, admin.user.id);
+  assert.equal(persistedSupport.history[3].note, 'Motif de réouverture vérifié');
+  const internalField = await raw(
+    'query($id:ID!){operationsSupportTicket(id:$id){id history{status actorId}}}',
+    { id: supportTicketId }, admin.token,
+  );
+  assert.ok(internalField.errors?.some(error => error.extensions?.code === 'GRAPHQL_VALIDATION_FAILED'));
+  assert.ok(!internalField.data, 'Un champ interne ne doit pas produire de données');
+  ok('réouverture support RESOLVED→IN_PROGRESS : proxy réel, droits, motif, CAS, historique et audit interne');
   async function paidFixture() {
     const order = await place();
     await db.collection('orders').updateOne({ id: order.id }, { $set: { status: 'CONFIRMED', paymentStatus: 'PAID' }, $push: { history: { status: 'CONFIRMED', at: new Date().toISOString(), actorRole: 'SYSTEM' } } });
