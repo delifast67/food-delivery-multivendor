@@ -43,27 +43,41 @@ function App({ api, storage, controller: injected } = {}) {
   const [selected, setSelected] = React.useState(null);
   const [cancelId, setCancelId] = React.useState(null);
   const [actionError, setActionError] = React.useState(null);
+  const [ticketSubject, setTicketSubject] = React.useState("");
+  const [ticketDescription, setTicketDescription] = React.useState("");
+  const uiEpoch = React.useRef(0);
   React.useEffect(() => {
     const unsubscribe = controller.subscribe(setState);
     controller.restore().catch(() => {});
-    return unsubscribe;
+    return () => {
+      uiEpoch.current += 1;
+      unsubscribe();
+    };
   }, [controller]);
   React.useEffect(() => {
+    uiEpoch.current += 1;
+    setActionError(null);
     if (!state.user) {
       setSelected(null);
       setCancelId(null);
+      setTicketSubject("");
+      setTicketDescription("");
     }
-  }, [state.user]);
+  }, [state.user?.id]);
   const run = (fn) => async () => {
+    const started = uiEpoch.current;
     setActionError(null);
     try {
       await fn();
     } catch (error) {
-      setActionError(error.message || "Action impossible");
+      if (started === uiEpoch.current)
+        setActionError(error.message || "Action impossible");
     }
   };
   const disabled = state.busy || state.restoring;
+  const ticketEditingBlocked = disabled || Boolean(state.pendingTicket);
   const order = state.orders.find((item) => item.id === selected);
+  const ticket = state.selectedTicket;
   const button = (title, fn, extra = {}) =>
     h(
       View,
@@ -150,6 +164,88 @@ function App({ api, storage, controller: injected } = {}) {
             line(
               "Commandes payées uniquement. Actualisation manuelle ; aucun suivi temps réel.",
             ),
+            h(Text, { style: styles.heading }, "Tickets restaurant"),
+            h(TextInput, {
+              accessibilityLabel: "Sujet du ticket",
+              placeholder: "Sujet",
+              value: ticketSubject,
+              maxLength: 120,
+              editable: !ticketEditingBlocked,
+              onChangeText: setTicketSubject,
+              style: styles.input,
+            }),
+            h(TextInput, {
+              accessibilityLabel: "Description du ticket",
+              placeholder: "Description",
+              value: ticketDescription,
+              maxLength: 4000,
+              editable: !ticketEditingBlocked,
+              multiline: true,
+              onChangeText: setTicketDescription,
+              style: styles.input,
+            }),
+            button(
+              "Ouvrir un ticket",
+              async () => {
+                const started = uiEpoch.current;
+                await controller.createSupportTicket({
+                  subject: ticketSubject,
+                  description: ticketDescription,
+                });
+                if (started !== uiEpoch.current) return;
+                setTicketSubject("");
+                setTicketDescription("");
+              },
+              {
+                disabled:
+                  ticketEditingBlocked ||
+                  !ticketSubject.trim() ||
+                  !ticketDescription.trim(),
+              },
+            ),
+            state.pendingTicket &&
+              button(
+                "Réessayer le même ticket",
+                async () => {
+                  const started = uiEpoch.current;
+                  await controller.retryCreateTicket();
+                  if (started !== uiEpoch.current) return;
+                  setTicketSubject("");
+                  setTicketDescription("");
+                },
+                { disabled },
+              ),
+            button("Actualiser les tickets", () =>
+              controller.loadSupportTickets(0),
+            ),
+            ...(state.supportTickets.length
+              ? state.supportTickets.map((item) =>
+                  button(`${item.subject} — ${item.status} (${item.id})`, () =>
+                    controller.openTicket(item.id),
+                  ),
+                )
+              : [line("Aucun ticket disponible pour ce restaurant.")]),
+            state.ticketHasMore &&
+              button("Charger plus de tickets", () =>
+                controller.loadSupportTickets(state.ticketOffset),
+              ),
+            ticket &&
+              h(
+                View,
+                { style: styles.card },
+                h(Text, { style: styles.heading }, ticket.subject),
+                line(`Statut : ${ticket.status} · version ${ticket.version}`),
+                line(ticket.description),
+                line(
+                  `Créé : ${ticket.createdAt} · Actualisé : ${ticket.updatedAt}`,
+                ),
+                ...(ticket.history || []).map((event, i) =>
+                  line(
+                    `${event.at} — ${event.status} (${event.actorRole})${event.note ? ` : ${event.note}` : ""}`,
+                    `ticket-event-${i}`,
+                  ),
+                ),
+              ),
             !state.orders.length &&
               line("Aucune commande disponible pour ce restaurant."),
             ...state.orders.map((item) =>

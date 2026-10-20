@@ -269,3 +269,73 @@ test("adaptateur SecureStore transmet le niveau de protection natif", async () =
   await storage.removeItem("restaurant-session");
   assert.equal(calls[1], "restaurant-session");
 });
+
+test("ticket form, paginated list, detail and history are rendered", async () => {
+  const ticket = {
+    id: "t1",
+    creatorRole: "RESTAURANT",
+    restaurantId: "r1",
+    subject: "Aide menu",
+    description: "Détail",
+    status: "OPEN",
+    version: 1,
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    history: [
+      {
+        status: "OPEN",
+        at: "2026-01-01",
+        actorRole: "RESTAURANT",
+        note: "Créé",
+      },
+    ],
+  };
+  const tree = await mount(
+    client({
+      supportTickets: async () => [ticket],
+      supportTicket: async () => ticket,
+      createSupportTicket: async () => ticket,
+    }),
+  );
+  await login(tree);
+  assert.match(content(tree), /Tickets restaurant/);
+  await renderer.act(async () => {
+    const inputs = tree.root.findAllByType("TextInput");
+    inputs[0].props.onChangeText("Aide menu");
+    inputs[1].props.onChangeText("Détail");
+  });
+  await press(tree, "Ouvrir un ticket");
+  assert.match(content(tree), /Aide menu|Créé/);
+  await close(tree);
+});
+
+test("réponse ticket incertaine verrouille les champs et laisse la reprise disponible", async () => {
+  const tree = await mount(
+    client({
+      createSupportTicket: async () => {
+        throw Object.assign(new Error("Délai réseau dépassé"), {
+          code: "TIMEOUT",
+        });
+      },
+    }),
+  );
+  await login(tree);
+  await renderer.act(async () => {
+    const inputs = tree.root.findAllByType("TextInput");
+    inputs[0].props.onChangeText("Aide menu");
+    inputs[1].props.onChangeText("Détail");
+  });
+  const open = tree.root
+    .findAllByType("Button")
+    .find((node) => node.props.title === "Ouvrir un ticket");
+  await renderer.act(async () => open.props.onPress());
+  const inputs = tree.root.findAllByType("TextInput");
+  assert.equal(inputs[0].props.editable, false);
+  assert.equal(inputs[1].props.editable, false);
+  const retry = tree.root
+    .findAllByType("Button")
+    .find((node) => node.props.title === "Réessayer le même ticket");
+  assert.ok(retry);
+  assert.equal(retry.props.disabled, false);
+  await close(tree);
+});

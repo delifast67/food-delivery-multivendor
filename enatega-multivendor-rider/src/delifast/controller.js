@@ -59,6 +59,7 @@ function createController({ api, storage }) {
     active = null;
   let storageQueue = Promise.resolve(),
     pending = [],
+    supportPending = null,
     requiresRefresh = false;
   const listeners = new Set();
   const publish = (patch) => {
@@ -87,10 +88,17 @@ function createController({ api, storage }) {
   const clear = () => {
     token = null;
     pending = [];
+    supportPending = null;
     epoch++;
     active = null;
     requiresRefresh = false;
-    publish(initial(!connected));
+    publish({
+      ...initial(!connected),
+      supportTickets: [],
+      selectedSupportTicket: null,
+      supportPending: null,
+      ticketError: null,
+    });
   };
   const removeStored = () =>
     serial(async () => {
@@ -514,6 +522,142 @@ function createController({ api, storage }) {
           if (run === epoch) publish({ busy: false });
         }
       });
+    },
+    async supportTickets(limit = 20, offset = 0) {
+      return exclusive(async (run) => {
+        if (!token || !state.user) throw fail("Session absente", "AUTH");
+        if (
+          !Number.isInteger(limit) ||
+          limit < 1 ||
+          limit > 50 ||
+          !Number.isInteger(offset) ||
+          offset < 0 ||
+          offset > 10000
+        )
+          throw fail("Pagination ticket invalide", "INVALID_INPUT");
+        const value = token;
+        publish({ busy: true, error: null, ticketError: null });
+        try {
+          const tickets = await api.supportTickets(value, limit, offset);
+          if (run !== epoch) return;
+          publish({ supportTickets: clone(tickets), ticketError: null });
+          return clone(tickets);
+        } catch (error) {
+          if (run !== epoch) return;
+          if (isAuth(error) || error.code === "FORBIDDEN")
+            await expire(run, error);
+          else publish({ ticketError: viewError(error) });
+          throw error;
+        } finally {
+          if (run === epoch) publish({ busy: false });
+        }
+      });
+    },
+    supportTicket(id) {
+      return exclusive(async (run) => {
+        if (!token || !state.user) throw fail("Session absente", "AUTH");
+        if (!text(id, 256))
+          throw fail("Identifiant ticket requis", "INVALID_INPUT");
+        const value = token;
+        publish({ busy: true, error: null, ticketError: null });
+        try {
+          const ticket = await api.supportTicket(value, id);
+          if (run !== epoch) return;
+          publish({
+            selectedSupportTicket: ticket ? clone(ticket) : null,
+            ticketError: null,
+          });
+          return ticket ? clone(ticket) : null;
+        } catch (error) {
+          if (run !== epoch) return;
+          if (isAuth(error) || error.code === "FORBIDDEN")
+            await expire(run, error);
+          else publish({ ticketError: viewError(error) });
+          throw error;
+        } finally {
+          if (run === epoch) publish({ busy: false });
+        }
+      });
+    },
+    createSupportTicket(subject, description, idempotencyKey) {
+      return exclusive(async (run) => {
+        if (!token || !state.user) throw fail("Session absente", "AUTH");
+        if (subject && typeof subject === "object") {
+          ({ subject, description, idempotencyKey } = subject);
+        }
+        if (supportPending) {
+          if (
+            subject !== supportPending.subject ||
+            description !== supportPending.description
+          )
+            throw fail(
+              "Un ticket est en attente : réessayez avec le même contenu",
+              "SUPPORT_PENDING",
+            );
+          idempotencyKey = supportPending.idempotencyKey;
+        }
+        if (!idempotencyKey)
+          idempotencyKey = `rider-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        if (
+          !text(subject, 120) ||
+          !text(description, 4000) ||
+          !/^[a-zA-Z0-9_-]{8,128}$/.test(idempotencyKey)
+        )
+          throw fail(
+            "Sujet, description et idempotence requis",
+            "INVALID_INPUT",
+          );
+        supportPending = { subject, description, idempotencyKey };
+        publish({ supportPending: clone(supportPending) });
+        const value = token;
+        publish({ busy: true, error: null, ticketError: null });
+        try {
+          const ticket = await api.createSupportTicket(value, {
+            subject,
+            description,
+            idempotencyKey,
+          });
+          if (run !== epoch) return;
+          supportPending = null;
+          publish({
+            supportPending: null,
+            selectedSupportTicket: clone(ticket),
+            supportTickets: [
+              clone(ticket),
+              ...(state.supportTickets || []).filter(
+                (item) => item.id !== ticket.id,
+              ),
+            ],
+            ticketError: null,
+            notice: "Ticket créé.",
+          });
+          return clone(ticket);
+        } catch (error) {
+          if (run !== epoch) return;
+          if (isAuth(error) || error.code === "FORBIDDEN")
+            await expire(run, error);
+          else {
+            const uncertain = isNetwork(error);
+            if (!uncertain) supportPending = null;
+            publish({
+              supportPending: uncertain ? clone(supportPending) : null,
+              ticketError: viewError(error),
+              notice: uncertain
+                ? "Résultat incertain : réessayez avec le même ticket."
+                : null,
+            });
+          }
+          throw error;
+        } finally {
+          if (run === epoch) publish({ busy: false });
+        }
+      });
+    },
+    refreshSupportTickets(limit = 20, offset = 0) {
+      return this.supportTickets(limit, offset);
+    },
+    loadSupportTickets(offset = 0) {
+      return this.supportTickets(20, offset);
     },
     transition(id, status) {
       return exclusive(async (run) => {

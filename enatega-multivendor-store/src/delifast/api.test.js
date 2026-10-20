@@ -9,10 +9,13 @@ const response = (data, init = {}) => ({
 });
 test("documents expose only staff operations and never client accessToken", () => {
   assert.deepEqual(Object.keys(documents).sort(), [
+    "createStaffSupportTicket",
     "me",
     "operationsOrders",
     "staffLogin",
     "staffLogout",
+    "staffSupportTicket",
+    "staffSupportTickets",
     "transitionOrder",
   ]);
   for (const doc of Object.values(documents))
@@ -158,4 +161,37 @@ test("timeouts abort transport even if fetch ignores the abort signal", async ()
   });
   await assert.rejects(api.orders("t"), (error) => error.code === "TIMEOUT");
   assert.equal(signal.aborted, true);
+});
+
+test("support-ticket documents use the exact restaurant contract and identity-free input", async () => {
+  let sent;
+  const api = createClient({
+    fetchImpl: async (_url, options) => {
+      sent = JSON.parse(options.body);
+      return response({
+        data: {
+          createStaffSupportTicket: {
+            id: "t1",
+            creatorRole: "RESTAURANT",
+            restaurantId: "r1",
+          },
+        },
+      });
+    },
+  });
+  await api.createSupportTicket("tok", {
+    subject: "Aide",
+    description: "Détail",
+    idempotencyKey: "idem-1",
+  });
+  assert.deepEqual(sent.variables, {
+    input: { subject: "Aide", description: "Détail", idempotencyKey: "idem-1" },
+  });
+  assert.equal(
+    Object.keys(sent.variables.input).some((key) =>
+      /identity|restaurant|creator|role/i.test(key),
+    ),
+    false,
+  );
+  assert.match(sent.query, /CreateSupportTicketInput/);
 });

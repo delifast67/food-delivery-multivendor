@@ -135,7 +135,8 @@ export type CustomerSession = { token: string; customer: Customer };
 export type CustomerOtpChallenge = { challengeId: string; expiresIn: number; retryAfter: number };
 export type SupportStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED";
 export type SupportTicket = {
-  id: string; customerId: string; subject: string; description: string;
+  id: string; customerId: string | null; subject: string; description: string;
+  creatorId?: string; creatorRole?: string; restaurantId?: string | null;
   status: SupportStatus; version: number; createdAt: string; updatedAt: string;
   history: { status: SupportStatus; at: string; actorRole: string; note: string }[];
 };
@@ -200,7 +201,7 @@ const SIMULATE_PAYMENT = `mutation SimulateDemoPayment($orderId: ID!) { simulate
 const TRANSITION = `mutation TransitionOrder($orderId: ID!, $status: String!, $expectedStatus: String!) { transitionOrder(orderId: $orderId, status: $status, expectedStatus: $expectedStatus) { ${ORDER_OPERATIONS_FIELDS} } }`;
 const ASSIGN = `mutation AssignRider($orderId: ID!, $riderId: ID!, $expectedStatus: String!) { assignRider(orderId: $orderId, riderId: $riderId, expectedStatus: $expectedStatus) { ${ORDER_OPERATIONS_FIELDS} } }`;
 
-const SUPPORT_FIELDS = `id customerId subject description status version createdAt updatedAt history { status at actorRole note }`;
+const SUPPORT_FIELDS = `id customerId creatorId creatorRole restaurantId subject description status version createdAt updatedAt history { status at actorRole note }`;
 const CUSTOMER_SUPPORT = `query CustomerSupport($limit:Int!,$offset:Int!){customerSupportTickets(limit:$limit,offset:$offset){${SUPPORT_FIELDS}}}`;
 const OPERATIONS_SUPPORT = `query OperationsSupport($limit:Int!,$offset:Int!){operationsSupportTickets(limit:$limit,offset:$offset){${SUPPORT_FIELDS}}}`;
 const CREATE_SUPPORT = `mutation CreateSupport($input:CreateSupportTicketInput!){createSupportTicket(input:$input){${SUPPORT_FIELDS}}}`;

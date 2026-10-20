@@ -13,12 +13,17 @@ class DelifastApiError extends Error {
 const userFields = "id name role restaurantId";
 const orderFields =
   "id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice baseUnitPrice total selectedOptions { groupId groupName optionId name priceXof } } }";
+const ticketFields =
+  "id creatorId creatorRole restaurantId customerId subject description status version createdAt updatedAt history { status at actorRole note }";
 const documents = {
   staffLogin: `mutation StaffLogin($email: String!, $password: String!) { staffLogin(email: $email, password: $password) { token user { ${userFields} } } }`,
   me: `query Me { me { ${userFields} } }`,
   operationsOrders: `query OperationsOrders { operationsOrders { ${orderFields} } }`,
   transitionOrder: `mutation TransitionOrder($orderId: ID!, $status: String!, $expectedStatus: String!) { transitionOrder(orderId: $orderId, status: $status, expectedStatus: $expectedStatus) { ${orderFields} } }`,
   staffLogout: "mutation StaffLogout { staffLogout }",
+  staffSupportTickets: `query StaffSupportTickets($limit: Int = 20, $offset: Int = 0) { staffSupportTickets(limit: $limit, offset: $offset) { ${ticketFields} } }`,
+  staffSupportTicket: `query StaffSupportTicket($id: ID!) { staffSupportTicket(id: $id) { ${ticketFields} } }`,
+  createStaffSupportTicket: `mutation CreateStaffSupportTicket($input: CreateSupportTicketInput!) { createStaffSupportTicket(input: $input) { ${ticketFields} } }`,
 };
 function createClient({
   endpoint = DEFAULT_ENDPOINT,
@@ -127,6 +132,11 @@ function createClient({
     transition: (token, id, status, expectedStatus) =>
       field("transitionOrder", { orderId: id, status, expectedStatus }, token),
     logout: (token) => field("staffLogout", {}, token),
+    supportTickets: (token, limit = 20, offset = 0) =>
+      field("staffSupportTickets", { limit, offset }, token),
+    supportTicket: (token, id) => field("staffSupportTicket", { id }, token),
+    createSupportTicket: (token, input) =>
+      field("createStaffSupportTicket", { input }, token),
   };
 }
 module.exports = {

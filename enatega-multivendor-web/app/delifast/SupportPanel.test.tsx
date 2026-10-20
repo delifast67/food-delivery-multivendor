@@ -252,3 +252,15 @@ it("allows admin processing without an optional note", async () => {
     "",
   );
 });
+
+it("admin identifies restaurant and rider creators without labelling them as customers", async () => {
+  vi.spyOn(delifastApi, "operationsSupportTickets").mockResolvedValue([
+    { ...ticket, id: "restaurant-ticket", customerId: null, creatorId: "staff-resto", creatorRole: "RESTAURANT", restaurantId: "resto-1" },
+    { ...ticket, id: "rider-ticket", customerId: null, creatorId: "staff-rider", creatorRole: "RIDER", restaurantId: null },
+  ]);
+  render(<SupportPanel token="admin-token" admin />);
+  expect(await screen.findByText(/restaurant staff-resto · établissement resto-1/)).toBeInTheDocument();
+  expect(screen.getByText(/livreur staff-rider/)).toBeInTheDocument();
+  expect(screen.queryByText(/client null/)).not.toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "Prendre en charge" })).toHaveLength(2);
+});

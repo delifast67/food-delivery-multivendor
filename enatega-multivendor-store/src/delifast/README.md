@@ -61,3 +61,11 @@ Pas de build APK/IPA signé, de recette téléphone, de publication ou de déplo
 Les anciennes routes sont conservées sous `historique/app`, les anciennes configurations Babel/Metro sous `historique`. Les bibliothèques et sources historiques restent présentes pour une migration progressive, sans être chargées par l’entrée active. Les identifiants iOS/Android restent ceux d’origine jusqu’à décision explicite du propriétaire ; l’entrée locale désactive les mises à jour OTA, retire l’association EAS et ne demande pas de permissions GPS/imprimante/notifications.
 
 Avant un pilote réel : compte marchand et parcours d’encaissement validés, sécurité/authentification de production, remboursement/rapprochement, zones/frais et règles commerciales, tests sur appareils, applications livreur et administration à terminer, supervision/sauvegardes et déploiement de préproduction autorisé. L’API garde son verrou `NODE_ENV=production`. Le raccordement restaurant n’enlève aucun de ces prérequis.
+
+## Tickets de support
+
+Le parcours restaurant prend en charge les tickets texte via `createSupportTicket({subject, description})`, la liste paginée via `loadSupportTickets(0)` et le détail avec `state.supportTickets`. Les bornes sont validées avant toute requête ou publication d’état : sujet **120 caractères maximum**, description **4000 caractères maximum**, et clé d’idempotence **8 à 128 caractères** (la page serveur reste limitée à **50 éléments**, offset **10000 maximum**). Une erreur métier déterministe, notamment `INVALID_INPUT`, n’active jamais la reprise.
+
+Si la réponse réseau est perdue après l’écriture (`UNAVAILABLE` ou `TIMEOUT`), le sujet, la description normalisés et la clé restent en mémoire uniquement. L’écran verrouille le formulaire et propose « Réessayer le même ticket » : la reprise réutilise exactement la même clé afin d’éviter un doublon côté serveur. Les doubles clics partagent la même requête en vol. Une réussite efface la reprise en attente ; la déconnexion, l’expiration et tout changement de session purgent le ticket en attente, les détails, la liste et le formulaire. Les réponses tardives d’une ancienne session sont ignorées avant tout filtrage ou écriture. Rien de cette reprise n’est persisté dans SecureStore.
+
+Cette livraison ne couvre **ni chat ni pièces jointes** ; seuls les tickets texte et leur historique sont pris en charge.

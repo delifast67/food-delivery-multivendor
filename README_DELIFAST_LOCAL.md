@@ -570,3 +570,29 @@ La recette `node scripts/delifast-mobile-support-smoke.mjs`, ajoutée au job CI 
 Vérifications locales de ce lot : **302 tests serveur** (25 fichiers), **96 tests client mobile**, **11 gardes transversaux/entrée/configuration**, **17 documents GraphQL mobiles** conformes et **5 groupes de contrôles HTTP mobile/API/MongoDB**. Compilation TypeScript API et exports JS/Hermes Expo Android/iOS validés séparément. Les tests de rendu utilisent des primitives natives de test ; les exports ne sont ni des APK/IPA signés ni une recette sur téléphone. La CI distante doit être vérifiée sur le nouveau commit, pas déduite de ces résultats locaux.
 
 **Le projet complet reste inachevé et non prêt pour la production.** Chat, pièces jointes et notifications de support ne sont pas inclus. Aucun achat, SMS ou paiement réel, changement Orange, modification du bloc About GitHub, fusion ni déploiement n’est effectué. La publication autorisée vise uniquement le fork `delifast67/food-delivery-multivendor`, branche `feat/delifast-local-ordering`, avec actualisation de la PR ouverte sans fusion.
+
+## Incidents opérationnels : tickets restaurant et livreur
+
+Les applications locales restaurant et livreur permettent désormais d’ouvrir un ticket (sujet et description), retrouver leurs propres tickets, paginer, consulter le détail et l’historique, et actualiser le statut. L’administration reste dans **Support** sur `/delifast/operations` : prise en charge puis résolution avec une note visible par le créateur. La liste admin distingue clients, restaurants et livreurs, avec l’établissement lorsqu’il existe. Aucun chat ni dépôt de pièces jointes n’est ajouté.
+
+Les opérations `staffSupportTickets`, `staffSupportTicket` et `createStaffSupportTicket` déduisent exclusivement de la session serveur le créateur, son rôle et son tenant restaurant. Deux comptes du même restaurant ne partagent pas leurs tickets. Les restaurants, livreurs et clients ne peuvent pas lire les tickets d’un autre créateur, même si leurs identifiants de compte coïncident. Un changement de rôle ou d’établissement ne donne pas accès au périmètre précédent. Les sessions désactivées, expirées ou révoquées perdent leur accès. Les anciens tickets client restent lisibles ; la migration remplace l’ancien index d’idempotence par des index distincts clients/personnel. Voir `delifast-api/SUPPORT_CONTRACT.md`.
+
+Les requêtes concurrentes ou reprises avec la même clé et le même contenu retournent le ticket canonique sans doublon. Les formulaires gardent **en mémoire seulement** le contenu exact et la clé d’une tentative incertaine, verrouillent son édition et proposent une reprise à l’identique. Cette tentative n’est pas persistée après arrêt ou redémarrage de l’app : consulter ses tickets avant d’en recréer un. Les tickets ne rejoignent pas le journal hors ligne des actions de livraison. Les gardes de session et de réponses périmées empêchent la réapparition de données après déconnexion. Aucun succès optimiste n’est affiché avant confirmation serveur.
+
+Les limites sont 120 caractères pour le sujet, 4000 pour la description, pages de 20 (maximum API 50), offset maximal 10000. Le cycle reste `OPEN → IN_PROGRESS → RESOLVED`, avec version atomique admin. Les notes admin sont visibles par le créateur et ne doivent pas contenir d’informations internes confidentielles.
+
+```bash
+npm run build --prefix delifast-api
+npm test --prefix delifast-api
+npm run test:delifast --prefix enatega-multivendor-store
+npm run test:delifast --prefix enatega-multivendor-rider
+node scripts/delifast-store-contract.mjs
+node scripts/delifast-rider-contract.mjs
+node scripts/delifast-staff-support-smoke.mjs
+```
+
+La suite `delifast-api/test/staff-support-api.test.ts` ajoute 11 tests dédiés aux permissions, à l’isolation inter-créateurs/tenants/rôles, aux collisions d’identifiants, aux reprises concurrentes, à la pagination, à la résolution admin, à la révocation et à la migration legacy réexécutable. La recette HTTP passe six groupes de contrôles avec les véritables contrôleurs des deux apps, une API et une base MongoDB jetables, dont une réponse perdue **après écriture** suivie d’une reprise sans doublon. Le serveur de cette recette ne reçoit aucun secret fournisseur et les transports réels sont désactivés. Elle rejoint le job CI restaurant ; chaque contrat opérationnel compte désormais huit documents GraphQL autorisés.
+
+Vérifications locales de ce lot : 313 tests API sur 26 fichiers, 153 tests web, 96 tests client mobile, 23 tests admin, 50 tests restaurant, 104 tests livreur et 9 gardes d’entrée/TypeScript Expo. Compilation TypeScript API et compilation web réussies ; exports JS/Hermes Android/iOS restaurant et livreur réussis. Ces exports ne constituent ni un APK/IPA signé ni une recette sur téléphone. La CI distante doit être lue sur le nouveau commit, sans déduire son succès des résultats locaux.
+
+**Le projet complet reste inachevé et non prêt pour la production.** Pas de notifications, SLA, escalade, attribution à un agent, réouverture ou support dans l’ancienne console admin. Aucun achat, SMS ou paiement réel, changement Orange, changement du bloc About, fusion ou déploiement. Publication limitée au fork Delifast et à la branche `feat/delifast-local-ordering` autorisés.

@@ -43,6 +43,11 @@ test("initial state has no token and actionsFor enforces paid preparation cycle"
   assert.deepEqual(h.controller.getState(), {
     user: null,
     orders: [],
+    tickets: [],
+    supportTickets: [],
+    ticketOffset: 0,
+    ticketHasMore: false,
+    selectedTicket: null,
     busy: false,
     restoring: false,
     error: null,
@@ -401,4 +406,135 @@ test("logout during secure write leaves no persisted session after late login", 
   await Promise.all([login, logout]);
   assert.equal(await h.storage.getItem(STORAGE_KEY), null);
   assert.equal(h.controller.getState().user, null);
+});
+
+test("tickets are restaurant-scoped, paginated, and duplicate create shares one mutation", async () => {
+  const ticket = {
+    id: "t1",
+    creatorRole: "RESTAURANT",
+    restaurantId: "r1",
+    subject: "Aide",
+    description: "Détail",
+    status: "OPEN",
+    version: 1,
+    history: [],
+  };
+  let writes = 0;
+  const h = harness({
+    supportTickets: async (_token, limit, offset) => {
+      assert.equal(limit, 20);
+      return offset ? [] : [ticket];
+    },
+    supportTicket: async () => ticket,
+    createSupportTicket: async (_token, input) => {
+      writes++;
+      assert.deepEqual(input, {
+        subject: "Aide",
+        description: "Détail",
+        idempotencyKey: "idem-valid-1234",
+      });
+      return ticket;
+    },
+  });
+  await h.controller.login("a", "b");
+  await h.controller.listTickets();
+  await h.controller.openTicket("t1");
+  const a = h.controller.createTicket("Aide", "Détail", "idem-valid-1234");
+  const b = h.controller.createTicket("Aide", "Détail", "idem-valid-1234");
+  await Promise.all([a, b]);
+  assert.equal(writes, 1);
+  assert.equal(h.controller.getState().selectedTicket.id, "t1");
+});
+
+test("lost ticket response is retryable with the exact same idempotency key", async () => {
+  const ticket = {
+    id: "t-retry",
+    creatorRole: "RESTAURANT",
+    restaurantId: "r1",
+    subject: "Aide",
+    description: "Détail",
+    status: "OPEN",
+  };
+  const inputs = [];
+  let attempt = 0;
+  const h = harness({
+    createSupportTicket: async (_token, input) => {
+      inputs.push(input);
+      attempt++;
+      if (attempt === 1)
+        throw Object.assign(new Error("timeout"), { code: "TIMEOUT" });
+      return ticket;
+    },
+  });
+  await h.controller.login("a", "b");
+  await assert.rejects(h.controller.createTicket("Aide", "Détail", "same-key"));
+  assert.equal(
+    h.controller.getState().pendingTicket.idempotencyKey,
+    "same-key",
+  );
+  await h.controller.retryCreateTicket();
+  assert.deepEqual(inputs, [
+    { subject: "Aide", description: "Détail", idempotencyKey: "same-key" },
+    { subject: "Aide", description: "Détail", idempotencyKey: "same-key" },
+  ]);
+  assert.equal(h.controller.getState().pendingTicket, null);
+});
+
+test("late ticket response after logout cannot overwrite a new session attempt", async () => {
+  const oldResponse = deferred();
+  const ticket = {
+    id: "t-new",
+    creatorRole: "RESTAURANT",
+    restaurantId: "r1",
+    subject: "Nouveau",
+    description: "Détail",
+    status: "OPEN",
+  };
+  let calls = 0;
+  const h = harness({
+    createSupportTicket: () =>
+      ++calls === 1 ? oldResponse.promise : Promise.resolve(ticket),
+  });
+  await h.controller.login("a", "b");
+  const oldCreate = h.controller.createTicket("Ancien", "Détail", "old-key-1");
+  await new Promise((resolve) => setImmediate(resolve));
+  await h.controller.logout();
+  await h.controller.login("c", "d");
+  oldResponse.resolve({ ...ticket, id: "t-old", subject: "Ancien" });
+  await oldCreate;
+  assert.equal(h.controller.getState().pendingTicket, null);
+  await h.controller.createTicket("Nouveau", "Détail", "new-key-1");
+  assert.equal(h.controller.getState().selectedTicket.id, "t-new");
+});
+
+test("ticket bounds are rejected before transport and business errors do not lock retry", async () => {
+  let writes = 0;
+  const h = harness({
+    createSupportTicket: async () => {
+      writes++;
+      throw Object.assign(new Error("already exists"), {
+        code: "INVALID_INPUT",
+      });
+    },
+  });
+  await h.controller.login("a", "b");
+  for (const args of [
+    ["x".repeat(121), "Détail", "valid-key"],
+    ["Sujet", "x".repeat(4001), "valid-key"],
+    ["Sujet", "Détail", "short"],
+    ["Sujet", "Détail", "x".repeat(129)],
+  ]) {
+    await assert.rejects(
+      h.controller.createTicket(...args),
+      (error) => error.code === "INVALID_INPUT",
+    );
+  }
+  assert.equal(writes, 0);
+  await assert.rejects(
+    h.controller.createTicket("Sujet", "Détail", "valid-key"),
+    /already exists/,
+  );
+  assert.equal(writes, 1);
+  assert.equal(h.controller.getState().pendingTicket ?? null, null);
+  assert.equal(h.controller.getState().busy, false);
 });

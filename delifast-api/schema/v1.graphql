@@ -15,6 +15,8 @@ type Query {
   customerAddresses: [CustomerAddress!]!
   customerSupportTickets(limit: Int = 20, offset: Int = 0): [SupportTicket!]!
   customerSupportTicket(id: ID!): SupportTicket
+  staffSupportTickets(limit: Int = 20, offset: Int = 0): [SupportTicket!]!
+  staffSupportTicket(id: ID!): SupportTicket
   operationsSupportTickets(limit: Int = 20, offset: Int = 0): [SupportTicket!]!
   operationsSupportTicket(id: ID!): SupportTicket
 }
@@ -47,6 +49,7 @@ type Mutation {
   updateCustomerAddress(id: ID!, input: DeliveryAddressInput!): CustomerAddress!
   deleteCustomerAddress(id: ID!): Boolean!
   createSupportTicket(input: CreateSupportTicketInput!): SupportTicket!
+  createStaffSupportTicket(input: CreateSupportTicketInput!): SupportTicket!
   transitionSupportTicket(id: ID!, expectedVersion: Int!, status: SupportStatus!, note: String!): SupportTicket!
 }
 type Point { latitude: Float!, longitude: Float! }
@@ -55,9 +58,9 @@ type CustomerSession { token: String!, customer: Customer! }
 type CustomerOtpChallenge { challengeId: ID!, expiresIn: Int!, retryAfter: Int! }
 type CustomerAddress { id: ID!, recipientName: String!, phone: String!, city: String!, neighborhood: String!, landmark: String!, instructions: String!, point: Point! }
 enum SupportStatus { OPEN IN_PROGRESS RESOLVED }
-input CreateSupportTicketInput { subject: String!, description: String!, idempotencyKey: String! }
+input CreateSupportTicketInput { subject: String!, description: String!, idempotencyKey: String!, restaurantId: ID }
 type SupportEvent { status: SupportStatus!, at: String!, actorRole: String!, note: String! }
-type SupportTicket { id: ID!, customerId: ID!, subject: String!, description: String!, status: SupportStatus!, version: Int!, createdAt: String!, updatedAt: String!, history: [SupportEvent!]! }
+type SupportTicket { id: ID!, customerId: ID, creatorId: ID!, creatorRole: String!, restaurantId: ID, subject: String!, description: String!, status: SupportStatus!, version: Int!, createdAt: String!, updatedAt: String!, history: [SupportEvent!]! }
 input DeliveryPointInput { latitude: Float!, longitude: Float! }
 input RestaurantProfileInput { name: String!, description: String!, open: Boolean!, deliveryZoneIds: [ID!]! }
 input RestaurantHoursInput { day: Int!, startMinute: Int!, endMinute: Int! }

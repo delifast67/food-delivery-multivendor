@@ -16,10 +16,13 @@ const schema = buildSchema(
   ),
 );
 assert.deepEqual(Object.keys(documents).sort(), [
+  "createStaffSupportTicket",
   "me",
   "operationsOrders",
   "staffLogin",
   "staffLogout",
+  "staffSupportTicket",
+  "staffSupportTickets",
   "transitionOrder",
 ]);
 for (const [name, document] of Object.entries(documents)) {
@@ -44,5 +47,5 @@ for (const [name, document] of Object.entries(documents)) {
   console.log(`OK — restaurant ${name} conforme au schéma Delifast`);
 }
 console.log(
-  "SUCCÈS — 5 documents restaurant, sans jeton client ni mutation paiement/dispatch.",
+  "SUCCÈS — 8 documents restaurant, sans jeton client ni mutation paiement/dispatch.",
 );

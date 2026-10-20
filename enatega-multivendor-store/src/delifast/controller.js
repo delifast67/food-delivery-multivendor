@@ -1,8 +1,15 @@
 "use strict";
 const STORAGE_KEY = "delifast-restaurant-session";
+const TICKET_SUBJECT_MAX = 120;
+const TICKET_DESCRIPTION_MAX = 4000;
 const initial = () => ({
   user: null,
   orders: [],
+  tickets: [],
+  supportTickets: [],
+  ticketOffset: 0,
+  ticketHasMore: false,
+  selectedTicket: null,
   busy: false,
   restoring: false,
   error: null,
@@ -38,7 +45,8 @@ function createController({
     epoch = 0,
     active = null,
     storageQueue = Promise.resolve(),
-    requiresRefresh = false;
+    requiresRefresh = false,
+    pendingTicket = null;
   const listeners = new Set();
   const publish = (patch) => {
     state = { ...state, ...patch };
@@ -54,6 +62,26 @@ function createController({
     typeof user.restaurantId === "string" &&
     user.restaurantId.length > 0 &&
     (!configuredRestaurant || configuredRestaurant === user.restaurantId);
+  const ticketScope = (ticket, user) => {
+    if (!ticket) return null;
+    if (
+      ticket.creatorRole !== "RESTAURANT" ||
+      ticket.restaurantId !== user.restaurantId
+    )
+      throw fail("Ticket hors périmètre restaurant", "FORBIDDEN");
+    return ticket;
+  };
+  const ticketList = (tickets, user) => {
+    if (!Array.isArray(tickets))
+      throw fail("Liste des tickets invalide", "UNAVAILABLE");
+    return tickets.map((ticket) => ticketScope(ticket, user));
+  };
+  const ticketUncertainty = (error) =>
+    ["UNAVAILABLE", "TIMEOUT"].includes(error?.code);
+  const ticketsFor = (api, token, offset = 0) =>
+    typeof api.supportTickets === "function"
+      ? api.supportTickets(token, 20, offset)
+      : Promise.resolve([]);
   const scope = (orders, user) => {
     if (!Array.isArray(orders))
       throw fail("Liste des commandes invalide", "UNAVAILABLE");
@@ -84,7 +112,8 @@ function createController({
     epoch++;
     active = null;
     requiresRefresh = false;
-    publish(initial());
+    pendingTicket = null;
+    publish({ ...initial(), pendingTicket: null });
   };
   async function expire(run, error) {
     if (run !== epoch) return;
@@ -125,9 +154,17 @@ function createController({
   }
   async function reload(value, user, run) {
     const orders = scope(await api.orders(value), user);
+    const tickets = ticketList(await ticketsFor(api, value, 0), user);
     if (run === epoch) {
       requiresRefresh = false;
-      publish({ orders });
+      publish({
+        orders,
+        tickets,
+        supportTickets: tickets,
+        ticketOffset: 0,
+        ticketHasMore: tickets.length === 20,
+        selectedTicket: null,
+      });
     }
     return orders;
   }
@@ -154,9 +191,20 @@ function createController({
             throw fail("Session locale invalide", "STORAGE");
           const user = await validate(saved.token);
           const orders = scope(await api.orders(saved.token), user);
+          const tickets = ticketList(
+            await ticketsFor(api, saved.token, 0),
+            user,
+          );
           if (run !== epoch) return;
           token = saved.token;
-          publish({ user, orders });
+          publish({
+            user,
+            orders,
+            tickets,
+            supportTickets: tickets,
+            ticketOffset: 0,
+            ticketHasMore: tickets.length === 20,
+          });
           return user;
         } catch (error) {
           if (run !== epoch) return;
@@ -201,6 +249,10 @@ function createController({
           if (user.restaurantId !== session.user.restaurantId)
             throw fail("Identité restaurant incohérente", "UNAUTHENTICATED");
           const orders = scope(await api.orders(session.token), user);
+          const tickets = ticketList(
+            await ticketsFor(api, session.token, 0),
+            user,
+          );
           if (run !== epoch) {
             await bestEffortRevoke(session.token);
             return;
@@ -217,7 +269,14 @@ function createController({
           }
           token = session.token;
           requiresRefresh = false;
-          publish({ user, orders });
+          publish({
+            user,
+            orders,
+            tickets,
+            supportTickets: tickets,
+            ticketOffset: 0,
+            ticketHasMore: tickets.length === 20,
+          });
           return user;
         } catch (error) {
           await bestEffortRevoke(session?.token);
@@ -277,6 +336,164 @@ function createController({
           if (run === epoch) publish({ busy: false });
         }
       });
+    },
+    loadSupportTickets(offset = 0) {
+      return this.listTickets({ append: offset > 0 });
+    },
+    listTickets({ append = false } = {}) {
+      return exclusive(async (run) => {
+        if (!token || !state.user) throw fail("Session absente", "AUTH");
+        const currentToken = token,
+          user = state.user;
+        const offset = append ? state.ticketOffset : 0;
+        publish({ busy: true, error: null });
+        try {
+          const page = ticketList(
+            await api.supportTickets(currentToken, 20, offset),
+            user,
+          );
+          if (run !== epoch) return;
+          const tickets = append ? [...state.tickets, ...page] : page;
+          publish({
+            tickets,
+            supportTickets: tickets,
+            ticketOffset: offset + page.length,
+            ticketHasMore: page.length === 20,
+          });
+          return tickets;
+        } catch (error) {
+          if (run !== epoch) return;
+          if (isAuth(error)) await expire(run, error);
+          else
+            publish({
+              error: viewError(error),
+              notice:
+                "Tickets non actualisés : vérifiez le réseau puis réessayez.",
+            });
+          throw error;
+        } finally {
+          if (run === epoch) publish({ busy: false });
+        }
+      });
+    },
+    openTicket(id) {
+      return exclusive(async (run) => {
+        if (!token || !state.user) throw fail("Session absente", "AUTH");
+        if (typeof id !== "string" || !id)
+          throw fail("Ticket invalide", "INVALID_INPUT");
+        const currentToken = token,
+          user = state.user;
+        publish({ busy: true, error: null });
+        try {
+          const rawTicket = await api.supportTicket(currentToken, id);
+          if (run !== epoch) return;
+          const ticket = ticketScope(rawTicket, user);
+          if (!ticket) throw fail("Ticket introuvable", "NOT_FOUND");
+          publish({ selectedTicket: ticket });
+          return ticket;
+        } catch (error) {
+          if (run !== epoch) return;
+          if (isAuth(error)) await expire(run, error);
+          else publish({ error: viewError(error) });
+          throw error;
+        } finally {
+          if (run === epoch) publish({ busy: false });
+        }
+      });
+    },
+    createTicket(subject, description, idempotencyKey, retry = false) {
+      if (subject && typeof subject === "object") {
+        ({ subject, description, idempotencyKey } = subject);
+      }
+      return exclusive(async (run) => {
+        if (!token || !state.user) throw fail("Session absente", "AUTH");
+        const currentToken = token,
+          user = state.user;
+        const normalizedSubject =
+          typeof subject === "string" ? subject.trim() : "";
+        const normalizedDescription =
+          typeof description === "string" ? description.trim() : "";
+        if (!normalizedSubject || !normalizedDescription)
+          throw fail("Sujet et description requis", "INVALID_INPUT");
+        if (normalizedSubject.length > TICKET_SUBJECT_MAX)
+          throw fail("Sujet trop long", "INVALID_INPUT");
+        if (normalizedDescription.length > TICKET_DESCRIPTION_MAX)
+          throw fail("Description trop longue", "INVALID_INPUT");
+        const suppliedKey =
+          typeof idempotencyKey === "string" ? idempotencyKey.trim() : "";
+        const key =
+          suppliedKey || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        if (!/^[a-zA-Z0-9_-]{8,128}$/.test(key))
+          throw fail("Clé d’idempotence invalide", "INVALID_INPUT");
+        if (pendingTicket && !retry)
+          throw fail(
+            "Réessayez le même ticket avant de modifier le formulaire",
+            "TICKET_RETRY_REQUIRED",
+          );
+        publish({ busy: true, error: null, notice: null });
+        try {
+          const payload = {
+            subject: normalizedSubject,
+            description: normalizedDescription,
+            idempotencyKey: key,
+          };
+          const rawTicket = await api.createSupportTicket(
+            currentToken,
+            payload,
+          );
+          if (run !== epoch) return;
+          const ticket = ticketScope(rawTicket, user);
+          if (!ticket) throw fail("Réponse ticket invalide", "UNAVAILABLE");
+          const tickets = [
+            ticket,
+            ...state.tickets.filter((item) => item.id !== ticket.id),
+          ];
+          pendingTicket = null;
+          publish({
+            tickets,
+            supportTickets: tickets,
+            selectedTicket: ticket,
+            pendingTicket: null,
+            ticketOffset:
+              state.ticketOffset +
+              (state.tickets.some((item) => item.id === ticket.id) ? 0 : 1),
+          });
+          return ticket;
+        } catch (error) {
+          if (run !== epoch) return;
+          if (isAuth(error)) await expire(run, error);
+          else if (ticketUncertainty(error)) {
+            pendingTicket = {
+              subject: normalizedSubject,
+              description: normalizedDescription,
+              idempotencyKey: key,
+            };
+            publish({
+              pendingTicket,
+              error: viewError(error),
+              notice:
+                "Réponse perdue : le ticket peut avoir été créé. Réessayez le même ticket avec la même clé ; le formulaire est verrouillé.",
+            });
+          } else publish({ error: viewError(error) });
+          throw error;
+        } finally {
+          if (run === epoch) publish({ busy: false });
+        }
+      });
+    },
+    createSupportTicket(input) {
+      return this.createTicket(input);
+    },
+    retryCreateTicket() {
+      if (!pendingTicket)
+        throw fail("Aucun ticket à réessayer", "INVALID_INPUT");
+      const retry = { ...pendingTicket };
+      return controller.createTicket(
+        retry.subject,
+        retry.description,
+        retry.idempotencyKey,
+        true,
+      );
     },
     transition(id, status) {
       return exclusive(async (run) => {

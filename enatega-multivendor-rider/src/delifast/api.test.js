@@ -62,10 +62,13 @@ const apiWith = (data, options = {}) =>
 
 test("documents remain staff-only and expose no client payment token", () => {
   assert.deepEqual(Object.keys(documents).sort(), [
+    "createStaffSupportTicket",
     "me",
     "operationsOrders",
     "staffLogin",
     "staffLogout",
+    "staffSupportTicket",
+    "staffSupportTickets",
     "transitionOrder",
   ]);
   for (const document of Object.values(documents))
@@ -321,4 +324,100 @@ test("transition différée transmet la révision exacte sans la recalculer", as
     expectedStatus: "PICKED_UP",
     expectedUpdatedAt: order().updatedAt,
   });
+});
+
+test("support tickets use the staff contract and never send identity fields", async () => {
+  const ticket = {
+    id: "t1",
+    creatorId: "r1",
+    creatorRole: "RIDER",
+    restaurantId: null,
+    customerId: null,
+    subject: "Aide",
+    description: "Problème",
+    status: "OPEN",
+    version: 1,
+    createdAt: "2025-01-01T00:00:00Z",
+    updatedAt: "2025-01-01T00:00:00Z",
+    history: [
+      {
+        status: "OPEN",
+        at: "2025-01-01T00:00:00Z",
+        actorRole: "RIDER",
+        note: "",
+      },
+    ],
+  };
+  let variables;
+  const api = createClient({
+    endpoint: "https://api.example/graphql",
+    fetchImpl: async (_url, options) => {
+      variables = JSON.parse(options.body).variables;
+      return response({ data: { createStaffSupportTicket: ticket } });
+    },
+  });
+  assert.equal(
+    (
+      await api.createSupportTicket("session", {
+        subject: "Aide",
+        description: "Problème",
+        idempotencyKey: "k1",
+      })
+    ).id,
+    "t1",
+  );
+  assert.deepEqual(variables, {
+    input: { subject: "Aide", description: "Problème", idempotencyKey: "k1" },
+  });
+  assert.throws(
+    () =>
+      api.createSupportTicket("session", {
+        subject: "x",
+        description: "y",
+        idempotencyKey: "k",
+        creatorId: "spoof",
+      }),
+    /idempotence requis/,
+  );
+});
+
+test("support enforces server bounds and rejects CLOSED", async () => {
+  const api = apiWith({ data: { staffSupportTickets: [] } });
+  for (const [limit, offset] of [
+    [51, 0],
+    [1, 10001],
+    [0, 0],
+  ])
+    await assert.rejects(
+      Promise.resolve().then(() => api.supportTickets("s", limit, offset)),
+      (e) => e.code === "INVALID_INPUT",
+    );
+  await assert.rejects(
+    Promise.resolve().then(() =>
+      api.createSupportTicket("s", {
+        subject: "x".repeat(121),
+        description: "y",
+        idempotencyKey: "k",
+      }),
+    ),
+    (e) => e.code === "INVALID_INPUT",
+  );
+  const closed = {
+    id: "t1",
+    creatorId: "r1",
+    creatorRole: "RIDER",
+    restaurantId: null,
+    customerId: null,
+    subject: "Aide",
+    description: "x",
+    status: "CLOSED",
+    version: 1,
+    createdAt: "2025-01-01T00:00:00Z",
+    updatedAt: "2025-01-01T00:00:00Z",
+    history: [],
+  };
+  await assert.rejects(
+    apiWith({ data: { staffSupportTicket: closed } }).supportTicket("s", "t1"),
+    (e) => e.code === "UNAVAILABLE",
+  );
 });

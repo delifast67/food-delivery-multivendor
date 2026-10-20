@@ -498,3 +498,57 @@ test("null server identity invalidates a stored session instead of exposing miss
   assert.deepEqual(h.controller.getState().orders, []);
   assert.equal(await h.storage.getItem(STORAGE_KEY), null);
 });
+
+test("tickets are authenticated, paginated and stale responses cannot repopulate after logout", async () => {
+  const pending = deferred();
+  const h = harness({
+    supportTickets: async () => pending.promise,
+    supportTicket: async () => null,
+    createSupportTicket: async (_t, input) => ({
+      id: "t1",
+      subject: input.subject,
+    }),
+  });
+  await h.controller.login("a", "b");
+  const listing = h.controller.supportTickets(20, 0);
+  await h.controller.logout();
+  pending.resolve([]);
+  await listing;
+  assert.deepEqual(h.controller.getState().supportTickets, []);
+});
+
+test("support lost response retries same key and content, then logout purges late state", async () => {
+  const calls = [];
+  let attempt = 0;
+  const h = harness({
+    createSupportTicket: async (_token, input) => {
+      calls.push(input);
+      if (attempt++ === 0) throw new Error("response lost");
+      return {
+        id: "t1",
+        creatorId: "r1",
+        creatorRole: "RIDER",
+        subject: input.subject,
+        description: input.description,
+        status: "OPEN",
+        version: 1,
+        createdAt: "2025-01-01T00:00:00Z",
+        updatedAt: "2025-01-01T00:00:00Z",
+        history: [],
+      };
+    },
+  });
+  await h.controller.login("a", "b");
+  await assert.rejects(h.controller.createSupportTicket("Aide", "Problème"));
+  assert.deepEqual(h.controller.getState().supportPending, {
+    subject: "Aide",
+    description: "Problème",
+    idempotencyKey: calls[0].idempotencyKey,
+  });
+  await h.controller.createSupportTicket("Aide", "Problème");
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1], calls[0]);
+  await h.controller.logout();
+  assert.equal(h.controller.getState().supportPending, null);
+  assert.equal(h.controller.getState().selectedSupportTicket, null);
+});

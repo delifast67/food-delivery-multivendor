@@ -271,3 +271,90 @@ test("les actions d'une ancienne identité ne s'affichent pas sur la connexion",
   assert.doesNotMatch(content(tree), /private-old-order/);
   assert.ok(button(tree, "Réessayer la restauration"));
 });
+
+test("support : la reprise garde le contenu exact verrouillé et la même clé", async () => {
+  const pending = {
+    subject: "Incident privé",
+    description: "Texte conservé",
+    idempotencyKey: "same-key-12345678",
+  };
+  let sent;
+  const tree = await mount(
+    controller({
+      getState: () => ({
+        user,
+        orders: [],
+        supportTickets: [],
+        supportPending: pending,
+      }),
+      createSupportTicket: async (input) => {
+        sent = input;
+      },
+    }),
+  );
+  const inputs = tree.root.findAllByType("TextInput");
+  const subject = inputs.find(
+    (i) => i.props.accessibilityLabel === "Sujet du ticket",
+  );
+  const description = inputs.find(
+    (i) => i.props.accessibilityLabel === "Description du ticket",
+  );
+  assert.equal(subject.props.value, pending.subject);
+  assert.equal(subject.props.editable, false);
+  assert.equal(subject.props.maxLength, 120);
+  assert.equal(description.props.editable, false);
+  assert.equal(description.props.maxLength, 4000);
+  assert.equal(button(tree, "Réessayer le ticket").props.disabled, false);
+  await renderer.act(async () =>
+    button(tree, "Réessayer le ticket").props.onPress(),
+  );
+  assert.deepEqual(sent, pending);
+  assert.doesNotMatch(content(tree), /chat|pièce jointe/i);
+});
+
+test("support : le détail affiche l’historique fraîchement relu, jamais celui d’un autre ticket", async () => {
+  const stale = {
+    id: "ticket-a",
+    subject: "Incident",
+    description: "Ancien détail",
+    status: "OPEN",
+    updatedAt: "hier",
+    history: [],
+  };
+  const fresh = {
+    ...stale,
+    description: "Détail rechargé",
+    status: "RESOLVED",
+    history: [
+      {
+        status: "RESOLVED",
+        at: "maintenant",
+        actorRole: "ADMIN",
+        note: "Résolution visible",
+      },
+    ],
+  };
+  let requested;
+  const tree = await mount(
+    controller({
+      getState: () => ({
+        user,
+        orders: [],
+        supportTickets: [stale],
+        selectedSupportTicket: fresh,
+      }),
+      supportTicket: async (id) => {
+        requested = id;
+        return fresh;
+      },
+    }),
+  );
+  await renderer.act(async () =>
+    button(tree, "Voir le ticket").props.onPress(),
+  );
+  assert.equal(requested, "ticket-a");
+  assert.match(content(tree), /Détail rechargé/);
+  assert.match(content(tree), /Résolution visible/);
+  assert.doesNotMatch(content(tree), /Ancien détail/);
+  assert.equal(button(tree, "Tickets précédents").props.disabled, true);
+});

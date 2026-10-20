@@ -22,7 +22,7 @@ import {
 import { authenticate, login, logout, requireRole } from "./auth.js";
 import { authenticateCustomer } from "./customer-auth.js";
 import { requestOtp, resendOtp, verifyOtp, customerLogout, listAddresses, createAddress, updateAddress, deleteAddress, requireCustomer } from "./customer-auth.js";
-import { createSupportTicket, customerSupportTickets, customerSupportTicket, operationsSupportTickets, operationsSupportTicket, transitionSupportTicket } from "./support.js";
+import { createSupportTicket, createStaffSupportTicket, customerSupportTickets, customerSupportTicket, staffSupportTickets, staffSupportTicket, operationsSupportTickets, operationsSupportTicket, transitionSupportTicket } from "./support.js";
 import {
   publicRestaurants,
   publicRestaurant,
@@ -154,6 +154,8 @@ const resolvers: any = {
     customerAddresses: (_: any, _a: any, ctx: any) => listAddresses(getDb(), ctx),
     customerSupportTickets: (_: any, { limit, offset }: any, ctx: any) => customerSupportTickets(getDb(), ctx, limit, offset),
     customerSupportTicket: (_: any, { id }: any, ctx: any) => customerSupportTicket(getDb(), ctx, id),
+    staffSupportTickets: (_: any, { limit, offset }: any, ctx: any) => staffSupportTickets(getDb(), requireRole(ctx, ["RESTAURANT", "RIDER"]), limit, offset),
+    staffSupportTicket: (_: any, { id }: any, ctx: any) => staffSupportTicket(getDb(), requireRole(ctx, ["RESTAURANT", "RIDER"]), id),
     operationsSupportTickets: (_: any, { limit, offset }: any, ctx: any) => operationsSupportTickets(getDb(), requireRole(ctx, ["ADMIN"]), limit, offset),
     operationsSupportTicket: (_: any, { id }: any, ctx: any) => operationsSupportTicket(getDb(), requireRole(ctx, ["ADMIN"]), id),
   },
@@ -299,6 +301,7 @@ const resolvers: any = {
     updateCustomerAddress: (_: any, { id, input }: any, ctx: any) => updateAddress(getDb(), ctx, id, input),
     deleteCustomerAddress: (_: any, { id }: any, ctx: any) => deleteAddress(getDb(), ctx, id),
     createSupportTicket: (_: any, { input }: any, ctx: any) => createSupportTicket(getDb(), ctx, input),
+    createStaffSupportTicket: (_: any, { input }: any, ctx: any) => createStaffSupportTicket(getDb(), requireRole(ctx, ["RESTAURANT", "RIDER"]), input),
     transitionSupportTicket: (_: any, { id, expectedVersion, status, note }: any, ctx: any) => transitionSupportTicket(getDb(), requireRole(ctx, ["ADMIN"]), id, expectedVersion, status, note),
   },
 };

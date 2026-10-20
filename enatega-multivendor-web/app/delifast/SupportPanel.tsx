@@ -262,7 +262,9 @@ function SupportSession({ token, admin }: { token: string; admin: boolean }) {
               <h3>{ticket.subject}</h3>
               <p>
                 #{ticket.id} · {supportLabels[ticket.status]}
-                {admin ? ` · client ${ticket.customerId}` : ""}
+                {admin
+                  ? ` · ${ticket.creatorRole === "RESTAURANT" ? "restaurant" : ticket.creatorRole === "RIDER" ? "livreur" : "client"} ${ticket.creatorId ?? ticket.customerId}${ticket.restaurantId ? ` · établissement ${ticket.restaurantId}` : ""}`
+                  : ""}
               </p>
               <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
                 {ticket.description}

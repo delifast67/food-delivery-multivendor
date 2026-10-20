@@ -50,6 +50,11 @@ function App({ api, storage, controller: injected } = {}) {
   const [password, setPassword] = React.useState("");
   const [selected, setSelected] = React.useState(null);
   const [actionError, setActionError] = React.useState(null);
+  const [ticketSubject, setTicketSubject] = React.useState("");
+  const [ticketDescription, setTicketDescription] = React.useState("");
+  const [ticketOffset, setTicketOffset] = React.useState(0);
+  const [ticketSelected, setTicketSelected] = React.useState(null);
+  const uiEpoch = React.useRef(0);
   React.useEffect(() => {
     const off = controller.subscribe(setState);
     controller.restore().catch(() => {});
@@ -59,16 +64,25 @@ function App({ api, storage, controller: injected } = {}) {
       appState: AppState,
     });
     return () => {
+      uiEpoch.current += 1;
       stop();
       off();
     };
   }, [controller]);
+  React.useEffect(() => {
+    uiEpoch.current += 1;
+    setTicketSubject("");
+    setTicketDescription("");
+    setTicketSelected(null);
+    setTicketOffset(0);
+  }, [state.user?.id]);
   const run = (fn) => async () => {
+    const started = uiEpoch.current;
     setActionError(null);
     try {
       await fn();
     } catch (error) {
-      setActionError(error.message);
+      if (started === uiEpoch.current) setActionError(error.message);
     }
   };
   const submitLogin = async () => {
@@ -82,11 +96,31 @@ function App({ api, storage, controller: injected } = {}) {
     }
   };
   const logout = async () => {
+    uiEpoch.current += 1;
     setSelected(null);
+    setTicketSelected(null);
+    setTicketOffset(0);
+    setTicketSubject("");
+    setTicketDescription("");
     setPassword("");
     await controller.logout();
   };
   const order = state.orders.find((item) => item.id === selected);
+  const tickets = state.supportTickets || [];
+  const createTicket = async () => {
+    const started = uiEpoch.current;
+    const payload = state.supportPending || {
+      subject: ticketSubject.trim(),
+      description: ticketDescription.trim(),
+    };
+    await controller.createSupportTicket(payload);
+    if (started !== uiEpoch.current) return;
+    setTicketSubject("");
+    setTicketDescription("");
+  };
+  const ticketStatus = (status) =>
+    ({ OPEN: "Ouvert", IN_PROGRESS: "En cours", RESOLVED: "Résolu" })[status] ||
+    status;
   const actionDisabled = state.busy || state.restoring || state.locked;
   return h(
     SafeAreaView,
@@ -181,6 +215,126 @@ function App({ api, storage, controller: injected } = {}) {
               title: "Se déconnecter",
               disabled: false,
               onPress: run(logout),
+            }),
+            h(Text, { style: styles.heading }, "Assistance livreur"),
+            h(TextInput, {
+              style: styles.input,
+              placeholder: "Sujet",
+              accessibilityLabel: "Sujet du ticket",
+              value: state.supportPending?.subject ?? ticketSubject,
+              maxLength: 120,
+              editable: !state.supportPending,
+              onChangeText: setTicketSubject,
+            }),
+            h(TextInput, {
+              style: styles.input,
+              placeholder: "Description",
+              accessibilityLabel: "Description du ticket",
+              multiline: true,
+              value: state.supportPending?.description ?? ticketDescription,
+              maxLength: 4000,
+              editable: !state.supportPending,
+              onChangeText: setTicketDescription,
+            }),
+            h(Button, {
+              title: state.supportPending
+                ? "Réessayer le ticket"
+                : "Ouvrir un ticket",
+              disabled:
+                actionDisabled ||
+                (!state.supportPending &&
+                  (!ticketSubject.trim() || !ticketDescription.trim())),
+              onPress: run(createTicket),
+            }),
+            h(Button, {
+              title: "Actualiser les tickets",
+              disabled: actionDisabled,
+              onPress: run(() =>
+                controller.refreshSupportTickets(20, ticketOffset),
+              ),
+            }),
+            state.ticketError &&
+              h(
+                Text,
+                { style: styles.error, accessibilityRole: "alert" },
+                state.ticketError.message,
+              ),
+            tickets.length === 0 &&
+              h(Text, { style: styles.line }, "Aucun ticket."),
+            tickets.map((ticket) =>
+              h(
+                View,
+                { key: ticket.id, style: styles.card },
+                h(Text, { style: styles.heading }, ticket.subject),
+                h(
+                  Text,
+                  null,
+                  `Statut : ${ticketStatus(ticket.status)} · ${ticket.updatedAt}`,
+                ),
+                h(Button, {
+                  title:
+                    ticketSelected === ticket.id
+                      ? "Masquer le ticket"
+                      : "Voir le ticket",
+                  onPress: () => {
+                    const next =
+                      ticketSelected === ticket.id ? null : ticket.id;
+                    setTicketSelected(next);
+                    if (next) {
+                      const runEpoch = uiEpoch.current;
+                      run(async () => {
+                        const fresh = await controller.supportTicket(next);
+                        if (runEpoch !== uiEpoch.current) return;
+                        setTicketSelected(fresh?.id || next);
+                      })();
+                    }
+                  },
+                }),
+                ticketSelected === ticket.id &&
+                  h(
+                    View,
+                    null,
+                    h(
+                      Text,
+                      null,
+                      (state.selectedSupportTicket?.id === ticket.id
+                        ? state.selectedSupportTicket
+                        : ticket
+                      ).description,
+                    ),
+                    h(Text, { style: styles.subheading }, "Historique"),
+                    (
+                      (state.selectedSupportTicket?.id === ticket.id
+                        ? state.selectedSupportTicket
+                        : ticket
+                      ).history || []
+                    ).map((entry, index) =>
+                      h(
+                        Text,
+                        { key: index },
+                        `${ticketStatus(entry.status)} · ${entry.at} · ${entry.actorRole || ""}${entry.note ? ` · ${entry.note}` : ""}`,
+                      ),
+                    ),
+                  ),
+              ),
+            ),
+            h(Button, {
+              title: "Tickets précédents",
+              disabled: actionDisabled || ticketOffset === 0,
+              onPress: run(() => {
+                const next = Math.max(0, ticketOffset - 20);
+                setTicketOffset(next);
+                return controller.refreshSupportTickets(20, next);
+              }),
+            }),
+            h(Button, {
+              title: "Tickets suivants",
+              disabled: actionDisabled || tickets.length < 20,
+              onPress: run(() => {
+                const next = ticketOffset + 20;
+                setTicketOffset(next);
+                return controller.refreshSupportTickets(20, next);
+              }),
             }),
             state.orders.length === 0 &&
               h(Text, { style: styles.line }, "Aucune mission affectée."),

@@ -165,6 +165,7 @@ jobs:
           node scripts/delifast-store-contract.mjs
           npm run build --prefix delifast-api
           node scripts/delifast-store-smoke.mjs
+          node scripts/delifast-staff-support-smoke.mjs
       - name: Exporter les bundles sans publication
         working-directory: enatega-multivendor-store
         run: npx expo export --platform android --platform ios --output-dir dist/delifast

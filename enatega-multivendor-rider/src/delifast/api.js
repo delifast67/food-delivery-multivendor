@@ -13,6 +13,8 @@ const ORDER_STATUSES = new Set([
   "CANCELLED",
 ]);
 const PAYMENT_STATUSES = new Set(["PENDING", "PAID", "REFUND_PENDING"]);
+const TICKET_STATUSES = new Set(["OPEN", "IN_PROGRESS", "RESOLVED"]);
+const TICKET_ROLES = new Set(["RESTAURANT", "RIDER"]);
 const ACTOR_ROLES = new Set([
   "CUSTOMER",
   "RESTAURANT",
@@ -41,6 +43,9 @@ const documents = {
   operationsOrders: `query OperationsOrders { operationsOrders { ${orderFields} } }`,
   transitionOrder: `mutation TransitionOrder($orderId: ID!, $status: String!, $expectedStatus: String!, $expectedUpdatedAt: String) { transitionOrder(orderId: $orderId, status: $status, expectedStatus: $expectedStatus, expectedUpdatedAt: $expectedUpdatedAt) { ${orderFields} } }`,
   staffLogout: "mutation StaffLogout { staffLogout }",
+  staffSupportTickets: `query StaffSupportTickets($limit: Int = 20, $offset: Int = 0) { staffSupportTickets(limit: $limit, offset: $offset) { id creatorId creatorRole restaurantId customerId subject description status version createdAt updatedAt history { status at actorRole note } } }`,
+  staffSupportTicket: `query StaffSupportTicket($id: ID!) { staffSupportTicket(id: $id) { id creatorId creatorRole restaurantId customerId subject description status version createdAt updatedAt history { status at actorRole note } } }`,
+  createStaffSupportTicket: `mutation CreateStaffSupportTicket($input: CreateSupportTicketInput!) { createStaffSupportTicket(input: $input) { id creatorId creatorRole restaurantId customerId subject description status version createdAt updatedAt history { status at actorRole note } } }`,
 };
 
 const object = (value) =>
@@ -101,6 +106,33 @@ const validHistory = (history) =>
       date(entry.at) &&
       ACTOR_ROLES.has(entry.actorRole),
   );
+const validTicketHistory = (history) =>
+  Array.isArray(history) &&
+  history.every(
+    (entry) =>
+      object(entry) &&
+      TICKET_STATUSES.has(entry.status) &&
+      date(entry.at) &&
+      ACTOR_ROLES.has(entry.actorRole) &&
+      (entry.note === undefined ||
+        entry.note === null ||
+        typeof entry.note === "string"),
+  );
+const validSupportTicket = (ticket) =>
+  object(ticket) &&
+  nonEmptyString(ticket.id) &&
+  nonEmptyString(ticket.creatorId) &&
+  TICKET_ROLES.has(ticket.creatorRole) &&
+  (ticket.restaurantId == null || nonEmptyString(ticket.restaurantId)) &&
+  (ticket.customerId == null || nonEmptyString(ticket.customerId)) &&
+  nonEmptyString(ticket.subject) &&
+  nonEmptyString(ticket.description) &&
+  TICKET_STATUSES.has(ticket.status) &&
+  Number.isInteger(ticket.version) &&
+  ticket.version >= 0 &&
+  date(ticket.createdAt) &&
+  date(ticket.updatedAt) &&
+  validTicketHistory(ticket.history);
 const validOrder = (order) =>
   object(order) &&
   nonEmptyString(order.id) &&
@@ -249,6 +281,20 @@ function createClient({
       throw new DelifastApiError("Réponse missions invalide", "UNAVAILABLE");
     if (name === "transitionOrder" && !validOrder(value))
       throw new DelifastApiError("Réponse transition invalide", "UNAVAILABLE");
+    if (
+      name === "staffSupportTickets" &&
+      (!Array.isArray(value) ||
+        value.some((ticket) => !validSupportTicket(ticket)))
+    )
+      throw new DelifastApiError("Réponse tickets invalide", "UNAVAILABLE");
+    if (
+      name === "staffSupportTicket" &&
+      value !== null &&
+      !validSupportTicket(value)
+    )
+      throw new DelifastApiError("Détail ticket invalide", "UNAVAILABLE");
+    if (name === "createStaffSupportTicket" && !validSupportTicket(value))
+      throw new DelifastApiError("Création ticket invalide", "UNAVAILABLE");
     if (name === "staffLogout" && value !== true)
       throw new DelifastApiError(
         "Révocation serveur non confirmée",
@@ -272,6 +318,39 @@ function createClient({
         token,
       ),
     logout: (token) => field("staffLogout", {}, token),
+    supportTickets: (token, limit = 20, offset = 0) => {
+      if (
+        !Number.isInteger(limit) ||
+        limit < 1 ||
+        limit > 50 ||
+        !Number.isInteger(offset) ||
+        offset < 0 ||
+        offset > 10000
+      )
+        throw new DelifastApiError(
+          "Pagination ticket invalide",
+          "INVALID_INPUT",
+        );
+      return field("staffSupportTickets", { limit, offset }, token);
+    },
+    supportTicket: (token, id) => field("staffSupportTicket", { id }, token),
+    createSupportTicket: (token, input) => {
+      if (
+        !object(input) ||
+        Object.keys(input).sort().join(",") !==
+          "description,idempotencyKey,subject" ||
+        !nonEmptyString(input.subject) ||
+        input.subject.length > 120 ||
+        !nonEmptyString(input.description) ||
+        input.description.length > 4000 ||
+        !nonEmptyString(input.idempotencyKey)
+      )
+        throw new DelifastApiError(
+          "Sujet, description et idempotence requis",
+          "INVALID_INPUT",
+        );
+      return field("createStaffSupportTicket", { input }, token);
+    },
   };
 }
 
@@ -282,4 +361,5 @@ module.exports = {
   documents,
   validUser,
   validOrder,
+  validSupportTicket,
 };
