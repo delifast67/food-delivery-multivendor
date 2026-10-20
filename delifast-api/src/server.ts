@@ -26,7 +26,7 @@ import {
 import { authenticate, login, logout, requireRole } from "./auth.js";
 import { authenticateCustomer } from "./customer-auth.js";
 import { requestOtp, resendOtp, verifyOtp, customerLogout, listAddresses, createAddress, updateAddress, deleteAddress, requireCustomer, updateCustomerProfile } from "./customer-auth.js";
-import { createSupportTicket, createStaffSupportTicket, customerSupportTickets, customerSupportTicket, staffSupportTickets, staffSupportTicket, operationsSupportTickets, operationsSupportTicket, transitionSupportTicket } from "./support.js";
+import { createSupportTicket, createStaffSupportTicket, customerSupportTickets, customerSupportTicket, staffSupportTickets, staffSupportTicket, operationsSupportTickets, operationsSupportTicket, operationsSupportTicketSummaries, transitionSupportTicket } from "./support.js";
 import {
   publicRestaurants,
   publicRestaurant,
@@ -175,6 +175,7 @@ const resolvers: any = {
     staffSupportTicket: (_: any, { id }: any, ctx: any) => staffSupportTicket(getDb(), requireRole(ctx, ["RESTAURANT", "RIDER"]), id),
     operationsSupportTickets: (_: any, { limit, offset }: any, ctx: any) => operationsSupportTickets(getDb(), requireRole(ctx, ["ADMIN"]), limit, offset),
     operationsSupportTicket: (_: any, { id }: any, ctx: any) => operationsSupportTicket(getDb(), requireRole(ctx, ["ADMIN"]), id),
+    operationsSupportTicketSummaries: (_: any, { limit, offset, ticketId }: any, ctx: any) => operationsSupportTicketSummaries(getDb(), requireRole(ctx, ["ADMIN"]), limit, offset, ticketId),
   },
   Restaurant: {
     deliveryZoneIds: (r: any) => restaurantZoneIds(getDb(), r),

@@ -5,11 +5,13 @@ import {
   DelifastError,
   type DelifastClient,
   type SupportStatus,
+  type SupportTicketSummary,
   type SupportTicket,
 } from '@/lib/delifast/client';
 
 type Props = { client: DelifastClient; onUnauthorized: () => void };
 const LIMIT = 20;
+const MAX_OFFSET = 10000;
 const statuses: SupportStatus[] = ['OPEN', 'IN_PROGRESS', 'RESOLVED'];
 const nextStatus: Record<SupportStatus, SupportStatus> = {
   OPEN: 'IN_PROGRESS',
@@ -26,8 +28,10 @@ function errorText(error: unknown) {
 }
 
 export default function SupportPanel({ client, onUnauthorized }: Props) {
-  const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [tickets, setTickets] = useState<SupportTicketSummary[]>([]);
   const [offset, setOffset] = useState(0);
+  const [ticketIdInput, setTicketIdInput] = useState('');
+  const [ticketIdFilter, setTicketIdFilter] = useState<string | undefined>();
   const [statusFilter, setStatusFilter] = useState<'ALL' | SupportStatus>('ALL');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<SupportTicket | null>(null);
@@ -67,13 +71,13 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
     return false;
   }, []);
 
-  const loadPage = useCallback(async (pageOffset: number) => {
+  const loadPage = useCallback(async (pageOffset: number, filterOverride = ticketIdFilter) => {
     if (mutationRef.current) return false;
     const id = ++requestId.current;
     setLoading(true);
     setError('');
     try {
-      const result = await client.operationsSupportTickets(LIMIT, pageOffset);
+      const result = await client.operationsSupportTicketSummaries(LIMIT, pageOffset, filterOverride);
       if (!mounted.current || id !== requestId.current) return false;
       setTickets(result);
       setOffset(pageOffset);
@@ -85,7 +89,7 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
     } finally {
       if (mounted.current && id === requestId.current) setLoading(false);
     }
-  }, [client, unauthorized]);
+  }, [client, ticketIdFilter, unauthorized]);
 
   const loadDetail = useCallback(async (id: string) => {
     if (mutationRef.current) return;
@@ -105,7 +109,11 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
         return;
       }
       setDetail(result);
-      setTickets(current => current.map(ticket => ticket.id === result.id ? result : ticket));
+      setTickets(current => current.map(ticket => ticket.id === result.id ? {
+        id: result.id, subject: result.subject, creatorRole: result.creatorRole,
+        status: result.status, version: result.version, createdAt: result.createdAt,
+        updatedAt: result.updatedAt,
+      } : ticket));
     } catch (e) {
       if (!mounted.current || request !== requestId.current) return;
       if (!unauthorized(e)) setError(errorText(e));
@@ -138,7 +146,7 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
       setDetail(updated);
       setNote('');
       setConfirmed(false);
-      const refreshed = await client.operationsSupportTickets(LIMIT, offset);
+      const refreshed = await client.operationsSupportTicketSummaries(LIMIT, offset, ticketIdFilter);
       if (!mounted.current || selectedId !== selectedAtStart || requestId.current !== requestAtStart) return;
       setTickets(refreshed);
       setBlocked(false);
@@ -155,6 +163,27 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
 
   const visibleTickets = statusFilter === 'ALL' ? tickets : tickets.filter(ticket => ticket.status === statusFilter);
   const canNext = tickets.length === LIMIT;
+  const applyTicketId = () => {
+    const value = ticketIdInput.trim();
+    if (value.length > 128) {
+      setError('L’identifiant du ticket doit contenir au maximum 128 caractères.');
+      return;
+    }
+    setError('');
+    setTickets([]);
+    const nextFilter = value || undefined;
+    setTicketIdFilter(nextFilter);
+    setOffset(0);
+    if (nextFilter === ticketIdFilter) void loadPage(0, nextFilter);
+  };
+  const resetTicketId = () => {
+    setTicketIdInput('');
+    setTickets([]);
+    setTicketIdFilter(undefined);
+    setOffset(0);
+    setError('');
+    if (ticketIdFilter === undefined) void loadPage(0, undefined);
+  };
   const canEdit = detail && statuses.includes(detail.status);
 
   return (
@@ -175,9 +204,17 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
             {statuses.map(status => <option key={status} value={status}>{status}</option>)}
           </select>
         </label>
+        <label>Identifiant exact
+          <input role="searchbox" aria-label="Identifiant exact du ticket" maxLength={128} value={ticketIdInput} onChange={event => setTicketIdInput(event.target.value)} disabled={loading || mutating} />
+        </label>
+        <div className="df-button-row">
+          <button className="df-secondary" onClick={applyTicketId} disabled={loading || mutating}>Rechercher le ticket</button>
+          <button className="df-secondary" onClick={resetTicketId} disabled={loading || mutating}>Effacer la recherche</button>
+        </div>
+        <small className="df-muted">Recherche appliquée uniquement avec le bouton ; le statut est un filtre local de la page courante.</small>
         <div className="df-button-row">
           <button className="df-secondary" onClick={() => void loadPage(Math.max(0, offset - LIMIT))} disabled={loading || mutating || offset === 0}>Précédente</button>
-          <button className="df-secondary" onClick={() => void loadPage(offset + LIMIT)} disabled={loading || mutating || !canNext}>Suivante</button>
+          <button className="df-secondary" onClick={() => void loadPage(Math.min(MAX_OFFSET, offset + LIMIT))} disabled={loading || mutating || !canNext || offset >= MAX_OFFSET}>Suivante</button>
         </div>
       </section>
       <div className="df-grid">
@@ -187,7 +224,7 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
             <tbody>
               {visibleTickets.map(ticket => <tr key={ticket.id} className={ticket.id === selectedId ? 'selected' : ''}>
                 <td><button className="df-order-link" onClick={() => void loadDetail(ticket.id)} disabled={loading || mutating}>{ticket.subject}</button><small>#{ticket.id}</small></td>
-                <td>{ticket.creatorRole}<small>{ticket.creatorId}</small></td>
+                <td>{ticket.creatorRole}</td>
                 <td><span className="df-pill">{ticket.status}</span></td>
                 <td>{new Date(ticket.createdAt).toLocaleString('fr-FR')}</td>
               </tr>)}

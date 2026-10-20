@@ -197,6 +197,22 @@ try {
     idempotencyKey: `fixture-${randomUUID()}`,
     payloadFingerprint: 'fixture-only',
   });
+  const summariesQuery = 'query($id:ID){operationsSupportTicketSummaries(limit:20,offset:0,ticketId:$id){id subject creatorRole status version createdAt updatedAt}}';
+  for (const [token, code] of [[undefined, 'UNAUTHENTICATED'], [restaurant.token, 'FORBIDDEN'], [rider.token, 'FORBIDDEN']]) {
+    await rejected(summariesQuery, { id: supportTicketId }, token, code);
+  }
+  const summaries = await client.operationsSupportTicketSummaries(20, 0, supportTicketId);
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0].id, supportTicketId);
+  assert.deepEqual(Object.keys(summaries[0]).sort(), ['id', 'subject', 'creatorRole', 'status', 'version', 'createdAt', 'updatedAt'].sort());
+  const rawSummaries = (await gql(summariesQuery, { id: supportTicketId }, admin.token)).operationsSupportTicketSummaries;
+  assert.deepEqual(rawSummaries, summaries);
+  assert.deepEqual(await client.operationsSupportTicketSummaries(20, 0, 'inconnu-fictif'), []);
+  await rejected(summariesQuery, { id: 'x'.repeat(129) }, admin.token, 'INVALID_INPUT');
+  await rejected('{operationsSupportTicketSummaries(offset:10001){id}}', {}, admin.token, 'INVALID_INPUT');
+  const forbiddenSummaryField = await raw('{operationsSupportTicketSummaries{description}}', {}, admin.token);
+  assert.ok(forbiddenSummaryField.errors?.length, 'Le résumé ne doit pas exposer les messages');
+  ok('résumés Support : recherche exacte, projection minimale, bornes et refus hors ADMIN via le vrai proxy');
   const supportBefore = await client.operationsSupportTicket(supportTicketId);
   assert.equal(supportBefore.status, 'RESOLVED');
   assert.equal(supportBefore.version, 2);

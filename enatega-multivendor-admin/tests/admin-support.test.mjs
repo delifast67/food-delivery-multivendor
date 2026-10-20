@@ -118,3 +118,31 @@ test('une relecture support absente ou incohérente ne déverrouille pas les éc
     await assert.rejects(new DelifastClient().operationsSupportTickets(), { code: 'INVALID_RESPONSE' });
   }
 });
+
+
+test('les résumés support bornent les arguments, transmettent l’identifiant exact et projettent le minimum', async () => {
+  storage();
+  const summary = { id: 'ticket-1', subject: 'Aide', creatorRole: 'CUSTOMER', status: 'OPEN', version: 4, createdAt: ticket.createdAt, updatedAt: ticket.updatedAt };
+  const calls = transport(({ query }) => {
+    assert.match(query, /operationsSupportTicketSummaries/);
+    return response({ operationsSupportTicketSummaries: [summary] });
+  });
+  const result = await new DelifastClient().operationsSupportTicketSummaries(20, 0, '  ticket-1  ');
+  assert.deepEqual(result, [summary]);
+  assert.deepEqual(calls[0].variables, { limit: 20, offset: 0, ticketId: 'ticket-1' });
+  for (const args of [[0, 0], [51, 0], [20, -1], [20, 10001], [20, 0, '   '], [20, 0, 'x'.repeat(129)]])
+    await assert.rejects(new DelifastClient().operationsSupportTicketSummaries(...args), { code: 'INVALID_ARGUMENT' });
+});
+
+test('le panneau réserve la liste aux résumés et garde les verrous de recherche', () => {
+  const panel = fs.readFileSync(new URL('../app/delifast/SupportPanel.tsx', import.meta.url), 'utf8');
+  assert.match(panel, /operationsSupportTicketSummaries/);
+  assert.doesNotMatch(panel, /ticket\.creatorId/);
+  assert.match(panel, /role="searchbox"/);
+  assert.match(panel, /aria-label="Identifiant exact du ticket"/);
+  assert.match(panel, /Rechercher le ticket/);
+  assert.match(panel, /Effacer la recherche/);
+  assert.match(panel, /offset >= MAX_OFFSET/);
+  assert.match(panel, /if \(mutationRef\.current\) return false/);
+  assert.match(panel, /setBlocked\(true\)/);
+});

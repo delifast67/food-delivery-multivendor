@@ -20,6 +20,15 @@ const gql = (query: string, variables: any = {}, token?: string) => {
   return token ? r.set("authorization", `Bearer ${token}`) : r;
 };
 const code = (r: any) => r.body?.errors?.[0]?.extensions?.code;
+const explainStages = (value: any): any[] => {
+  if (!value || typeof value !== "object") return [];
+  const stages = typeof value.stage === "string" ? [value] : [];
+  return stages.concat(
+    Object.values(value).flatMap((child: any) =>
+      child && typeof child === "object" ? explainStages(child) : [],
+    ),
+  );
+};
 const create = (token: string, key = `key-${crypto.randomUUID()}`, subject = " Livraison ") => gql(
   "mutation($i:CreateSupportTicketInput!){createSupportTicket(input:$i){id customerId subject description status version history{status note actorRole}}}",
   { i: { subject, description: " Description ", idempotencyKey: key } }, token,
@@ -183,6 +192,70 @@ describe("support API", () => {
     await dbModule.closeDb();
     db = await dbModule.connect();
     expect((await gql("query($id:ID!){operationsSupportTicket(id:$id){id subject}}", { id }, staffTokens.ADMIN)).body.data.operationsSupportTicket.id).toBe(id);
+  });
+
+  it("lists admin summaries only, with bounded exact filtering and no private content", async () => {
+    const first = await create(aToken, "summary-first-12345678", "First");
+    const second = await create(aToken, "summary-second-12345678", "Second");
+    const id = second.body.data.createSupportTicket.id;
+    const query = "query($limit:Int,$offset:Int,$ticketId:ID){operationsSupportTicketSummaries(limit:$limit,offset:$offset,ticketId:$ticketId){id subject creatorRole status version createdAt updatedAt}}";
+    expect(code(await gql(query, { limit: 1 }, aToken))).toBe("UNAUTHENTICATED");
+    expect(code(await gql(query, { limit: 1 }, staffTokens.RESTAURANT))).toBe("FORBIDDEN");
+    expect(code(await gql(query, { limit: 1 }, staffTokens.RIDER))).toBe("FORBIDDEN");
+    const page = await gql(query, { limit: 1, offset: 0 }, staffTokens.ADMIN);
+    expect(page.body.errors).toBeUndefined();
+    expect(page.body.data.operationsSupportTicketSummaries).toHaveLength(1);
+    expect(page.body.data.operationsSupportTicketSummaries[0]).not.toHaveProperty("description");
+    expect(page.body.data.operationsSupportTicketSummaries[0]).not.toHaveProperty("creatorId");
+    expect(page.body.data.operationsSupportTicketSummaries[0]).not.toHaveProperty("history");
+    const exact = await gql(query, { ticketId: id, offset: 0 }, staffTokens.ADMIN);
+    expect(exact.body.data.operationsSupportTicketSummaries.map((x: any) => x.id)).toEqual([id]);
+    expect((await gql(query, { ticketId: ".*" }, staffTokens.ADMIN)).body.data.operationsSupportTicketSummaries).toEqual([]);
+    expect(code(await gql(query, { ticketId: "   " }, staffTokens.ADMIN))).toBe("INVALID_INPUT");
+    expect(code(await gql(query, { ticketId: "x".repeat(129) }, staffTokens.ADMIN))).toBe("INVALID_INPUT");
+    expect(code(await gql(query, { limit: 0 }, staffTokens.ADMIN))).toBe("INVALID_INPUT");
+    expect(code(await gql(query, { limit: 51 }, staffTokens.ADMIN))).toBe("INVALID_INPUT");
+    expect(code(await gql(query, { offset: -1 }, staffTokens.ADMIN))).toBe("INVALID_INPUT");
+    expect(code(await gql(query, { offset: 10001 }, staffTokens.ADMIN))).toBe("INVALID_INPUT");
+    expect(first.body.data.createSupportTicket.id).not.toBe(id);
+  });
+
+  it("uses the existing ordering index for summary pagination and an index for exact ids", async () => {
+    await create(aToken, "explain-one-12345678", "One");
+    const target = (await create(aToken, "explain-two-12345678", "Two")).body.data.createSupportTicket.id;
+    await create(aToken, "explain-three-12345678", "Three");
+    const projection = { _id: 0, id: 1, subject: 1, creatorRole: 1, status: 1, version: 1, createdAt: 1, updatedAt: 1 };
+    const summaries = db.collection("support_tickets");
+
+    const unfiltered = await summaries
+      .find({})
+      .project(projection)
+      .sort({ createdAt: 1, id: 1 })
+      .skip(1)
+      .limit(2)
+      .explain("executionStats");
+    const unfilteredStages = explainStages(unfiltered.queryPlanner.winningPlan);
+    expect(unfilteredStages.some((stage) => stage.stage === "COLLSCAN")).toBe(false);
+    expect(unfilteredStages.some((stage) => stage.stage === "SORT")).toBe(false);
+    expect(unfilteredStages.some((stage) => stage.stage === "IXSCAN")).toBe(true);
+    expect(unfilteredStages.some((stage) => stage.indexName === "createdAt_1_id_1")).toBe(true);
+    expect(unfiltered.executionStats.nReturned).toBeLessThanOrEqual(2);
+
+    const exact = await summaries
+      .find({ id: target })
+      .project(projection)
+      .sort({ createdAt: 1, id: 1 })
+      .skip(0)
+      .limit(1)
+      .explain("executionStats");
+    const exactStages = explainStages(exact.queryPlanner.winningPlan);
+    expect(exactStages.some((stage) => stage.stage === "COLLSCAN")).toBe(false);
+    expect(exactStages.some((stage) => stage.stage === "IXSCAN")).toBe(true);
+    const exactSort = exactStages.find((stage) => stage.stage === "SORT");
+    if (exactSort) {
+      expect(exact.executionStats.totalDocsExamined).toBeLessThanOrEqual(1);
+      expect(exact.executionStats.nReturned).toBeLessThanOrEqual(1);
+    }
   });
 });
 

@@ -271,6 +271,44 @@ export async function operationsSupportTickets(
       .toArray()
   ).map(output);
 }
+
+export type SupportTicketSummary = Pick<Ticket, "id" | "subject" | "creatorRole" | "status" | "version" | "createdAt" | "updatedAt">;
+
+function summaryOutput(doc: any): SupportTicketSummary {
+  return {
+    id: doc.id,
+    subject: doc.subject,
+    creatorRole: doc.creatorRole ?? "CUSTOMER",
+    status: doc.status,
+    version: doc.version,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+  };
+}
+
+function summaryTicketId(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "string") fail("INVALID_INPUT", "Identifiant de ticket invalide");
+  const cleaned = value.trim();
+  if (!cleaned || cleaned.length > 128) fail("INVALID_INPUT", "Identifiant de ticket invalide");
+  return cleaned;
+}
+
+export async function operationsSupportTicketSummaries(
+  db: Db,
+  staff: Staff,
+  limit: unknown,
+  offset: unknown,
+  ticketId: unknown,
+) {
+  if (staff.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants");
+  const p = page(limit, offset), id = summaryTicketId(ticketId);
+  const docs = await db.collection<Ticket>("support_tickets")
+    .find(id === undefined ? {} : { id })
+    .project({ _id: 0, id: 1, subject: 1, creatorRole: 1, status: 1, version: 1, createdAt: 1, updatedAt: 1 })
+    .sort(sort()).skip(p.offset).limit(p.limit).maxTimeMS(2000).toArray();
+  return docs.map(summaryOutput);
+}
 export async function operationsSupportTicket(
   db: Db,
   _staff: Staff,

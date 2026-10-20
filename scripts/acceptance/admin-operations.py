@@ -163,7 +163,50 @@ with sync_playwright() as p:
     checked('échec de relecture détail et lecture API >2 Mo : verrouillage conservé malgré page chargée, puis reprise explicite sans faux succès ni écriture')
     page.get_by_role('button', name='Support', exact=True).click()
     support = page.locator('section[aria-label="Support"]')
+    summary_requests, summary_responses = [], []
+    def track_summary(response):
+        if 'operationsSupportTicketSummaries(' in (response.request.post_data or ''):
+            payload = json.loads(response.request.post_data)
+            summary_requests.append(payload)
+            data = response.json()
+            assert not data.get('errors'), data.get('errors')
+            summaries = data['data']['operationsSupportTicketSummaries']
+            assert len(summaries) <= 20
+            allowed = {'id', 'subject', 'creatorRole', 'status', 'version', 'createdAt', 'updatedAt'}
+            assert all(set(row) == allowed for row in summaries), summaries
+            summary_responses.append(summaries)
+    page.on('response', track_summary)
     expect(support.get_by_role('button', name='Recette support 1', exact=True)).to_be_visible()
+    support.get_by_role('button', name='Suivante', exact=True).click()
+    expect(support.get_by_text('Page 2', exact=False)).to_be_visible()
+    expect(support.locator('tbody tr')).to_have_count(2)
+    support_search = support.get_by_role('searchbox', name='Identifiant exact du ticket', exact=True)
+    assert support_search.get_attribute('maxlength') == '128'
+    support.get_by_role('button', name='Précédente', exact=True).click()
+    expect(support.locator('tbody tr')).to_have_count(20)
+    before_search = len(summary_requests)
+    support_search.fill('page-ticket-19')
+    assert len(summary_requests) == before_search, 'Pas de requête à chaque frappe'
+    expect(support.get_by_role('button', name='Recette support 22', exact=True)).to_have_count(0)
+    support.get_by_role('button', name='Rechercher le ticket', exact=True).click()
+    expect(support.locator('tbody tr')).to_have_count(1)
+    expect(support.get_by_role('button', name='Recette support 22', exact=True)).to_be_visible()
+    assert summary_requests[-1]['variables']['ticketId'] == 'page-ticket-19'
+    assert summary_requests[-1]['variables']['offset'] == 0
+    capture(page, 'support-search-exact.png')
+    support.get_by_role('button', name='Rechercher le ticket', exact=True).click()
+    expect(support.locator('tbody tr')).to_have_count(1)
+    assert all('description' not in x['query'] and 'history' not in x['query'] and 'creatorId' not in x['query'] for x in summary_requests)
+    support_search.fill('inconnu-synthetique')
+    support.get_by_role('button', name='Rechercher le ticket', exact=True).click()
+    expect(support.locator('tbody tr')).to_have_count(0)
+    support.get_by_role('button', name='Effacer la recherche', exact=True).click()
+    expect(support.locator('tbody tr')).to_have_count(20)
+    expect(support.get_by_text('Page 1', exact=False)).to_be_visible()
+    support.get_by_role('button', name='Effacer la recherche', exact=True).click()
+    expect(support.locator('tbody tr')).to_have_count(20)
+    assert summary_responses
+    checked('Support : recherche exacte hors première page, application explicite, résultat vide, reset et résumés sans messages ni identifiants personnels')
     support.get_by_role('button', name='Suivante', exact=True).click()
     expect(support.get_by_text('Page 2', exact=False)).to_be_visible()
     support.get_by_role('button', name='Précédente', exact=True).click()
@@ -223,6 +266,15 @@ with sync_playwright() as p:
     support.get_by_role('button', name='Relire la page', exact=True).click()
     expect(support.get_by_role('button', name='Relire la page', exact=True)).to_be_enabled()
     expect(reopen).to_be_disabled()
+    support_search.fill('admin-ticket-b')
+    support.get_by_role('button', name='Rechercher le ticket', exact=True).click()
+    expect(support.locator('tbody tr')).to_have_count(1)
+    expect(ticket.get_by_text('Écriture verrouillée', exact=False)).to_be_visible()
+    expect(reopen).to_be_disabled()
+    support.get_by_role('button', name='Effacer la recherche', exact=True).click()
+    expect(support.locator('tbody tr')).to_have_count(20)
+    expect(reopen).to_be_disabled()
+    checked('recherche et effacement gardent le détail indépendant et ne déverrouillent pas une écriture à réponse perdue')
     ticket.get_by_role('button', name='Relire le détail', exact=True).click()
     expect(ticket.get_by_role('button', name='Passer à RESOLVED', exact=True)).to_be_visible()
     reopened = success(page, 'query($id:ID!){staffSupportTicket(id:$id){status version history{note}}}', {'id':'admin-ticket-a'}, fixtures['restaurantToken'])['staffSupportTicket']

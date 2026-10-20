@@ -125,6 +125,15 @@ export type SupportTicket = {
   updatedAt: string;
   history: SupportEvent[];
 };
+export type SupportTicketSummary = {
+  id: string;
+  subject: string;
+  creatorRole: string;
+  status: SupportStatus;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
 export type DelifastErrorCode =
   | 'UNAUTHENTICATED'
   | 'FORBIDDEN'
@@ -185,6 +194,7 @@ async function readBody(response: Response): Promise<GraphQLBody> {
 
 const SUPPORT_FIELDS =
   'id customerId creatorId creatorRole restaurantId subject description status version createdAt updatedAt history { status at actorRole note }';
+const SUPPORT_SUMMARY_FIELDS = 'id subject creatorRole status version createdAt updatedAt';
 function storageGet(key: string) {
   try {
     return typeof window !== 'undefined'
@@ -357,6 +367,42 @@ export class DelifastClient {
     if (!Array.isArray(data.operationsSupportTickets) || data.operationsSupportTickets.length > limit)
       throw new DelifastError('Liste support invalide', 'INVALID_RESPONSE');
     return data.operationsSupportTickets;
+  }
+  async operationsSupportTicketSummaries(
+    limit = 20,
+    offset = 0,
+    ticketId?: string
+  ): Promise<SupportTicketSummary[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50)
+      throw new DelifastError('Limite support invalide', 'INVALID_ARGUMENT');
+    if (!Number.isInteger(offset) || offset < 0 || offset > 10000)
+      throw new DelifastError('Décalage support invalide', 'INVALID_ARGUMENT');
+    const trimmed = ticketId === undefined ? undefined : ticketId.trim();
+    if (trimmed !== undefined && (trimmed.length < 1 || trimmed.length > 128))
+      throw new DelifastError('Identifiant de ticket invalide', 'INVALID_ARGUMENT');
+    const data = await this.request<{
+      operationsSupportTicketSummaries: SupportTicketSummary[];
+    }>(
+      `query OperationsSupportTicketSummaries($limit: Int = 20, $offset: Int = 0, $ticketId: ID) { operationsSupportTicketSummaries(limit: $limit, offset: $offset, ticketId: $ticketId) { ${SUPPORT_SUMMARY_FIELDS} } }`,
+      { limit, offset, ...(trimmed === undefined ? {} : { ticketId: trimmed }) }
+    );
+    const summaries = data.operationsSupportTicketSummaries;
+    if (!Array.isArray(summaries) || summaries.length > limit || summaries.some(summary =>
+      !summary || typeof summary.id !== 'string' || typeof summary.subject !== 'string' ||
+      typeof summary.creatorRole !== 'string' || typeof summary.status !== 'string' ||
+      !Number.isInteger(summary.version) || typeof summary.createdAt !== 'string' ||
+      typeof summary.updatedAt !== 'string' || Object.keys(summary).some(key =>
+        !['id', 'subject', 'creatorRole', 'status', 'version', 'createdAt', 'updatedAt'].includes(key))))
+      throw new DelifastError('Résumé support invalide', 'INVALID_RESPONSE');
+    return summaries.map(summary => ({
+      id: summary.id,
+      subject: summary.subject,
+      creatorRole: summary.creatorRole,
+      status: summary.status,
+      version: summary.version,
+      createdAt: summary.createdAt,
+      updatedAt: summary.updatedAt,
+    }));
   }
   async operationsSupportTicket(id: string): Promise<SupportTicket | null> {
     const data = await this.request<{
