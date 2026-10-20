@@ -15,6 +15,7 @@ const native = Object.fromEntries(
     "TextInput",
     "Button",
     "ActivityIndicator",
+    "TouchableOpacity",
   ].map((name) => [name, name]),
 );
 native.StyleSheet = { create: (value) => value };
@@ -23,6 +24,8 @@ const originalLoad = Module._load;
 Module._load = function (request, parent, isMain) {
   if (request === "react-native") return native;
   if (request === "expo-secure-store") return {};
+  if (request === "expo-font") return { loadAsync: async () => {} };
+  if (request === "@expo/vector-icons/Ionicons") return "Ionicons";
   if (request === "expo-network")
     return {
       getNetworkStateAsync: async () => ({}),
@@ -30,6 +33,7 @@ Module._load = function (request, parent, isMain) {
     };
   return originalLoad.call(this, request, parent, isMain);
 };
+require.extensions[".ttf"] = () => {};
 const App = require("./App");
 Module._load = originalLoad;
 const user = { id: "rider-1", name: "Awa", role: "RIDER" };
@@ -92,8 +96,17 @@ const text = (node) =>
 const content = (tree) => text(tree.toJSON());
 function button(tree, title) {
   return tree.root
-    .findAllByType("Button")
-    .find((item) => item.props.title === title);
+    .findAllByType("TouchableOpacity")
+    .find(
+      (item) =>
+        item.props.title === title || item.props.accessibilityLabel === title,
+    );
+}
+function navigateSupport(tree) {
+  const tab = tree.root
+    .findAllByType("TouchableOpacity")
+    .find((item) => item.props.accessibilityLabel === "Assistance");
+  return renderer.act(async () => tab.props.onPress());
 }
 
 test("affiche connexion et efface le mot de passe après tentative", async () => {
@@ -229,6 +242,12 @@ test("déconnexion reste accessible pendant busy et réinitialise la sélection"
       },
     }),
   );
+  await renderer.act(async () =>
+    tree.root
+      .findAllByType("TouchableOpacity")
+      .find((item) => item.props.accessibilityLabel === "Compte")
+      .props.onPress(),
+  );
   assert.equal(button(tree, "Se déconnecter").props.disabled, false);
   await renderer.act(async () =>
     button(tree, "Se déconnecter").props.onPress(),
@@ -292,6 +311,7 @@ test("support : la reprise garde le contenu exact verrouillé et la même clé",
       },
     }),
   );
+  await navigateSupport(tree);
   const inputs = tree.root.findAllByType("TextInput");
   const subject = inputs.find(
     (i) => i.props.accessibilityLabel === "Sujet du ticket",
@@ -349,6 +369,7 @@ test("support : le détail affiche l’historique fraîchement relu, jamais celu
       },
     }),
   );
+  await navigateSupport(tree);
   await renderer.act(async () =>
     button(tree, "Voir le ticket").props.onPress(),
   );
@@ -357,4 +378,79 @@ test("support : le détail affiche l’historique fraîchement relu, jamais celu
   assert.match(content(tree), /Résolution visible/);
   assert.doesNotMatch(content(tree), /Ancien détail/);
   assert.equal(button(tree, "Tickets précédents").props.disabled, true);
+});
+
+test("navigation : missions, assistance et compte sont des pages distinctes", async () => {
+  const tree = await mount(controller());
+  assert.match(content(tree), /Mission m-1/);
+  assert.equal(button(tree, "Se déconnecter"), undefined);
+  assert.equal(tree.root.findAllByType("TextInput").length, 0);
+  await navigateSupport(tree);
+  assert.doesNotMatch(content(tree), /Mission m-1/);
+  assert.equal(tree.root.findAllByType("TextInput").length, 2);
+  await renderer.act(async () => button(tree, "Compte").props.onPress());
+  assert.ok(button(tree, "Se déconnecter"));
+  assert.equal(tree.root.findAllByType("TextInput").length, 0);
+  await renderer.act(async () => button(tree, "Missions").props.onPress());
+  assert.match(content(tree), /Mission m-1/);
+  await renderer.act(async () => tree.unmount());
+});
+
+test("confirmation utilisateur : statut Livrée seulement après résolution serveur", async () => {
+  let state = {
+    user,
+    orders: [structuredClone(order)],
+    busy: false,
+    restoring: false,
+  };
+  const listeners = new Set();
+  let resolveServer;
+  const server = new Promise((resolve) => {
+    resolveServer = resolve;
+  });
+  let calls = 0;
+  const c = controller({
+    getState: () => state,
+    subscribe: (fn) => {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    transition: async (_id, status) => {
+      calls++;
+      assert.equal(status, "DELIVERED");
+      state = { ...state, busy: true };
+      listeners.forEach((fn) => fn(state));
+      await server;
+      state = {
+        ...state,
+        busy: false,
+        orders: [{ ...order, status: "DELIVERED" }],
+      };
+      listeners.forEach((fn) => fn(state));
+    },
+  });
+  const tree = await mount(c);
+  await renderer.act(async () =>
+    button(tree, "Voir le détail").props.onPress(),
+  );
+  await renderer.act(async () =>
+    button(tree, "Marquer livrée").props.onPress(),
+  );
+  let pending;
+  await renderer.act(async () => {
+    const confirm = alerts
+      .at(-1)[2]
+      .find((action) => action.style !== "cancel");
+    pending = confirm.onPress();
+  });
+  assert.equal(calls, 1);
+  assert.match(content(tree), /Statut : Récupérée/);
+  assert.doesNotMatch(content(tree), /Statut : Livrée/);
+  assert.equal(button(tree, "Marquer livrée").props.disabled, true);
+  await renderer.act(async () => {
+    resolveServer();
+    await pending;
+  });
+  assert.match(content(tree), /Statut : Livrée/);
+  await renderer.act(async () => tree.unmount());
 });

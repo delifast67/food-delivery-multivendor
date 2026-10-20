@@ -13,7 +13,7 @@ const native = Object.fromEntries(
     "View",
     "Text",
     "TextInput",
-    "Button",
+    "TouchableOpacity",
     "ActivityIndicator",
   ].map((name) => [name, name]),
 );
@@ -30,7 +30,13 @@ new Function(
       ? native
       : name === "expo-secure-store"
         ? {}
-        : require(name),
+        : name === "expo-font"
+          ? { loadAsync: async () => {} }
+          : name === "@expo/vector-icons/Ionicons"
+            ? "Ionicons"
+            : name.endsWith(".ttf")
+              ? {}
+              : require(name),
   moduleMock,
   moduleMock.exports,
 );
@@ -116,10 +122,10 @@ async function mount(api = client(), storage = memory()) {
 }
 async function press(tree, title) {
   const control = tree.root
-    .findAllByType("Button")
+    .findAllByType("TouchableOpacity")
     .find((node) => node.props.title === title);
   assert.ok(control, title);
-  assert.equal(control.props.disabled, false, title);
+  assert.equal(Boolean(control.props.disabled), false, title);
   await renderer.act(async () => {
     await control.props.onPress();
   });
@@ -135,13 +141,16 @@ async function login(tree) {
 }
 async function select(tree) {
   const button = tree.root
-    .findAllByType("Button")
-    .find((node) => node.props.title.startsWith(`${order.id} —`));
+    .findAllByType("TouchableOpacity")
+    .find((node) => node.props.title === "Voir le détail");
   assert.ok(button);
   await press(tree, button.props.title);
 }
 async function close(tree) {
   await renderer.act(async () => tree.unmount());
+}
+async function navigate(tree, title) {
+  await press(tree, title);
 }
 test("connexion obligatoire, mot de passe masqué et formulaire sans identifiants préremplis", async () => {
   const tree = await mount();
@@ -151,7 +160,7 @@ test("connexion obligatoire, mot de passe masqué et formulaire sans identifiant
   assert.equal(inputs[1].props.secureTextEntry, true);
   assert.equal(
     tree.root
-      .findAllByType("Button")
+      .findAllByType("TouchableOpacity")
       .find((node) => node.props.title === "Se connecter").props.disabled,
     true,
   );
@@ -175,7 +184,7 @@ test("connexion, détail des snapshots, acceptation, préparation et commande pr
   }
   assert.equal(
     tree.root
-      .findAllByType("Button")
+      .findAllByType("TouchableOpacity")
       .some((node) => node.props.title === "Accepter"),
     false,
   );
@@ -191,7 +200,7 @@ test("annulation demande confirmation et indique remboursement non exécuté", a
   await press(tree, "Garder la commande");
   assert.equal(
     tree.root
-      .findAllByType("Button")
+      .findAllByType("TouchableOpacity")
       .some((node) => node.props.title === "Confirmer le refus"),
     false,
   );
@@ -218,6 +227,7 @@ test("déconnexion efface commandes et détails personnels du rendu", async () =
   const tree = await mount();
   await login(tree);
   await select(tree);
+  await navigate(tree, "Compte");
   await press(tree, "Se déconnecter");
   assert.match(content(tree), /Connexion restaurant/);
   assert.doesNotMatch(
@@ -230,7 +240,7 @@ test("liste vide et actualisation explicites sans fausse commande", async () => 
   const tree = await mount(client({ orders: async () => [] }));
   await login(tree);
   assert.match(content(tree), /Aucune commande disponible/);
-  await press(tree, "Actualiser les commandes");
+  await press(tree, "Actualiser");
   await close(tree);
 });
 test("rôle admin refusé dans le parcours restaurant", async () => {
@@ -298,7 +308,8 @@ test("ticket form, paginated list, detail and history are rendered", async () =>
     }),
   );
   await login(tree);
-  assert.match(content(tree), /Tickets restaurant/);
+  await navigate(tree, "Support");
+  assert.match(content(tree), /SUPPORT/);
   await renderer.act(async () => {
     const inputs = tree.root.findAllByType("TextInput");
     inputs[0].props.onChangeText("Aide menu");
@@ -320,22 +331,61 @@ test("réponse ticket incertaine verrouille les champs et laisse la reprise disp
     }),
   );
   await login(tree);
+  await navigate(tree, "Support");
   await renderer.act(async () => {
     const inputs = tree.root.findAllByType("TextInput");
     inputs[0].props.onChangeText("Aide menu");
     inputs[1].props.onChangeText("Détail");
   });
   const open = tree.root
-    .findAllByType("Button")
+    .findAllByType("TouchableOpacity")
     .find((node) => node.props.title === "Ouvrir un ticket");
   await renderer.act(async () => open.props.onPress());
   const inputs = tree.root.findAllByType("TextInput");
   assert.equal(inputs[0].props.editable, false);
   assert.equal(inputs[1].props.editable, false);
   const retry = tree.root
-    .findAllByType("Button")
+    .findAllByType("TouchableOpacity")
     .find((node) => node.props.title === "Réessayer le même ticket");
   assert.ok(retry);
   assert.equal(retry.props.disabled, false);
+  await close(tree);
+});
+
+test("navigation et pagination : support séparé, pages serveur conservées", async () => {
+  const offsets = [];
+  const tickets = Array.from({ length: 21 }, (_, i) => ({
+    id: `t-${i}`,
+    subject: `Ticket ${i}`,
+    description: "Test privé",
+    status: "OPEN",
+    creatorRole: "RESTAURANT",
+    creatorStaffId: user.id,
+    restaurantId: user.restaurantId,
+    version: 1,
+    history: [],
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+  }));
+  const tree = await mount(
+    client({
+      supportTickets: async (_token, limit, offset) => {
+        offsets.push(offset);
+        return tickets.slice(offset, offset + limit);
+      },
+    }),
+  );
+  await login(tree);
+  assert.equal(tree.root.findAllByType("TextInput").length, 0);
+  assert.match(content(tree), /Commande order-restaurant-test/);
+  await navigate(tree, "Support");
+  assert.doesNotMatch(content(tree), /Commande order-restaurant-test/);
+  await press(tree, "Charger plus de tickets");
+  assert.ok(offsets.includes(20));
+  assert.match(content(tree), /Ticket 20/);
+  await navigate(tree, "Compte");
+  assert.equal(tree.root.findAllByType("TextInput").length, 0);
+  assert.match(content(tree), /Se déconnecter/);
+  assert.doesNotMatch(content(tree), /Ticket 20/);
   await close(tree);
 });
