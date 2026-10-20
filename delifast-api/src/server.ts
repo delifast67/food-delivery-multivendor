@@ -32,6 +32,9 @@ import { createSupportTicket, createStaffSupportTicket, customerSupportTickets, 
 import {
   publicRestaurants,
   publicRestaurant,
+  publicRestaurantPage,
+  publicMenuPage,
+  publicMenuCategoryPage,
   operationsRestaurants,
   operationsRestaurantSummaries,
   operationsRestaurant,
@@ -70,6 +73,7 @@ const knownCodes = new Set([
   "RESTAURANT_NOT_FOUND",
   "INVALID_QUANTITY",
   "INVALID_INPUT",
+  "INVALID_CURSOR",
   "RESTAURANT_NOT_FOUND",
   "RESTAURANT_CLOSED",
   "ITEM_NOT_FOUND",
@@ -149,6 +153,9 @@ const resolvers: any = {
     deliveryEligibility: (_: any, { restaurantId, point }: any) => eligibility(getDb(), restaurantId, normalizePoint(point)),
     deliveryZones: (_: any, { restaurantId }: any, ctx: any) => listDeliveryZones(getDb(), requireRole(ctx, ["ADMIN", "RESTAURANT"]), restaurantId),
     restaurant: (_: any, { id }: any) => publicRestaurant(getDb(), id),
+    publicRestaurantPage: (_: any, { point, search, openOnly, limit, after }: any) => publicRestaurantPage(getDb(), point, search, openOnly, limit, after),
+    publicMenuPage: (_: any, { restaurantId, search, categoryId, limit, after }: any) => publicMenuPage(getDb(), restaurantId, search, categoryId, limit, after),
+    publicMenuCategoryPage: (_: any, { restaurantId, limit, after }: any) => publicMenuCategoryPage(getDb(), restaurantId, limit, after),
     operationsRestaurants: (_: any, _a: any, ctx: any) =>
       operationsRestaurants(getDb(), requireRole(ctx, ["ADMIN", "RESTAURANT"])),
     operationsRestaurantSummaries: (_: any, { limit, after, restaurantId }: any, ctx: any) => {

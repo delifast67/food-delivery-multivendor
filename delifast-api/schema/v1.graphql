@@ -2,6 +2,9 @@
 type Query {
   restaurants(point: DeliveryPointInput): [Restaurant!]!
   restaurant(id: ID!): Restaurant
+  publicRestaurantPage(point: DeliveryPointInput, search: String, openOnly: Boolean = false, limit: Int = 20, after: String): PublicRestaurantPage!
+  publicMenuPage(restaurantId: ID!, search: String, categoryId: ID, limit: Int = 20, after: String): PublicMenuPage!
+  publicMenuCategoryPage(restaurantId: ID!, limit: Int = 20, after: String): PublicMenuCategoryPage!
   calculateCheckout(input: CartInput!): Checkout!
   deliveryEligibility(restaurantId: ID!, point: DeliveryPointInput!): DeliveryEligibility!
   deliveryZones(restaurantId: ID): [DeliveryZone!]!
@@ -84,6 +87,11 @@ type RestaurantHours { day: Int!, startMinute: Int!, endMinute: Int! }
 type Restaurant { id: ID!, name: String!, description: String!, open: Boolean!, version: Int!, weeklySchedule: [RestaurantHours!], deliveryZoneIds: [ID!]!, categories: [MenuCategory!]!, menu: [MenuItem!]! }
 type RestaurantSummary { id: ID!, name: String!, open: Boolean!, version: Int! }
 type RestaurantSummaryPage { items: [RestaurantSummary!]!, nextCursor: String }
+type PublicRestaurantSummary { id: ID!, name: String!, description: String!, open: Boolean!, version: Int! }
+type PublicRestaurantPage { items: [PublicRestaurantSummary!]!, nextCursor: String }
+type PublicMenuPage { sections: [PublicMenuSection!]!, nextCursor: String }
+type PublicMenuSection { category: MenuCategory, items: [MenuItem!]! }
+type PublicMenuCategoryPage { items: [MenuCategory!]!, nextCursor: String }
 type RiderSummary { id: ID!, name: String! }
 type RiderSummaryPage { items: [RiderSummary!]!, nextCursor: String }
 type MenuItemSummary { id: ID!, name: String!, priceXof: Int!, available: Boolean!, archived: Boolean!, version: Int!, categoryId: ID }

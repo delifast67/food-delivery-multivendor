@@ -3,6 +3,8 @@ import type { Db } from "mongodb";
 import type { Staff } from "./auth.js";
 import { fail, assertIntAmount } from "./validation.js";
 import { isRestaurantOpen, resolvedRestaurantSchedule } from "./restaurant-hours.js";
+import { restaurantZoneIds } from "./restaurant.js";
+import { eligibility, normalizePoint, type Point } from "./zones.js";
 
 const MAX_NAME = 160;
 const MAX_DESCRIPTION = 2000;
@@ -81,6 +83,289 @@ function requireRestaurant(user: Staff, id: string) {
 }
 function includeArchived(parent: any) {
   return parent?.__catalogOperations === true;
+}
+
+const PUBLIC_PAGE_MAX = 50;
+const PUBLIC_PAGE_DEFAULT = 20;
+const PUBLIC_SEARCH_MAX = 160;
+const publicRestaurantProjection = {
+  _id: 0,
+  id: 1,
+  name: 1,
+  description: 1,
+  open: 1,
+  version: 1,
+  weeklySchedule: 1,
+  deliveryZoneIds: 1,
+};
+const publicMenuProjection = {
+  _id: 0,
+  id: 1,
+  restaurantId: 1,
+  name: 1,
+  description: 1,
+  priceXof: 1,
+  available: 1,
+  version: 1,
+  archived: 1,
+  categoryId: 1,
+  optionGroups: 1,
+};
+const publicCategoryProjection = {
+  _id: 0,
+  id: 1,
+  restaurantId: 1,
+  name: 1,
+  sortOrder: 1,
+  archived: 1,
+  version: 1,
+};
+function publicLimit(raw: unknown) {
+  const value = raw == null ? PUBLIC_PAGE_DEFAULT : raw;
+  if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > PUBLIC_PAGE_MAX)
+    fail("INVALID_INPUT", "Limite invalide");
+  return value as number;
+}
+function publicSearch(raw: unknown) {
+  if (raw == null || raw === "") return null;
+  if (typeof raw !== "string" || raw.length > PUBLIC_SEARCH_MAX)
+    fail("INVALID_INPUT", "Recherche invalide");
+  return raw.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "") || null;
+}
+function escapeRegex(value: string) {
+  const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return escaped
+    .replace(/[aA]/g, "[aAàâäáãå]")
+    .replace(/[eE]/g, "[eEéèêëẽ]")
+    .replace(/[iI]/g, "[iIîïíì]")
+    .replace(/[oO]/g, "[oOôöóòõ]")
+    .replace(/[uU]/g, "[uUùûüú]")
+    .replace(/[cC]/g, "[cCç]");
+}
+function publicCursor(raw: unknown, expected: any) {
+  if (raw == null) return null;
+  if (typeof raw !== "string" || !raw) fail("INVALID_CURSOR", "Curseur invalide");
+  let value: any;
+  try {
+    value = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+  } catch {
+    fail("INVALID_CURSOR", "Curseur invalide");
+  }
+  if (!value || value.v !== 1 || value.kind !== expected.kind || value.id === undefined ||
+      JSON.stringify(value.scope) !== JSON.stringify(expected.scope))
+    fail("INVALID_CURSOR", "Curseur invalide");
+  return idOf(value.id, "after");
+}
+function makePublicCursor(kind: string, scope: any, id: string) {
+  return Buffer.from(JSON.stringify({ v: 1, kind, scope, id })).toString("base64url");
+}
+async function inPublicScope(db: Db, restaurant: any, point: Point) {
+  try {
+    await eligibility(db, restaurant.id, point);
+    return true;
+  } catch (error: any) {
+    const code = error?.extensions?.code;
+    if (code === "OUT_OF_DELIVERY_ZONE" || code === "RESTAURANT_CLOSED") return false;
+    throw error;
+  }
+}
+async function publicRestaurantExists(db: Db, raw: unknown) {
+  const id = idOf(raw, "restaurantId");
+  if (!await db.collection("restaurants").findOne({ id }, { projection: { _id: 0, id: 1 }, maxTimeMS: 2000 }))
+    fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
+  return id;
+}
+
+export type PublicRestaurantSummary = {
+  id: string;
+  name: string;
+  description: string;
+  open: boolean;
+  version: number;
+};
+
+export async function publicRestaurantPage(
+  db: Db,
+  pointRaw: unknown,
+  searchRaw?: unknown,
+  openOnlyRaw = false,
+  limitRaw: unknown = 20,
+  afterRaw?: unknown,
+) {
+  const point = pointRaw == null ? null : normalizePoint(pointRaw);
+  const search = publicSearch(searchRaw);
+  const openOnly = openOnlyRaw == null ? false : openOnlyRaw;
+  if (typeof openOnly !== "boolean") fail("INVALID_INPUT", "openOnly invalide");
+  const limit = publicLimit(limitRaw);
+  const scope = {
+    point,
+    search: search ?? "",
+    openOnly,
+  };
+  const after = publicCursor(afterRaw, { kind: "publicRestaurantPage", scope });
+  const filter: any = after ? { id: { $gt: after } } : {};
+  if (search) {
+    filter.$or = [
+      { name: { $regex: escapeRegex(search), $options: "i" } },
+      { description: { $regex: escapeRegex(search), $options: "i" } },
+    ];
+  }
+  const rows = await db.collection("restaurants")
+    .find(filter, { projection: publicRestaurantProjection, maxTimeMS: 2000 })
+    .sort({ id: 1 })
+    .hint("id_1")
+    .limit(limit + 1)
+    .toArray();
+  const items: PublicRestaurantSummary[] = [];
+  for (const restaurant of rows.slice(0, limit)) {
+    const effectiveOpen = isRestaurantOpen(restaurant);
+    if (openOnly && !effectiveOpen) continue;
+    // A supplied point has the same historical semantics as restaurants(point):
+    // closed or out-of-zone restaurants are not public results.
+    if (point && !(effectiveOpen && await inPublicScope(db, restaurant, point))) continue;
+    items.push({
+      id: restaurant.id,
+      name: restaurant.name,
+      description: restaurant.description,
+      open: effectiveOpen,
+      version: Number.isInteger(restaurant.version) ? restaurant.version : 0,
+    });
+  }
+  const consumed = rows[Math.min(rows.length, limit) - 1];
+  return {
+    items,
+    // The cursor advances past the last candidate examined, not the last item
+    // returned, so an empty filtered page cannot hide later eligible rows.
+    nextCursor: rows.length > limit && consumed
+      ? makePublicCursor("publicRestaurantPage", scope, consumed.id)
+      : null,
+  };
+}
+
+export async function publicMenuPage(
+  db: Db,
+  restaurantIdRaw: unknown,
+  searchRaw?: unknown,
+  categoryIdRaw?: unknown,
+  limitRaw: unknown = 20,
+  afterRaw?: unknown,
+) {
+  const restaurantId = await publicRestaurantExists(db, restaurantIdRaw);
+  const search = publicSearch(searchRaw);
+  const categoryId = categoryIdRaw == null ? null : idOf(categoryIdRaw, "categoryId");
+  const limit = publicLimit(limitRaw);
+  const scope = { restaurantId, search: search ?? "", categoryId: categoryId ?? "" };
+  const after = publicCursor(afterRaw, { kind: "publicMenuPage", scope });
+  const base: any = {
+    restaurantId,
+    archived: { $ne: true },
+    ...(after ? { id: { $gt: after } } : {}),
+  };
+  const searchClause = search
+    ? { $or: [
+        { name: { $regex: escapeRegex(search), $options: "i" } },
+        { description: { $regex: escapeRegex(search), $options: "i" } },
+      ] }
+    : null;
+  if (categoryId && categoryId !== "__uncategorized") base.categoryId = categoryId;
+  if (searchClause) base.$and = [searchClause];
+
+  let rows: any[];
+  if (categoryId === "__uncategorized") {
+    const pipeline: any[] = [
+      { $match: base },
+      {
+        $lookup: {
+          from: "menu_categories",
+          let: { categoryId: "$categoryId" },
+          pipeline: [
+            { $match: { $expr: { $and: [
+              { $eq: ["$restaurantId", restaurantId] },
+              { $eq: ["$id", "$$categoryId"] },
+            ] } } },
+            { $project: { _id: 0, archived: 1 } },
+          ],
+          as: "categoryRef",
+        },
+      },
+      { $match: { $or: [
+        { categoryId: { $exists: false } },
+        { categoryId: null },
+        { "categoryRef.0": { $exists: false } },
+        { "categoryRef.archived": true },
+      ] } },
+      { $sort: { id: 1 } },
+      { $limit: limit + 1 },
+      { $project: publicMenuProjection },
+    ];
+    rows = await db.collection("menu_items").aggregate(pipeline, { maxTimeMS: 2000 }).toArray();
+  } else {
+    rows = await db.collection("menu_items")
+      .find(base, { projection: publicMenuProjection, maxTimeMS: 2000 })
+      .sort({ id: 1 })
+      .hint("menu_items_restaurant_id")
+      .limit(limit + 1)
+      .toArray();
+  }
+  const page = rows.slice(0, limit);
+  const ids = [...new Set(page.map((item: any) => item.categoryId).filter(Boolean))];
+  const categories = ids.length
+    ? await db.collection("menu_categories").find(
+        { restaurantId, id: { $in: ids } },
+        { projection: publicCategoryProjection, maxTimeMS: 2000 },
+      ).toArray()
+    : [];
+  const byId = new Map(categories.map((category: any) => [category.id, category]));
+  const sections: any[] = [];
+  const byKey = new Map<string, any>();
+  for (const item of page) {
+    const category = byId.get(item.categoryId);
+    const activeCategory = category && category.archived !== true ? category : null;
+    const key = activeCategory?.id ?? "__uncategorized";
+    let section = byKey.get(key);
+    if (!section) {
+      section = { category: activeCategory ? categoryView(activeCategory) : null, items: [] };
+      byKey.set(key, section);
+      sections.push(section);
+    }
+    section.items.push(viewMenu(item));
+  }
+  return {
+    sections,
+    nextCursor: rows.length > limit
+      ? makePublicCursor("publicMenuPage", scope, page[page.length - 1].id)
+      : null,
+  };
+}
+
+export async function publicMenuCategoryPage(
+  db: Db,
+  restaurantIdRaw: unknown,
+  limitRaw: unknown = 20,
+  afterRaw?: unknown,
+) {
+  const restaurantId = await publicRestaurantExists(db, restaurantIdRaw);
+  const limit = publicLimit(limitRaw);
+  const scope = { restaurantId };
+  const after = publicCursor(afterRaw, { kind: "publicMenuCategoryPage", scope });
+  const filter: any = {
+    restaurantId,
+    archived: { $ne: true },
+    ...(after ? { id: { $gt: after } } : {}),
+  };
+  const rows = await db.collection("menu_categories")
+    .find(filter, { projection: publicCategoryProjection, maxTimeMS: 2000 })
+    .sort({ id: 1 })
+    .hint("menu_categories_restaurant_id")
+    .limit(limit + 1)
+    .toArray();
+  const items = rows.slice(0, limit).map(categoryView);
+  return {
+    items,
+    nextCursor: rows.length > limit
+      ? makePublicCursor("publicMenuCategoryPage", scope, items[items.length - 1].id)
+      : null,
+  };
 }
 
 export async function publicRestaurants(db: Db) {

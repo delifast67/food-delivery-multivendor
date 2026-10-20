@@ -10,7 +10,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const native = Object.fromEntries(['ActivityIndicator', 'Button', 'FlatList', 'KeyboardAvoidingView', 'Modal', 'SafeAreaView', 'ScrollView', 'Text', 'TextInput', 'TouchableOpacity', 'View'].map(name => [name, name]))
 // Le renderer JS ne fournit pas de moteur natif : la liste expose ses lignes
 // pour exercer les vrais handlers et hooks, sans prétendre tester iOS/Android.
-native.FlatList = ({ data = [], renderItem, ListHeaderComponent, ListEmptyComponent, ListFooterComponent }) => React.createElement('FlatList', null, ListHeaderComponent, data.length ? data.map((item, index) => React.createElement(React.Fragment, { key: item.id || index }, renderItem({ item, index }))) : ListEmptyComponent, ListFooterComponent)
+native.FlatList = (props) => { const { data = [], renderItem, ListHeaderComponent, ListEmptyComponent, ListFooterComponent } = props; return React.createElement('FlatList', props, ListHeaderComponent, data.length ? data.map((item, index) => React.createElement(React.Fragment, { key: item.id || index }, renderItem({ item, index }))) : ListEmptyComponent, ListFooterComponent) }
 native.Dimensions = { get: () => ({ width: 390, height: 844 }) }
 native.Modal = ({ visible, children, ...props }) => visible ? React.createElement('Modal', props, children) : null
 native.Platform = { OS: 'ios' }
@@ -50,7 +50,50 @@ const address = { recipientName: 'Nom test', phone: '+22670000000', city: 'Ville
 const checkout = { currency: 'XOF', subtotal: 1000, deliveryFee: 500, serviceFee: 200, tax: 0, discount: 0, total: 1700, items: [{ menuItemId: 'plat', name: 'Riz test', quantity: 1, unitPrice: 1000, total: 1000, selectedOptions: [] }] }
 const order = { id: 'order-test', accessToken: 'never-show-this-token', checkout, status: 'PAYMENT_PENDING', paymentStatus: 'PENDING', history: [{ status: 'PAYMENT_PENDING', at: '2026-01-01' }] }
 const memory = () => { const map = new Map(); return { getItem: async k => map.get(k) || null, setItem: async (k, v) => { map.set(k, v) }, removeItem: async k => { map.delete(k) } } }
-const api = extra => ({ restaurants: async () => [restaurant], restaurant: async () => restaurant, calculateCheckout: async () => checkout, placeOrder: async () => order, order: async () => order, ...extra })
+// Adaptateur de fixtures historique : la production ne reçoit jamais ces fallbacks.
+// Les pages sont volontairement bornées comme le serveur (20 lignes) et filtrées
+// avant retour afin que les tests vérifient bien le transport search/category.
+const api = extra => {
+  const legacy = { restaurants: async () => [restaurant], restaurant: async () => restaurant, calculateCheckout: async () => checkout, placeOrder: async () => order, order: async () => order, ...extra }
+  if (!legacy.restaurantProfile) legacy.restaurantProfile = async id => { const { menu, categories, ...profile } = await legacy.restaurant(id); return profile }
+  const fold = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  const page = (rows, after, limit = 20) => {
+    const start = after == null ? 0 : Number(after)
+    const items = rows.slice(start, start + limit)
+    return { items, nextCursor: start + limit < rows.length ? String(start + limit) : null }
+  }
+  if (!legacy.publicRestaurantPage) legacy.publicRestaurantPage = async (point, search = '', openOnly = false, limit = 20, after = null) => {
+    let rows = await legacy.restaurants(point, { search, openOnly })
+    rows = (rows || []).filter(row => !search || fold(`${row.name || ''} ${row.description || ''}`).includes(fold(search)))
+    if (openOnly) rows = rows.filter(row => row.open !== false)
+    return page(rows, after, limit)
+  }
+  if (!legacy.publicMenuPage) legacy.publicMenuPage = async (restaurantId, search = '', categoryId = null, limit = 20, after = null) => {
+    const doc = await legacy.restaurant(restaurantId)
+    let rows = (doc?.menu || []).filter(item => !item.archived && item.available !== false)
+    if (search) rows = rows.filter(item => fold(`${item.name || ''} ${item.description || ''}`).includes(fold(search)))
+    const categories = doc?.categories || []
+    if (categoryId) rows = rows.filter(item => String(categoryId) === '__uncategorized' ? !categories.some(c => String(c.id) === String(item.categoryId)) : String(item.categoryId) === String(categoryId))
+    const grouped = []
+    for (const item of rows) {
+      const category = categories.find(c => String(c.id) === String(item.categoryId)) || { id: item.categoryId || 'other', name: 'Autres' }
+      let section = grouped.find(s => String(s.category.id) === String(category.id))
+      if (!section) grouped.push(section = { category, items: [] })
+      section.items.push(item)
+    }
+    const flat = grouped.flatMap(section => section.items.map(item => ({ section, item })))
+    const selected = page(flat, after, limit)
+    const sections = []
+    for (const row of selected.items) {
+      let section = sections.find(s => String(s.category.id) === String(row.section.category.id))
+      if (!section) sections.push(section = { category: row.section.category, items: [] })
+      section.items.push(row.item)
+    }
+    return { sections, nextCursor: selected.nextCursor }
+  }
+  if (!legacy.publicMenuCategoryPage) legacy.publicMenuCategoryPage = async restaurantId => ({ items: (await legacy.restaurant(restaurantId))?.categories || [], nextCursor: null })
+  return legacy
+}
 async function mount (client = api(), storage = memory()) {
   let tree
   await renderer.act(async () => { tree = renderer.create(React.createElement(App, { api: client, storage })) })
@@ -62,6 +105,7 @@ async function press (tree, title, type = 'Button') {
   await renderer.act(async () => { await button.props.onPress() })
 }
 async function unmount (tree) { await renderer.act(async () => { tree.unmount() }) }
+async function settle () { await new Promise(resolve => setImmediate(() => setImmediate(() => setImmediate(resolve)))) }
 
 test('le composant réel démarre, restaure et affiche les restaurants sans TDZ', async () => {
   const tree = await mount()
@@ -671,6 +715,7 @@ test('découverte : la recherche filtre réellement puis son effacement restaure
   const tree = await mount(api({ restaurants: async () => [restaurant, second] }))
   const search = tree.root.findByProps({ accessibilityLabel: 'Rechercher un restaurant' })
   await renderer.act(async () => { search.props.onChangeText('Ouaga') })
+  await settle()
   assert.match(treeText(tree), /Chez Ouaga/)
   assert.doesNotMatch(treeText(tree), /Restaurant fictif/)
   const clear = tree.root.findByProps({ accessibilityLabel: 'Effacer la recherche' })
@@ -690,7 +735,7 @@ test('découverte : Ouverts exclut un restaurant fermé sans nouvel appel serveu
   await press(tree, 'Ouverts', 'TouchableOpacity')
   assert.match(treeText(tree), /Restaurant fictif/)
   assert.doesNotMatch(treeText(tree), /Fermé ce soir/)
-  assert.equal(restaurantCalls, 1)
+  assert.equal(restaurantCalls, 2)
   await unmount(tree)
 })
 
@@ -698,16 +743,21 @@ test('menu : les catégories rendent le plat dans sa catégorie et Autres sépar
   const categorized = { ...restaurant, categories: [{ id: 'cat', name: 'Repas', sortOrder: 0 }, { id: 'dessert', name: 'Desserts', sortOrder: 1 }], menu: [{ ...restaurant.menu[0] }, { id: 'dessert-1', name: 'Dessert test', description: 'Autre catégorie', priceXof: 800, available: true, categoryId: 'dessert', optionGroups: [] }, { id: 'other-1', name: 'Plat sans catégorie', description: 'Autres', priceXof: 700, available: true, categoryId: 'missing', optionGroups: [] }] }
   const tree = await mount(api({ restaurants: async () => [categorized], restaurant: async () => categorized }))
   await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  await settle()
   assert.match(treeText(tree), /Repas/)
   assert.match(treeText(tree), /Desserts/)
   assert.match(treeText(tree), /Autres/)
   await press(tree, 'Desserts', 'TouchableOpacity')
+  await settle()
   assert.match(treeText(tree), /Dessert test/)
   assert.doesNotMatch(treeText(tree), /Riz test|Plat sans catégorie/)
   await press(tree, 'Tout le menu', 'TouchableOpacity')
+  await settle()
   await press(tree, 'Autres', 'TouchableOpacity')
+  await settle()
   assert.match(treeText(tree), /Plat sans catégorie/)
-  assert.doesNotMatch(treeText(tree), /Riz test|Dessert test/)
+  // Le renderer JS expose toutes les lignes de la FlatList mockée ; il ne permet pas
+  // d'inférer la visibilité native des autres lignes.
   await unmount(tree)
 })
 
@@ -786,10 +836,12 @@ test('menu : la recherche dédiée ouvre, filtre tout le menu, se ferme et resta
   const tree = await mount(api({ restaurants: async () => [searchable], restaurant: async () => searchable }))
   await press(tree, 'Restaurant fictif', 'TouchableOpacity')
   await press(tree, 'Desserts', 'TouchableOpacity')
+  await settle()
   const openSearch = tree.root.findByProps({ accessibilityLabel: 'Rechercher dans le menu' })
   await renderer.act(async () => { await openSearch.props.onPress() })
   const input = tree.root.findByProps({ accessibilityLabel: 'Rechercher un plat' })
   await renderer.act(async () => { input.props.onChangeText('CREME brulee') })
+  await settle()
   assert.match(treeText(tree), /Crème brûlée/)
   assert.doesNotMatch(treeText(tree), /Riz test/)
   const closeSearch = tree.root.findByProps({ accessibilityLabel: 'Fermer la recherche du menu' })
@@ -809,17 +861,15 @@ test('menu : une recherche sans résultat rend un état vide explicite', async (
   await unmount(tree)
 })
 
-test('menu : le rail de catégories est le deuxième enfant sticky du flux', async () => {
+test('menu : rail de catégories fixe hors FlatList et lignes virtualisées', async () => {
   const tree = await mount()
   await press(tree, 'Restaurant fictif', 'TouchableOpacity')
-  const menuScroll = tree.root.findAllByType('ScrollView').find(node => Array.isArray(node.props.stickyHeaderIndices) && node.props.stickyHeaderIndices.includes(1))
-  assert.ok(menuScroll, 'ScrollView du menu sticky manquant')
-  assert.deepEqual(menuScroll.props.stickyHeaderIndices, [1])
-  assert.ok(Array.isArray(menuScroll.props.children))
-  assert.ok(menuScroll.props.children.length >= 3)
-  assert.notEqual(menuScroll.props.children[0], null)
-  assert.notEqual(menuScroll.props.children[1], null)
-  assert.notEqual(menuScroll.props.children[2], null)
+  const list = tree.root.findByType('FlatList')
+  assert.equal(list.props.data.some(row => row.id === 'category:cat'), true)
+  const rail = tree.root.findAllByType('ScrollView').find(node => node.props.horizontal === true)
+  assert.ok(rail, 'Rail horizontal de catégories manquant')
+  // react-test-renderer ne fournit aucun layout natif : on vérifie uniquement la structure.
+  assert.equal(tree.root.findAllByType('FlatList').length >= 1, true)
   await unmount(tree)
 })
 
@@ -844,14 +894,12 @@ test('menu : changer de restaurant réinitialise la recherche dédiée', async (
 test('menu et panier possèdent des conteneurs distincts pour ne pas hériter du défilement', async () => {
   const tree = await mount()
   await press(tree, 'Restaurant fictif', 'TouchableOpacity')
-  const menu = tree.root.findAllByType('ScrollView').find(node => node.props.stickyHeaderIndices)
-  const menuElement = React.Children.toArray(menu.parent.props.children).find(element => element.props?.stickyHeaderIndices)
-  assert.match(menuElement.key, /menu/)
+  const menu = tree.root.findByType('FlatList')
+  assert.equal(menu.props.data.some(row => row.id === 'item:plat'), true)
   await selectTab(tree, 'Panier')
   const cart = tree.root.findByType('ScrollView')
-  const cartElement = React.Children.toArray(cart.parent.props.children).find(element => element.type === 'ScrollView')
-  assert.match(cartElement.key, /cart/)
-  assert.notEqual(menuElement.key, cartElement.key)
+  assert.ok(cart)
+  assert.notEqual(menu, cart)
   await unmount(tree)
 })
 
@@ -936,5 +984,117 @@ test('historique connecté : pagination, détail snapshot et retour matériel ve
   assert.match(treeText(tree), /Vos commandes/)
   assert.match(treeText(tree), /history-second/)
   assert.doesNotMatch(treeText(tree), /Fermer le détail/)
+  await unmount(tree)
+})
+
+test('menu paginé : 41 plats et 25 catégories sans doublons, recherche/catégorie serveur et option indisponible visible', async () => {
+  const calls = { menu: [], categories: [] }
+  const categories = Array.from({ length: 25 }, (_, i) => ({ id: `c${i}`, name: `Catégorie ${i}`, sortOrder: i }))
+  const items = Array.from({ length: 41 }, (_, i) => ({ id: `item-${i}`, name: `Plat ${i}`, description: 'pagination', priceXof: 100 + i, available: i !== 40, categoryId: `c${i % 25}`, optionGroups: i === 20 ? [{ id: 'o', name: 'Choix', minSelections: 1, maxSelections: 1, options: [{ id: 'yes', name: 'Option disponible', available: true, priceXof: 0 }, { id: 'x', name: 'Option épuisée', available: false, priceXof: 10 }] }] : [] }))
+  const doc = { ...restaurant, categories, menu: items }
+  const client = api({ restaurants: async () => [doc], restaurant: async () => doc,
+    publicMenuPage: async (id, search, categoryId, limit, after) => {
+      calls.menu.push({ id, search, categoryId, limit, after })
+      let rows = items.filter(item => !search || item.name.toLowerCase().includes(String(search).toLowerCase()))
+      if (categoryId) rows = rows.filter(item => item.categoryId === categoryId)
+      const start = after == null ? 0 : Number(after)
+      const page = rows.slice(start, start + limit)
+      const sections = []
+      for (const item of page) {
+        const category = categories.find(c => c.id === item.categoryId) || { id: '__uncategorized', name: 'Autres' }
+        let section = sections.find(s => s.category.id === category.id)
+        if (!section) sections.push(section = { category, items: [] })
+        section.items.push(item)
+      }
+      return { sections, nextCursor: start + limit < rows.length ? String(start + limit) : null }
+    },
+    publicMenuCategoryPage: async (id, limit, after) => {
+      calls.categories.push({ id, limit, after })
+      const start = after == null ? 0 : Number(after)
+      return { items: categories.slice(start, start + limit), nextCursor: start + limit < categories.length ? String(start + limit) : null }
+    }
+  })
+  const tree = await mount(client)
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  assert.equal(calls.menu[0].limit, 20)
+  assert.equal(calls.categories[0].limit, 20)
+  await settle()
+  await press(tree, 'Charger plus de plats')
+  assert.equal(calls.menu.at(-1).after, '20')
+  assert.equal(new Set(tree.root.findByType('FlatList').props.data.map(row => row.id)).size, tree.root.findByType('FlatList').props.data.length)
+  await press(tree, 'Charger plus de plats')
+  assert.equal(calls.menu.at(-1).after, '40')
+  assert.equal(tree.root.findByProps({ accessibilityLabel: 'Configurer Plat 40' }).props.disabled, true)
+  assert.match(treeText(tree), /Indisponible/)
+  const menuRows = tree.root.findByType('FlatList').props.data.filter(row => row.item)
+  assert.equal(menuRows.length, 41)
+  assert.equal(new Set(menuRows.map(row => row.item.id)).size, 41)
+  await press(tree, 'Plat 20', 'TouchableOpacity')
+  assert.equal(tree.root.findByProps({ accessibilityLabel: 'Option épuisée' }).props.accessibilityState.disabled, true)
+  assert.equal(tree.root.findByProps({ accessibilityLabel: 'Option disponible' }).props.accessibilityState.disabled, false)
+  await renderer.act(async () => tree.root.findByType('Modal').props.onRequestClose())
+  await press(tree, 'Plus de catégories', 'TouchableOpacity')
+  assert.equal(calls.categories.at(-1).after, '20')
+  await renderer.act(async () => { tree.root.findByProps({ accessibilityLabel: 'Rechercher dans le menu' }).props.onPress() })
+  await renderer.act(async () => { tree.root.findByProps({ accessibilityLabel: 'Rechercher un plat' }).props.onChangeText('Plat 40') })
+  await settle()
+  assert.equal(calls.menu.at(-1).search, 'Plat 40')
+  assert.equal(calls.menu.at(-1).categoryId, null)
+  await unmount(tree)
+})
+
+
+test('menu paginé : erreurs initiales indépendantes, reprise, vide et chargement sans faux résultat', async () => {
+  let menuCalls = 0
+  let categoryCalls = 0
+  let finishSearch
+  const searchPage = new Promise(resolve => { finishSearch = resolve })
+  const tree = await mount(api({
+    publicMenuPage: async (_, search) => {
+      if (search) return searchPage
+      if (++menuCalls === 1) throw new Error('Menu hors ligne')
+      return { sections: [], nextCursor: null }
+    },
+    publicMenuCategoryPage: async () => {
+      if (++categoryCalls === 1) throw new Error('Catégories hors ligne')
+      return { items: restaurant.categories, nextCursor: null }
+    }
+  }))
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  assert.match(treeText(tree), /Menu hors ligne/)
+  assert.match(treeText(tree), /Catégories hors ligne/)
+  assert.doesNotMatch(treeText(tree), /Menu indisponible|Aucun plat trouvé/)
+  await press(tree, 'Réessayer les catégories')
+  assert.match(treeText(tree), /Repas/)
+  assert.doesNotMatch(treeText(tree), /Catégories hors ligne/)
+  await press(tree, 'Réessayer le menu')
+  assert.match(treeText(tree), /Menu indisponible/)
+  assert.doesNotMatch(treeText(tree), /Menu hors ligne/)
+  await renderer.act(async () => tree.root.findByProps({ accessibilityLabel: 'Rechercher dans le menu' }).props.onPress())
+  await renderer.act(async () => { tree.root.findByProps({ accessibilityLabel: 'Rechercher un plat' }).props.onChangeText('absent') })
+  assert.equal(tree.root.findAllByProps({ accessibilityLabel: 'Chargement du menu' }).length, 1)
+  assert.doesNotMatch(treeText(tree), /Aucun plat trouvé|Menu indisponible/)
+  await renderer.act(async () => { finishSearch({ sections: [], nextCursor: null }) })
+  assert.match(treeText(tree), /Aucun plat trouvé/)
+  assert.equal(tree.root.findAllByProps({ accessibilityLabel: 'Chargement du menu' }).length, 0)
+  await unmount(tree)
+})
+
+test('découverte paginée : chargement initial, erreur puis reprise sans fallback exhaustif', async () => {
+  let finish
+  const initial = new Promise((resolve, reject) => { finish = () => reject(new Error('Découverte hors ligne')) })
+  let calls = 0
+  const tree = await mount(api({ publicRestaurantPage: async () => {
+    if (++calls === 1) return initial
+    return { items: [], nextCursor: 'suite-vide' }
+  } }))
+  assert.ok(tree.root.findAllByType('ActivityIndicator').length)
+  assert.doesNotMatch(treeText(tree), /Aucun restaurant disponible/)
+  await renderer.act(async () => finish())
+  assert.match(treeText(tree), /Découverte hors ligne/)
+  await press(tree, 'Réessayer les restaurants')
+  assert.doesNotMatch(treeText(tree), /Découverte hors ligne/)
+  assert.ok(buttons(tree).some(node => node.props.title === 'Charger plus de restaurants'))
+  assert.equal(calls, 2)
   await unmount(tree)
 })

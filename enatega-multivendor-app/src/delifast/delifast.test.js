@@ -44,6 +44,40 @@ function setup (overrides = {}, db = {}, options = {}) {
     order: async () => result(),
     ...overrides
   }
+  if (!api.restaurantProfile) api.restaurantProfile = async id => { const { menu, categories, ...profile } = await api.restaurant(id); return profile }
+  const slicePage = (items, after, limit = 20) => {
+    const start = after == null ? 0 : Number(after)
+    return { items: items.slice(start, start + limit), nextCursor: start + limit < items.length ? String(start + limit) : null }
+  }
+  if (!api.publicRestaurantPage) api.publicRestaurantPage = async (point, search = '', openOnly = false, limit = 20, after = null) => {
+    let rows = await api.restaurants(point, { search, openOnly })
+    if (search) rows = rows.filter(row => fold(`${row.name || ''} ${row.description || ''}`).includes(fold(search)))
+    if (openOnly) rows = rows.filter(row => row.isOpen !== false && row.open !== false)
+    return slicePage(rows, after, limit)
+  }
+  if (!api.publicMenuPage) api.publicMenuPage = async (restaurantId, search = '', categoryId = null, limit = 20, after = null) => {
+    const doc = await api.restaurant(restaurantId)
+    let items = (doc?.menu || []).filter(item => !item.archived && item.available !== false)
+    if (search) items = items.filter(item => fold(`${item.name || ''} ${item.description || ''}`).includes(fold(search)))
+    if (categoryId) items = items.filter(item => String(categoryId) === '__uncategorized' ? !(doc.categories || []).some(c => String(c.id) === String(item.categoryId)) : String(item.categoryId) === String(categoryId))
+    const sections = []
+    for (const item of items) {
+      const category = (doc.categories || []).find(c => String(c.id) === String(item.categoryId)) || { id: item.categoryId || 'other', name: 'Autres' }
+      let section = sections.find(s => String(s.category.id) === String(category.id))
+      if (!section) sections.push(section = { category, items: [] })
+      section.items.push(item)
+    }
+    const flat = sections.flatMap(section => section.items.map(item => ({ category: section.category, item })))
+    const selected = slicePage(flat, after, limit)
+    const output = []
+    for (const row of selected.items) {
+      let section = output.find(s => String(s.category.id) === String(row.category.id))
+      if (!section) output.push(section = { category: row.category, items: [] })
+      section.items.push(row.item)
+    }
+    return { sections: output, nextCursor: selected.nextCursor }
+  }
+  if (!api.publicMenuCategoryPage) api.publicMenuCategoryPage = async restaurantId => ({ items: (await api.restaurant(restaurantId)).categories || [], nextCursor: null })
   return { controller: createController({ api, storage, random: options.random || (() => 'key-test-0001'), ...options }), api, storage }
 }
 async function ready (controller) {

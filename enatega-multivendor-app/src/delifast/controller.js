@@ -13,6 +13,9 @@ const validReference = (ref) => ref && typeof ref.id === 'string' && ref.id.leng
 function createController({ api, storage = {}, random, fingerprintSession, onChange = () => {}, pollMs = 8000 }) {
   let state = {
     restaurants: [],
+    restaurantsNextCursor: null,
+    discoverySearch: '',
+    openOnly: false,
     restaurant: null,
     deliveryPoint: { latitude: 12.3714, longitude: -1.5197 },
     cart: { restaurantId: null, items: [] },
@@ -43,7 +46,9 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
     customerOrdersLoading: false,
     customerOrdersError: null,
     customerOrder: null,
-    customerOrderLoading: false
+    customerOrderLoading: false,
+    menuSections: [], menuNextCursor: null, menuLoading: false, menuError: null,
+    categoryNextCursor: null, categoryLoading: false, categoryError: null
   }
   let inFlight = null
   let paymentInFlight = null
@@ -66,6 +71,9 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
   let customerOrdersRequest = 0
   let customerOrderListRequest = 0
   let customerOrderDetailRequest = 0
+  let menuRequest = 0
+  let categoryRequest = 0
+  let menuScope = { restaurantId: null, search: '', categoryId: null }
   let otpChallenge = null
   const ADDRESS_FIELDS = ['recipientName', 'phone', 'city', 'neighborhood', 'landmark', 'instructions', 'point']
   const PROFILE_FIELDS = ['firstName', 'lastName', 'email']
@@ -446,16 +454,23 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
     startPayment: channel => paymentOperation('start', channel),
     refreshPayment: () => paymentOperation('refresh'),
     loadPaymentSession: () => paymentOperation('load'),
-    async loadRestaurants(point = state.deliveryPoint) {
-      const request = ++discoveryRequest
+    async loadRestaurants(point = state.deliveryPoint, { search = '', openOnly = false, more = false } = {}) {
       const checked = validatePoint(point)
       if (!checked.ok) throw new Error(checked.message)
-      set({ loading: true })
+      const normalizedSearch = String(search || '')
+      const changedScope = JSON.stringify(checked.point) !== JSON.stringify(state.deliveryPoint) || normalizedSearch !== state.discoverySearch || !!openOnly !== state.openOnly
+      const reset = !more || changedScope
+      if (more && (state.loading || !state.restaurantsNextCursor)) return clone(state.restaurants)
+      const request = ++discoveryRequest
+      if (reset) set({ restaurants: changedScope ? [] : state.restaurants, restaurantsNextCursor: changedScope ? null : state.restaurantsNextCursor, discoverySearch: normalizedSearch, openOnly: !!openOnly, loading: true, error: null, deliveryPoint: clone(checked.point) })
+      else set({ loading: true, error: null })
       try {
-        const restaurants = await api.restaurants(clone(checked.point))
+        const page = await api.publicRestaurantPage(clone(checked.point), normalizedSearch, !!openOnly, 20, reset ? null : state.restaurantsNextCursor)
         if (request !== discoveryRequest) return null
-        set({ restaurants: clone(restaurants), loading: false, deliveryPoint: clone(checked.point) })
-        return clone(restaurants)
+        if (!page || !Array.isArray(page.items)) throw new Error('Réponse restaurants paginée incomplète')
+        const seen = new Set(); const merged = [...(reset ? [] : state.restaurants), ...page.items].filter(row => row && typeof row.id === 'string' && !seen.has(row.id) && seen.add(row.id))
+        set({ restaurants: clone(merged), restaurantsNextCursor: page.nextCursor || null, loading: false, deliveryPoint: clone(checked.point), error: null })
+        return clone(merged)
       } catch (error) {
         if (request !== discoveryRequest) return null
         set({ loading: false, error: errorView(error) })
@@ -466,20 +481,77 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       writable()
       const checked = validatePoint(point)
       if (!checked.ok) throw new Error(checked.message)
-      set({ deliveryPoint: checked.point, quote: null, quoteVersion: state.quoteVersion + 1, error: null, restaurants: [] })
+      set({ deliveryPoint: checked.point, quote: null, quoteVersion: state.quoteVersion + 1, error: null, restaurants: [], restaurantsNextCursor: null })
       return actions.loadRestaurants(checked.point)
     },
+    loadMoreRestaurants() { return actions.loadRestaurants(state.deliveryPoint, { search: state.discoverySearch, openOnly: state.openOnly, more: true }) },
     async selectRestaurant(id) {
       writable()
       if (state.cart.items.length && state.cart.restaurantId !== id) throw new Error('Videz le panier avant de changer de restaurant')
       const request = ++restaurantRequest
-      const restaurant = await api.restaurant(id)
+      ++menuRequest
+      ++categoryRequest
+      const restaurant = await api.restaurantProfile(id)
       writable()
       if (request !== restaurantRequest) return null
       if (!restaurant) throw new Error('Restaurant introuvable')
       if (state.cart.items.length && state.cart.restaurantId !== id) throw new Error('Videz le panier avant de changer de restaurant')
-      set({ restaurant: clone(restaurant), error: null })
-      return clone(restaurant)
+      set({ restaurant: { ...clone(restaurant), menu: [], categories: [] }, menuSections: [], menuNextCursor: null, menuLoading: false, menuError: null, categoryNextCursor: null, categoryLoading: false, categoryError: null, error: null })
+      menuScope = { restaurantId: id, search: '', categoryId: null }
+      // Partial catalogue failure must open the menu with its own retry controls.
+      await Promise.allSettled([actions.loadMenu(), actions.loadMoreCategories()])
+      if (request !== restaurantRequest) return null
+      return clone(state.restaurant)
+    },
+    async loadMenu({ search = '', categoryId = null, more = false } = {}) {
+      const restaurantId = state.restaurant?.id
+      if (!restaurantId || !api.publicMenuPage) throw new Error('Restaurant non sélectionné')
+      const normalizedSearch = String(search || ''); const normalizedCategory = categoryId == null ? null : String(categoryId)
+      const sameScope = menuScope.restaurantId === restaurantId && menuScope.search === normalizedSearch && menuScope.categoryId === normalizedCategory
+      const reset = !more || !sameScope
+      if (more && (state.menuLoading || !state.menuNextCursor)) return clone(state.menuSections)
+      const request = ++menuRequest
+      menuScope = { restaurantId, search: normalizedSearch, categoryId: normalizedCategory }
+      if (!sameScope) set({ menuSections: [], menuNextCursor: null, restaurant: { ...state.restaurant, menu: [] } })
+      set({ menuLoading: true, menuError: null })
+      const cursor = reset ? null : state.menuNextCursor
+      try {
+        const page = await api.publicMenuPage(restaurantId, normalizedSearch, normalizedCategory, 20, cursor)
+        if (request !== menuRequest || restaurantId !== state.restaurant?.id) return null
+        if (!page || !Array.isArray(page.sections)) throw new Error('Réponse menu paginée incomplète')
+        const sections = clone(reset ? [] : state.menuSections)
+        const known = new Set(sections.flatMap(section => section.items.map(item => String(item.id))))
+        for (const incoming of page.sections) {
+          const id = incoming?.category?.id ? String(incoming.category.id) : '__uncategorized'
+          let section = sections.find(section => section.id === id)
+          if (!section) { section = { id, name: incoming.category?.name || 'Autres', sortOrder: incoming.category?.sortOrder ?? Number.MAX_SAFE_INTEGER, items: [] }; sections.push(section) }
+          for (const item of Array.isArray(incoming.items) ? incoming.items : []) {
+            if (item?.id && !item.archived && !known.has(String(item.id))) { section.items.push(clone(item)); known.add(String(item.id)) }
+          }
+        }
+        sections.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || a.id.localeCompare(b.id))
+        const menu = sections.flatMap(section => section.items)
+        set({ menuSections: sections, menuNextCursor: page.nextCursor || null, menuLoading: false, menuError: null, restaurant: { ...state.restaurant, menu: clone(menu) }, error: null })
+        return clone(sections)
+      } catch (error) {
+        if (request !== menuRequest || restaurantId !== state.restaurant?.id) return null
+        set({ menuLoading: false, menuError: errorView(error) })
+        throw error
+      }
+    },
+    async loadMoreCategories() {
+      const restaurantId = state.restaurant?.id
+      if (!restaurantId || !api.publicMenuCategoryPage) throw new Error('Restaurant non sélectionné')
+      if (state.categoryLoading || !state.categoryNextCursor && state.restaurant.categories?.length) return clone(state.restaurant.categories)
+      const request = ++categoryRequest; set({ categoryLoading: true, categoryError: null })
+      try {
+        const page = await api.publicMenuCategoryPage(restaurantId, 20, state.categoryNextCursor)
+        if (request !== categoryRequest || restaurantId !== state.restaurant?.id) return null
+        if (!page || !Array.isArray(page.items)) throw new Error('Réponse catégories paginée incomplète')
+        const old = state.restaurant.categories || []; const seen = new Set(); const categories = [...old, ...page.items].filter(item => item?.id && !seen.has(String(item.id)) && seen.add(String(item.id)))
+        set({ categoryNextCursor: page.nextCursor || null, categoryLoading: false, categoryError: null, restaurant: { ...state.restaurant, categories: clone(categories) }, error: null })
+        return clone(categories)
+      } catch (error) { if (request !== categoryRequest || restaurantId !== state.restaurant?.id) return null; set({ categoryLoading: false, categoryError: errorView(error) }); throw error }
     },
     async addItem(item, selections) {
       writable()

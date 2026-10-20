@@ -19,13 +19,29 @@ const ok = text => { checks++; console.log(`OK — ${text}`); };
 const controller = createController({ api, storage, random: () => crypto.randomUUID() });
 await controller.restoreAttempt();
 assert.deepEqual(controller.getState().deliveryPoint, { latitude: 12.3714, longitude: -1.5197 });
-const restaurants = await controller.loadRestaurants();
-const restaurant = restaurants.find(r => r.open && r.menu.some(i => i.available && i.optionGroups.some(g => g.minSelections > 0)));
-assert.ok(restaurant, 'Exécuter le seed catégories/options avant la recette mobile');
-await controller.selectRestaurant(restaurant.id);
-assert.ok(restaurant.categories.length);
-ok('catalogue mobile réel : restaurant, catégories et groupes de choix');
-const item = restaurant.menu.find(i => i.available && i.optionGroups.some(g => g.minSelections > 0));
+let restaurants = await controller.loadRestaurants();
+let restaurant;
+let item;
+// Discovery contains metadata only. Traverse explicit bounded pages until a
+// seeded configurable item is found, instead of relying on embedded menus.
+while (!item) {
+  for (const candidate of restaurants.filter(r => r.open)) {
+    await controller.selectRestaurant(candidate.id);
+    do {
+      restaurant = controller.getState().restaurant;
+      item = restaurant.menu.find(i => i.available && i.optionGroups.some(g => g.minSelections > 0));
+      if (item || !controller.getState().menuNextCursor) break;
+      await controller.loadMenu({ more: true });
+    } while (!item);
+    if (item) break;
+  }
+  if (item || !controller.getState().restaurantsNextCursor) break;
+  const previous = new Set(controller.getState().restaurants.map(r => r.id));
+  await controller.loadRestaurants(controller.getState().deliveryPoint, { more: true });
+  restaurants = controller.getState().restaurants.filter(r => !previous.has(r.id));
+}
+assert.ok(item, 'Exécuter le seed catégories/options avant la recette mobile');
+ok('catalogue mobile réel : pages restaurant, catégories et groupes de choix');
 await assert.rejects(controller.addItem(item, []));
 ok('choix obligatoire refusé avant ajout');
 const selections = item.optionGroups.filter(g => g.minSelections > 0).map(g => ({ groupId: g.id, optionIds: g.options.filter(o => o.available).slice(0, g.minSelections).map(o => o.id) }));

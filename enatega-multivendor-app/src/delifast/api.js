@@ -16,6 +16,8 @@ const optionFields = 'id name priceXof available'
 const groupFields = `id name minSelections maxSelections options { ${optionFields} }`
 const categoryFields = 'id name sortOrder archived version'
 const restaurantFields = `id name description open version categories { ${categoryFields} } menu { id name description priceXof available archived version categoryId optionGroups { ${groupFields} } }`
+const restaurantMetaFields = 'id name description open version'
+const menuItemFields = `id name description priceXof available archived version categoryId optionGroups { ${groupFields} }`
 const checkout = 'currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } }'
 const deliveryFields = 'delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo }'
 const paymentSessionFields = 'orderId phase channel mode checkoutUrl providerStatus paymentStatus'
@@ -39,6 +41,10 @@ const serializeDeliveryAddressInput = input => {
 const documents = {
   restaurants: `query MobileRestaurants($point: DeliveryPointInput) { restaurants(point: $point) { ${restaurantFields} } }`,
   restaurant: `query MobileRestaurant($id: ID!) { restaurant(id: $id) { ${restaurantFields} } }`,
+  restaurantProfile: `query MobileRestaurantProfile($id: ID!) { restaurantProfile: restaurant(id: $id) { ${restaurantMetaFields} } }`,
+  publicRestaurantPage: `query MobilePublicRestaurantPage($point: DeliveryPointInput, $search: String, $openOnly: Boolean = false, $limit: Int = 20, $after: String) { publicRestaurantPage(point: $point, search: $search, openOnly: $openOnly, limit: $limit, after: $after) { items { id name description open version } nextCursor } }`,
+  publicMenuPage: `query MobilePublicMenuPage($restaurantId: ID!, $search: String, $categoryId: ID, $limit: Int = 20, $after: String) { publicMenuPage(restaurantId: $restaurantId, search: $search, categoryId: $categoryId, limit: $limit, after: $after) { sections { category { ${categoryFields} } items { ${menuItemFields} } } nextCursor } }`,
+  publicMenuCategoryPage: `query MobilePublicMenuCategoryPage($restaurantId: ID!, $limit: Int = 20, $after: String) { publicMenuCategoryPage(restaurantId: $restaurantId, limit: $limit, after: $after) { items { ${categoryFields} } nextCursor } }`,
   calculateCheckout: `query MobileCalculateCheckout($input: CartInput!) { calculateCheckout(input: $input) { ${checkout} ${deliveryFields} } }`,
   placeOrder: `mutation MobilePlaceOrder($input: PlaceOrderInput!) { placeOrder(input: $input) { ${orderFields} } }`,
   paymentSession: `query MobilePaymentSession($orderId: ID!, $accessToken: String!) { paymentSession(orderId: $orderId, accessToken: $accessToken) { ${paymentSessionFields} } }`,
@@ -131,6 +137,10 @@ function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetc
   return {
     restaurants: (point) => field('restaurants', point == null ? {} : { point }),
     restaurant: (id) => field('restaurant', { id }),
+    restaurantProfile: (id) => field('restaurantProfile', { id }),
+    publicRestaurantPage: (point, search = '', openOnly = false, limit = 20, after = null) => field('publicRestaurantPage', { point, search, openOnly, limit, after }),
+    publicMenuPage: (restaurantId, search = '', categoryId = null, limit = 20, after = null) => field('publicMenuPage', { restaurantId, search, categoryId, limit, after }),
+    publicMenuCategoryPage: (restaurantId, limit = 20, after = null) => field('publicMenuCategoryPage', { restaurantId, limit, after }),
     calculateCheckout: (input) => field('calculateCheckout', { input }),
     placeOrder: (input) => field('placeOrder', { input }, true),
     paymentSession: (orderId, accessToken) => field('paymentSession', { orderId, accessToken }),
