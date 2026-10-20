@@ -286,7 +286,9 @@ export async function assign(
       id,
       status: expected,
       paymentStatus: "PAID",
-      $or: [{ riderId: { $exists: false } }, { riderId }],
+      // Only the first assignment writes. Replays below return the existing
+      // document without changing updatedAt or racing a second assignment.
+      riderId: { $exists: false },
     },
     { $set: { riderId, updatedAt: at } },
     { returnDocument: "after" },
