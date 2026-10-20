@@ -11,6 +11,7 @@ const required = ['calculateCheckout', 'order', 'placeOrder', 'restaurant', 'res
   'requestCustomerOtp', 'resendCustomerOtp', 'verifyCustomerOtp', 'customerLogout',
   'customerMe', 'updateCustomerProfile', 'customerAddresses', 'createCustomerAddress', 'updateCustomerAddress', 'deleteCustomerAddress',
   'customerSupportTickets', 'customerSupportTicket', 'createSupportTicket',
+  'customerOrders', 'customerOrder',
   'paymentSession', 'startPayment', 'refreshPayment'];
 assert.deepEqual(Object.keys(documents).sort(), required.sort());
 for (const [name, document] of Object.entries(documents)) {

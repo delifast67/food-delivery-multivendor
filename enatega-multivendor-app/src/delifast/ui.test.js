@@ -903,3 +903,38 @@ test('carnet : ajouter transmet uniquement l’adresse validée et normalisée',
   assert.equal(tree.root.findAllByType('TextInput').length, 0)
   await unmount(tree)
 })
+
+// Parcours d’historique connecté : vrai composant Expo rendu en JS, pas un test natif.
+test('historique connecté : pagination, détail snapshot et retour matériel vers la liste', async () => {
+  const storage = memory()
+  await storage.setItem('delifast-customer-token', 'fixture-history-session')
+  const calls = []
+  const first = { ...order, id: 'history-first', accessToken: undefined, createdAt: '2026-01-01T12:00:00Z', updatedAt: '2026-01-02T12:00:00Z', deliveryAddress: address, checkout: { ...checkout, items: [{ ...checkout.items[0], name: 'Plat ancien conservé', selectedOptions: [{ name: 'Option ancienne conservée' }] }] } }
+  const second = { ...first, id: 'history-second' }
+  let capabilityCalls = 0
+  const tree = await mount(api({
+    setCustomerToken: () => {}, customerMe: async () => ({ id: 'fixture-owner', phone: '+22670000000' }), customerAddresses: async () => [],
+    customerOrders: async (limit, after) => { calls.push([limit, after]); return after ? { items: [second], nextCursor: null } : { items: [first], nextCursor: 'fixture-next' } },
+    customerOrder: async id => { assert.equal(id, first.id); return first },
+    order: async () => { capabilityCalls++; throw new Error('Le détail connecté ne doit pas utiliser de capability') }
+  }), storage)
+  await press(tree, 'Commandes', 'TouchableOpacity')
+  assert.match(treeText(tree), /history-first/)
+  await press(tree, 'Charger la suite')
+  assert.match(treeText(tree), /history-second/)
+  assert.deepEqual(calls, [[20, null], [20, 'fixture-next']])
+  const row = tree.root.findAllByType('TouchableOpacity').find(node => node.props.accessibilityLabel === 'Commande history-first')
+  assert.ok(row)
+  await renderer.act(async () => { await row.props.onPress() })
+  assert.match(treeText(tree), /Plat ancien conservé/)
+  assert.match(treeText(tree), /Option ancienne conservée/)
+  assert.match(treeText(tree), /Historique serveur/)
+  assert.match(treeText(tree).replace(/[\u202f\u00a0 ]/g, ''), /1700XOF/)
+  assert.doesNotMatch(treeText(tree), /never-show-this-token|fixture-history-session/)
+  assert.equal(capabilityCalls, 0)
+  await renderer.act(async () => { assert.equal([...backListeners].at(-1)(), true) })
+  assert.match(treeText(tree), /Vos commandes/)
+  assert.match(treeText(tree), /history-second/)
+  assert.doesNotMatch(treeText(tree), /Fermer le détail/)
+  await unmount(tree)
+})

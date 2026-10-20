@@ -4,6 +4,7 @@ import { calculateCheckout } from "./pricing.js";
 import { type Address, type Cart, fail } from "./validation.js";
 import type { Staff } from "./auth.js";
 import { getPaymentProvider } from "./payment.js";
+import { config } from "./config.js";
 
 const tokenHash = (value: string) =>
   crypto.createHash("sha256").update(value).digest("hex");
@@ -39,7 +40,7 @@ function normalizeLegacyCheckout(checkout: any) {
   };
 }
 function customerView(order: any, token = "") {
-  const { customerId: _customerId, accessToken: _storedToken, accessTokenHash: _tokenHash, ...safeOrder } = order;
+  const { customerId: _customerId, accessToken: _storedToken, accessTokenHash: _tokenHash, idempotencyKey: _idempotencyKey, fingerprint: _fingerprint, ...safeOrder } = order;
   return {
     ...safeOrder,
     checkout: normalizeLegacyCheckout(order.checkout),
@@ -51,6 +52,37 @@ function customerView(order: any, token = "") {
 }
 export function operationView(order: any) {
   return customerView(order, "");
+}
+/** Authenticated customer endpoints use a strict immutable snapshot: no token and no synthesized history. */
+function customerOwnedView(order: any) {
+  const view = customerView(order, "");
+  delete view.accessToken;
+  return { ...view, history: Array.isArray(order.history) ? order.history : [] };
+}
+const cursorKey = () => config.customerOrderCursorKey;
+function encodeCustomerCursor(customerId: string, order: any) {
+  const body = Buffer.from(JSON.stringify({ createdAt: order.createdAt, id: order.id, customer: tokenHash(customerId) })).toString("base64url");
+  const signature = crypto.createHmac("sha256", cursorKey()).update(body).digest("base64url");
+  return `${body}.${signature}`;
+}
+function decodeCustomerCursor(cursor: string, customerId: string) {
+  try {
+    if (typeof cursor !== "string" || cursor.length > 512) throw new Error("invalid");
+    const parts = cursor.split(".");
+    if (parts.length !== 2) throw new Error("invalid");
+    const [body, signature] = parts;
+    if (!/^[A-Za-z0-9_-]+$/.test(body) || !/^[A-Za-z0-9_-]+$/.test(signature)) throw new Error("invalid");
+    const expected = crypto.createHmac("sha256", cursorKey()).update(body).digest("base64url");
+    const got = Buffer.from(signature), want = Buffer.from(expected);
+    if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) throw new Error("invalid");
+    const value = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value) ||
+        Object.keys(value).length !== 3 || value.customer !== tokenHash(customerId) ||
+        typeof value.createdAt !== "string" || value.createdAt.length > 64 ||
+        !Number.isFinite(Date.parse(value.createdAt)) ||
+        typeof value.id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value.id)) throw new Error("invalid");
+    return value;
+  } catch { fail("INVALID_CURSOR", "Curseur invalide"); }
 }
 
 export async function placeOrder(
@@ -106,7 +138,7 @@ export async function placeOrder(
   const orders = db.collection<any>("orders");
   const old = await orders.findOne({ idempotencyKey });
   if (old) {
-    if (old.customerId && old.customerId !== customerId)
+    if ((old.customerId ?? null) !== (customerId ?? null))
       fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée par une autre session client");
     if (old.fingerprint !== fingerprint && !matchesLegacy(old))
       fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée avec un autre panier");
@@ -140,7 +172,7 @@ export async function placeOrder(
   } catch (error: any) {
     if (error?.code !== 11000) throw error;
     const concurrent = await orders.findOne({ idempotencyKey });
-    if (concurrent?.customerId && concurrent.customerId !== customerId)
+    if ((concurrent?.customerId ?? null) !== (customerId ?? null))
       fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée par une autre session client");
     if (concurrent?.fingerprint === fingerprint || matchesLegacy(concurrent))
       return customerView(concurrent, concurrent.accessToken ?? "");
@@ -156,6 +188,22 @@ export async function customerOrder(db: Db, id: string, token: string) {
     $or: [{ accessTokenHash: tokenHash(token) }, { accessToken: token }],
   });
   return o ? customerView(o, token) : null;
+}
+export async function customerOrders(db: Db, customerId: string, limit = 20, after?: string) {
+  if (after != null && (typeof after !== "string" || after.length === 0)) fail("INVALID_CURSOR", "Curseur invalide");
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) fail("INVALID_INPUT", "La limite doit être comprise entre 1 et 50");
+  const query: any = { customerId };
+  if (after) {
+    const cursor = decodeCustomerCursor(after, customerId);
+    query.$or = [{ createdAt: { $lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { $lt: cursor.id } }];
+  }
+  const rows = await db.collection<any>("orders").find(query).sort({ createdAt: -1, id: -1 }).limit(limit + 1).toArray();
+  const items = rows.slice(0, limit).map(customerOwnedView);
+  return { items, nextCursor: rows.length > limit ? encodeCustomerCursor(customerId, rows[limit - 1]) : null };
+}
+export async function customerOrderByCustomer(db: Db, customerId: string, id: string) {
+  const order = await db.collection<any>("orders").findOne({ id, customerId });
+  return order ? customerOwnedView(order) : null;
 }
 
 function scope(user: Staff, extra: Record<string, unknown> = {}) {

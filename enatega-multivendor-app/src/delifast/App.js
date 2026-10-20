@@ -87,6 +87,36 @@ function BottomTabs({ current, onNavigate, cartCount }) {
 }
 
 
+function OrderSnapshot({ order, onClose }) {
+  const items = order.checkout?.items || []
+  const totals = [['Sous-total', order.checkout?.subtotal], ['Livraison', order.checkout?.deliveryFee], ['Service', order.checkout?.serviceFee], ['Taxes', order.checkout?.tax], ['Réduction', order.checkout?.discount]].filter(([, amount]) => amount != null)
+  return (
+    <View style={styles.orderCard}>
+      <Text style={styles.eyebrow}>RÉFÉRENCE DE COMMANDE</Text>
+      <Text selectable style={styles.reference}>{order.id}</Text>
+      <Text style={styles.cardTitle}>{orderStatusLabel(order.status)}{order.paymentStatus ? ` · ${paymentStatusLabel(order.paymentStatus)}` : ''}</Text>
+      {order.createdAt && <Text style={styles.caption}>Créée : {order.createdAt}</Text>}
+      {order.updatedAt && <Text style={styles.caption}>Mise à jour : {order.updatedAt}</Text>}
+      <Text style={styles.sectionTitle}>Historique serveur</Text>
+      {!(order.history || []).length && <Text style={styles.muted}>Aucun événement fourni par le serveur.</Text>}
+      {(order.history || []).map((entry, index) => (
+        <View style={styles.timelineEntry} key={`${entry.at}-${index}`}><View style={styles.timelineDot} /><View style={styles.flex}><Text style={styles.label}>{orderStatusLabel(entry.status)}</Text>{entry.at && <Text style={styles.caption}>{entry.at}</Text>}{entry.actorRole && <Text style={styles.caption}>{entry.actorRole}</Text>}</View></View>
+      ))}
+      {order.deliveryAddress && <View style={styles.orderCard}><Text style={styles.sectionTitle}>Livraison</Text><Text style={styles.cardTitle}>{order.deliveryAddress.recipientName}</Text><Text style={styles.muted}>{[order.deliveryAddress.city, order.deliveryAddress.neighborhood, order.deliveryAddress.landmark].filter(Boolean).join(' · ')}</Text>{order.deliveryAddress.instructions && <Text style={styles.muted}>{order.deliveryAddress.instructions}</Text>}</View>}
+      {order.checkout && (
+        <View style={styles.orderCard}>
+          <Text style={styles.sectionTitle}>Détail de la commande</Text>
+          <React.Fragment>{items.map((item, index) => (
+            <View style={styles.receiptLine} key={`${item.menuItemId}-${index}`}><View style={styles.flex}><Text style={styles.cardTitle}>{item.quantity} × {item.name || 'Article'}</Text>{(item.selectedOptions || []).length > 0 && <Text style={styles.caption}>{item.selectedOptions.map(option => option.name || option.optionId).filter(Boolean).join(', ')}</Text>}</View>{item.total != null && <Text style={styles.summaryValue}>{money(item.total)}</Text>}</View>
+          ))}{totals.map(([label, amount]) => <View style={styles.receiptLine} key={label}><Text style={styles.muted}>{label}</Text><Text style={styles.summaryValue}>{money(amount)}</Text></View>)}</React.Fragment>
+          {order.checkout.total != null && <Text style={styles.total}>Total serveur : {money(order.checkout.total)}</Text>}
+        </View>
+      )}
+      <AppButton title='Fermer le détail' variant='secondary' onPress={onClose} />
+    </View>
+  )
+}
+
 function App({ api, storage }) {
   const resolvedStorage = useMemo(() => storage || createSecureStorage(SecureStore), [storage])
   const [state, setState] = useState(null)
@@ -136,6 +166,7 @@ function App({ api, storage }) {
     if (!BackHandler || typeof BackHandler.addEventListener !== 'function') return undefined
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       if (selected) { setSelected(null); return true }
+      if (screen === 'orders' && state?.customerOrder) { controller.clearCustomerOrder && controller.clearCustomerOrder(); return true }
       if (screen === 'account' && accountPage !== 'overview') { setAccountPage(accountPage === 'addressForm' ? 'addresses' : 'overview'); setLocalError(''); setSavedNotice(''); setDeleteAddressId(null); return true }
       const target = {
         support: 'account', tracking: 'orders', menu: 'restaurants',
@@ -146,7 +177,7 @@ function App({ api, storage }) {
       return false
     })
     return () => subscription && subscription.remove()
-  }, [screen, selected, accountPage, state?.restaurant])
+  }, [controller, screen, selected, accountPage, state?.restaurant, state?.customerOrder?.id])
 
   useEffect(() => {
     if (screen !== 'tracking' || !state?.order || !controller.loadPaymentSession) return undefined
@@ -157,6 +188,11 @@ function App({ api, storage }) {
     })
     return () => subscription && subscription.remove()
   }, [controller, screen, state?.order?.id])
+
+  useEffect(() => {
+    if (screen !== 'orders' || !state?.customer || !controller.loadCustomerOrders) return undefined
+    controller.loadCustomerOrders().catch(() => {})
+  }, [controller, screen, state?.customer?.id, state?.customerSessionVersion])
 
   useEffect(() => {
     Promise.allSettled([controller.loadRestaurants(), controller.restoreAttempt(), controller.restoreCustomer()])
@@ -287,22 +323,24 @@ function App({ api, storage }) {
   }
 
   if (screen === 'orders') {
-    const currentOrder = state.order?.id === lastOrder?.id ? state.order : null
+    const currentOrder = state.customerOrder
+    const guestOrder = state.order?.id === lastOrder?.id ? state.order : null
     return <SafeAreaView style={styles.safe}>
-      <Header title='Commandes' onBack={() => setScreen('restaurants')} />
+      <Header title='Commandes' onBack={() => { if (currentOrder) { controller.clearCustomerOrder && controller.clearCustomerOrder(); return }; setScreen('restaurants') }} right={state.customer ? <TouchableOpacity onPress={() => controller.loadCustomerOrders({ refresh: true }).catch(() => {})} disabled={state.customerOrdersLoading}><Text style={styles.link}>Actualiser</Text></TouchableOpacity> : null} />
       <ScrollView key='orders' style={styles.flex} contentContainerStyle={styles.content}>
         <Text style={styles.title}>Vos commandes</Text>
-        <Text style={styles.muted}>Retrouvez le suivi enregistré sur cet appareil.</Text>
+        <Text style={styles.muted}>Historique de votre compte, synchronisé avec le serveur.</Text>
+        {!state.customer && <View style={styles.notice}><Text style={styles.noticeTitle}>Connexion requise</Text><Text style={styles.muted}>Connectez-vous pour consulter vos commandes.</Text><AppButton title='Ouvrir le compte' onPress={() => setScreen('account')} /></View>}
+        {state.customer && state.customerOrdersLoading && !state.customerOrders.length && <ActivityIndicator color='#1f6f5b' style={styles.loader} />}
+        {state.customer && state.customerOrdersError && <Text accessibilityRole='alert' style={styles.error}>{state.customerOrdersError.message}</Text>}
+        {state.customer && state.customerOrderLoading && <ActivityIndicator accessibilityLabel='Chargement du détail' color='#1f6f5b' style={styles.loader} />}
+        {state.customer && currentOrder && !state.customerOrderLoading ? <OrderSnapshot order={currentOrder} onClose={() => controller.clearCustomerOrder && controller.clearCustomerOrder()} /> : null}
+        {state.customer && !currentOrder && !state.customerOrdersLoading && !state.customerOrders.length && !state.customerOrdersError && <EmptyState icon='receipt-outline' title='Pas encore de commande' description='Votre historique apparaîtra ici après une commande.' />}
+        {state.customer && !currentOrder && state.customerOrders.map(order => <TouchableOpacity key={order.id} style={styles.orderCard} accessibilityRole='button' accessibilityLabel={`Commande ${order.id}`} onPress={() => controller.loadCustomerOrder(order.id).catch(() => {})}><View style={styles.identityRow}><View style={styles.orderIcon}><Icon name='receipt-outline' color={tokens.colors.accentForeground} /></View><View style={styles.flex}><Text style={styles.eyebrow}>RÉFÉRENCE</Text><Text selectable style={styles.reference}>{order.id}</Text><Text style={styles.orderStatus}>{order.status ? orderStatusLabel(order.status) : 'Statut indisponible'}</Text>{order.createdAt && <Text style={styles.caption}>{order.createdAt}</Text>}{order.checkout?.total != null && <Text style={styles.total}>{money(order.checkout.total)}</Text>}</View></View></TouchableOpacity>)}
+        {state.customer && !currentOrder && state.customerOrdersNextCursor && <AppButton title={state.customerOrdersLoading ? 'Chargement…' : 'Charger la suite'} onPress={() => controller.loadCustomerOrders().catch(() => {})} disabled={state.customerOrdersLoading} />}
+        {!state.customer && lastOrder && <View style={styles.orderCard}><Text style={styles.sectionTitle}>Dernière commande sur cet appareil</Text><View style={styles.identityRow}><View style={styles.orderIcon}><Icon name='receipt-outline' color={tokens.colors.accentForeground} /></View><View style={styles.flex}><Text style={styles.eyebrow}>RÉFÉRENCE</Text><Text selectable style={styles.reference}>{lastOrder.id}</Text></View></View>{guestOrder ? <><Text style={styles.orderStatus}>{guestOrder.status ? orderStatusLabel(guestOrder.status) : 'Statut indisponible'}</Text>{guestOrder.paymentStatus && <Text style={styles.muted}>Paiement : {paymentStatusLabel(guestOrder.paymentStatus)}</Text>}{guestOrder.checkout?.total != null && <Text style={styles.total}>{money(guestOrder.checkout.total)}</Text>}</> : <Text style={styles.muted}>Actualisez pour consulter le statut serveur.</Text>}<AppButton title={state.busy ? 'Actualisation…' : 'Actualiser le suivi'} onPress={trackLast} disabled={state.busy} /></View>}
         {pending && <View style={[styles.notice, { marginTop: 20 }]}><Text style={styles.noticeTitle}>Commande à reprendre</Text><Text style={styles.muted}>Le résultat de cette tentative doit être confirmé. Reprenez-la pour éviter un doublon.</Text><AppButton title='Réessayer' onPress={async () => { setLocalError(''); try { await controller.retryPending(); setScreen('tracking') } catch (e) { setLocalError(errorText(e)) } }} disabled={state.busy || !state.restored} /></View>}
-        {lastOrder ? <>
-          <Text style={styles.sectionTitle}>Dernière commande sur cet appareil</Text>
-          <View style={styles.orderCard}>
-            <View style={styles.identityRow}><View style={styles.orderIcon}><Icon name='receipt-outline' color={tokens.colors.accentForeground} /></View><View style={styles.flex}><Text style={styles.eyebrow}>RÉFÉRENCE</Text><Text selectable style={styles.reference}>{lastOrder.id}</Text></View></View>
-            {currentOrder ? <><Text style={styles.orderStatus}>{orderStatusLabel(currentOrder.status)}</Text>{currentOrder.paymentStatus && <Text style={styles.muted}>Paiement : {paymentStatusLabel(currentOrder.paymentStatus)}</Text>}{currentOrder.checkout?.total != null && <Text style={styles.total}>{money(currentOrder.checkout.total)}</Text>}</> : <Text style={styles.muted}>Actualisez pour consulter le statut serveur.</Text>}
-            <AppButton title={state.busy ? 'Actualisation…' : 'Actualiser le suivi'} onPress={trackLast} disabled={state.busy} />
-          </View>
-        </> : !pending && <><EmptyState icon='receipt-outline' title='Pas encore de commande ici' description='Votre dernière commande enregistrée sur cet appareil apparaîtra ici.' /><AppButton title='Découvrir les restaurants' onPress={() => setScreen('restaurants')} /></>}
-        <View style={styles.privacyNote}><Icon name='phone-portrait-outline' size={18} color={BRAND.muted} /><Text style={styles.privacyText}>Aucun historique serveur complet n’est affiché ici. Seule la dernière référence locale est disponible.</Text></View>
+        {lastOrder && !state.customer && <View style={styles.privacyNote}><Icon name='phone-portrait-outline' size={18} color={BRAND.muted} /><Text style={styles.privacyText}>Aucun historique serveur complet pour un invité : la dernière référence locale reste disponible uniquement sur cet appareil.</Text><AppButton title='Voir le suivi invité' onPress={trackLast} disabled={state.busy} /></View>}
         {(state.error || localError) && <Text accessibilityRole='alert' style={styles.error}>{errorText(state.error) || localError}</Text>}
       </ScrollView>
       <BottomTabs current={screen} onNavigate={navigate} cartCount={cartCount} />

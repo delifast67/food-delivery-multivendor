@@ -20,6 +20,7 @@ const checkout = 'currency subtotal deliveryFee serviceFee tax discount total it
 const deliveryFields = 'delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo }'
 const paymentSessionFields = 'orderId phase channel mode checkoutUrl providerStatus paymentStatus'
 const orderFields = `id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions point { latitude longitude } } history { status at actorRole } checkout { ${checkout} ${deliveryFields} }`
+const customerOrderFields = orderFields.replace('accessToken ', '')
 const customerFields = 'id phone firstName lastName email'
 const sessionFields = `token customer { ${customerFields} }`
 const challengeFields = 'challengeId expiresIn retryAfter'
@@ -44,6 +45,8 @@ const documents = {
   startPayment: `mutation MobileStartPayment($input: StartPaymentInput!) { startPayment(input: $input) { ${paymentSessionFields} } }`,
   refreshPayment: `mutation MobileRefreshPayment($orderId: ID!, $accessToken: String!) { refreshPayment(orderId: $orderId, accessToken: $accessToken) { ${paymentSessionFields} } }`,
   order: `query MobileOrder($id: ID!, $accessToken: String!) { order(id: $id, accessToken: $accessToken) { ${orderFields} } }`,
+  customerOrders: `query CustomerOrders($limit: Int = 20, $after: String) { customerOrders(limit: $limit, after: $after) { items { ${customerOrderFields} } nextCursor } }`,
+  customerOrder: `query CustomerOrder($id: ID!) { customerOrder(id: $id) { ${customerOrderFields} } }`,
   customerMe: `query CustomerMe { customerMe { ${customerFields} } }`,
   updateCustomerProfile: `mutation UpdateCustomerProfile($input: CustomerProfileInput!) { updateCustomerProfile(input: $input) { ${customerFields} } }`,
   customerAddresses: `query CustomerAddresses { customerAddresses { ${addressFields} } }`,
@@ -129,11 +132,13 @@ function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetc
     restaurants: (point) => field('restaurants', point == null ? {} : { point }),
     restaurant: (id) => field('restaurant', { id }),
     calculateCheckout: (input) => field('calculateCheckout', { input }),
-    placeOrder: (input) => field('placeOrder', { input }),
+    placeOrder: (input) => field('placeOrder', { input }, true),
     paymentSession: (orderId, accessToken) => field('paymentSession', { orderId, accessToken }),
     startPayment: (input) => field('startPayment', { input }),
     refreshPayment: (orderId, accessToken) => field('refreshPayment', { orderId, accessToken }),
     order: (id, accessToken) => field('order', { id, accessToken }),
+    customerOrders: (limit = 20, after = null) => field('customerOrders', { limit, after }, true),
+    customerOrder: id => field('customerOrder', { id }, true),
     setCustomerToken(token) { customerToken = token || null },
     customerMe: () => field('customerMe', {}, true),
     updateCustomerProfile: input => field('updateCustomerProfile', { input: { firstName: input?.firstName, lastName: input?.lastName, email: input?.email } }, true),

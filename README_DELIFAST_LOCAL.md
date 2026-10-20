@@ -20,6 +20,14 @@ Le parcours existant accepte une adresse fictive saisie pour chaque commande. Le
 
 Les tests [de livraison API](delifast-api/test/zones-api.test.ts) couvrent notamment le point réellement transmis, sa conservation en base, les coordonnées absentes/invalides/hors zone et la confidentialité du suivi : le jeton propre à la commande reste requis, même avec une session admin ou client. Le [test de persistance](scripts/delifast-persistence.mjs) vérifie le snapshot d’adresse et de livraison après arrêt complet puis redémarrage de MongoDB et de l’API, sur une base jetable. La session client du carnet ne remplace pas ce jeton de suivi propre à une commande.
 
+### Historique privé des commandes
+
+L’API expose désormais `customerOrders(limit, after)` et `customerOrder(id)` pour le client authentifié. L’onglet **Commandes** d’Expo peut consulter cet historique, charger les pages suivantes et ouvrir un détail sans utiliser le jeton privé de suivi. Le serveur prend le propriétaire exclusivement dans la session : les commandes d’un autre client et les anciennes commandes anonymes ne sont jamais rattachées arbitrairement. Les noms des plats/options, montants et statuts sont ceux déjà enregistrés, sans reconstruction depuis le catalogue courant. La pagination suit l’ordre stable date de création puis identifiant, décroissants (20 par page dans l’app, maximum API 50).
+
+Le suivi historique `order(id, accessToken)` reste compatible pour les invités et les anciens clients ; le nouvel historique authentifié ne distribue aucun jeton de suivi. Les réponses GraphQL sont marquées `no-store`. Une session invalide ne doit pas transformer silencieusement une création authentifiée en commande invitée, ni permettre le rejeu d’une clé d’idempotence appartenant à une autre identité. La [recette HTTP dédiée](scripts/delifast-customer-orders-smoke.mjs) vérifie les permissions et les snapshots avec une API réelle et une base jetable, sans SMS ni paiement. Cela ne constitue toujours pas une recette sur appareil, un build signé ou une autorisation de mise en production.
+
+Sans secret serveur `CUSTOMER_OTP_HASH_KEY` configuré, la signature des curseurs est aléatoire et propre au processus : après redémarrage de l’API, utiliser **Actualiser** pour repartir de la première page. Les commandes ne sont pas perdues. Une configuration de production multi-instance nécessite un secret partagé stable. Une tentative incertaine reste verrouillée hors de sa session d’origine ; ne pas effacer ses données pour la contourner.
+
 Le lot précédent de clarification avait validé **189 tests API, 101 tests web et 50 tests client mobile**, les builds API/web, les exports JS/Hermes Android/iOS et la persistance après redémarrage complet sur base temporaire. Ces résultats historiques ne remplacent pas les nouveaux tests d’authentification et d’isolation du carnet. Aucun compte réel, paiement, push, fusion ni déploiement n’a été effectué.
 
 ## Parcours client mobile

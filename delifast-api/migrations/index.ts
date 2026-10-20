@@ -62,5 +62,11 @@ await db
   .collection("support_tickets")
   .createIndex({ customerId: 1, createdAt: 1, id: 1 });
 await db.collection("support_tickets").createIndex({ createdAt: 1, id: 1 });
+await db
+  .collection("orders")
+  .createIndex(
+    { customerId: 1, createdAt: -1, id: -1 },
+    { name: "orders_customer_created_desc" },
+  );
 console.log("Migrations v1 appliquées");
 await closeDb();

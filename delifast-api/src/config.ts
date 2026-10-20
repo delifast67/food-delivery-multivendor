@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 const INT_MAX = 2_147_483_647;
 
 if (process.env.NODE_ENV === "production") {
@@ -38,6 +40,9 @@ export const config = {
   orangeTimeoutMs: boundedInteger("ORANGE_SMS_TIMEOUT_MS", 8_000),
   orangeMaxResponseBytes: boundedInteger("ORANGE_SMS_MAX_RESPONSE_BYTES", 32_768),
   customerOtpHashKey: process.env.CUSTOMER_OTP_HASH_KEY || "",
+  // Cursor signing is intentionally process-local when no persisted secret is configured.
+  // Cursors issued before a restart must be refreshed; production should set CUSTOMER_OTP_HASH_KEY.
+  customerOrderCursorKey: process.env.CUSTOMER_OTP_HASH_KEY || crypto.randomBytes(32).toString("hex"),
   customerOtpIpMax: boundedInteger("CUSTOMER_OTP_IP_MAX", 5),
 };
 

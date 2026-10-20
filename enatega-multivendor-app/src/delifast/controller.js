@@ -37,7 +37,13 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
     supportError: null,
     supportPending: null,
     payment: null,
-    paymentBusy: false
+    paymentBusy: false,
+    customerOrders: [],
+    customerOrdersNextCursor: null,
+    customerOrdersLoading: false,
+    customerOrdersError: null,
+    customerOrder: null,
+    customerOrderLoading: false
   }
   let inFlight = null
   let paymentInFlight = null
@@ -45,6 +51,11 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
   let restorePromise = null
   let pollTimer = null
   let trackingRequest = 0
+  const stopTracking = () => {
+    ++trackingRequest
+    if (pollTimer) clearInterval(pollTimer)
+    pollTimer = null
+  }
   let restaurantRequest = 0
   let discoveryRequest = 0
   let customerSessionToken = null
@@ -52,6 +63,9 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
   let authInFlight = null
   let supportRequest = 0
   let supportInFlight = null
+  let customerOrdersRequest = 0
+  let customerOrderListRequest = 0
+  let customerOrderDetailRequest = 0
   let otpChallenge = null
   const ADDRESS_FIELDS = ['recipientName', 'phone', 'city', 'neighborhood', 'landmark', 'instructions', 'point']
   const PROFILE_FIELDS = ['firstName', 'lastName', 'email']
@@ -88,10 +102,14 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
   async function clearCustomerSession() {
     ++supportRequest
     ++authEpoch
+    ++customerOrdersRequest
+    ++customerOrderListRequest
+    ++customerOrderDetailRequest
+    stopTracking()
     invalidatePayment()
     customerSessionToken = null
     if (api.setCustomerToken) api.setCustomerToken(null)
-    set({ customer: null, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null })
+    set({ customer: null, order: null, lastOrder: null, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null, customerOrders: [], customerOrdersNextCursor: null, customerOrdersLoading: false, customerOrdersError: null, customerOrder: null, customerOrderLoading: false })
     try { if (storage.removeItem) { try { await storage.removeItem(CUSTOMER_TOKEN_KEY) } finally { await purgeSupportAttempt() } } } catch {}
   }
   const supportErrorView = error => ({ message: error?.message || String(error), kind: error?.kind || 'unknown', code: error?.code })
@@ -180,23 +198,32 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       throw error
     }
   }
-  async function sendAttempt(attempt) {
+  async function sendAttempt(attempt, guard) {
+    const current = () => !guard || (guard.epoch === authEpoch && (!guard.customerId || state.customer?.id === guard.customerId) && (!guard.scope || guard.scope === attempt.sessionScope))
     try {
+      if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
       const result = await api.placeOrder({ ...clone(attempt.payload), idempotencyKey: attempt.idempotencyKey })
+      if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
       if (!validReference(result) || !validQuote(result.checkout)) throw new Error('Réponse de commande incomplète ; reprendre la même tentative')
       const reference = { id: result.id, accessToken: result.accessToken }
-      // Le succès serveur reste visible même si une écriture locale échoue.
+      const guestAttempt = (attempt.sessionScope == null || attempt.sessionScope === 'guest-legacy') && !attempt.customerId
+      // Une commande authentifiée ne doit jamais devenir une référence invitée persistée.
       invalidatePayment()
-      set({ order: clone(result), lastOrder: reference, cart: { restaurantId: null, items: [] }, quote: null, quoteVersion: state.quoteVersion + 1 })
+      set({ order: clone(result), lastOrder: guestAttempt ? reference : null, cart: { restaurantId: null, items: [] }, quote: null, quoteVersion: state.quoteVersion + 1 })
       try {
-        await storage.setItem(LAST_ORDER_KEY, JSON.stringify(reference))
+        if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
+        if (guestAttempt) await storage.setItem(LAST_ORDER_KEY, JSON.stringify(reference))
+        else await storage.removeItem(LAST_ORDER_KEY)
+        if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
         await storage.removeItem(ATTEMPT_KEY)
+        if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
         set({ pending: null, error: null })
       } catch (error) {
         set({ pending: clone(attempt), error: errorView(new Error(`Commande enregistrée ; reprise locale à terminer : ${error.message}`)) })
       }
       return clone(result)
     } catch (error) {
+      if (error.kind === 'stale') throw error
       if (error.kind === 'validation') {
         try {
           await storage.removeItem(ATTEMPT_KEY)
@@ -493,8 +520,20 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
         const version = state.quoteVersion
         const key = makeIdempotencyKey(random)
         if (key.length < 8 || key.length > 128) throw new Error('Clé d’idempotence invalide')
-        const attempt = { idempotencyKey: key, payload }
+        const authenticated = !!state.customer
+        const epoch = authEpoch
+        const owner = state.customer?.id || null
         return exclusive(async() => {
+          let attempt
+          if (authenticated) {
+            if (!customerSessionToken || typeof fingerprintSession !== 'function') throw new Error('Session client sécurisée indisponible')
+            const scope = await fingerprintSession(customerSessionToken)
+            if (typeof scope !== 'string' || !/^[a-f0-9]{64}$/.test(scope)) throw new Error('Empreinte de session invalide')
+            attempt = { version: 1, sessionScope: scope, customerId: owner, idempotencyKey: key, payload }
+          } else {
+            // Explicit marker keeps historical guest drafts resumable without treating them as authenticated.
+            attempt = { version: 1, sessionScope: 'guest-legacy', idempotencyKey: key, payload }
+          }
           try {
             // Une tentative durable jamais exposée à l’état ne doit pas être écrasée.
             const existing = await readJSON(ATTEMPT_KEY)
@@ -510,18 +549,27 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
             set({ error: errorView(error) })
             throw error
           }
-          return sendAttempt(attempt)
+          return sendAttempt(attempt, { epoch, customerId: owner, scope: attempt.sessionScope })
         })
       } catch (error) {
         set({ error: errorView(error) })
         return Promise.reject(error)
       }
     },
-    retryPending() {
+    async retryPending() {
       if (inFlight) return inFlight
-      if (!state.restored || !state.pending) return Promise.reject(new Error('Aucune tentative restaurée à reprendre'))
+      if (!state.restored || !state.pending) throw new Error('Aucune tentative restaurée à reprendre')
       const attempt = clone(state.pending)
-      return exclusive(() => sendAttempt(attempt))
+      if ((attempt.sessionScope == null || attempt.sessionScope === 'guest-legacy') && !attempt.customerId) {
+        if (state.customer) throw new Error('Une tentative invitée ne peut pas être reprise connecté')
+        return exclusive(() => sendAttempt(attempt, { epoch: authEpoch }))
+      }
+      if (!state.customer || typeof fingerprintSession !== 'function' || !customerSessionToken) throw new Error('Cette tentative appartient à une autre session client ; vérifiez votre compte avant toute nouvelle commande')
+      const epoch = authEpoch
+      const owner = state.customer.id
+      const scope = await fingerprintSession(customerSessionToken)
+      if (epoch !== authEpoch || state.customer?.id !== owner || attempt.customerId !== owner || typeof scope !== 'string' || scope !== attempt.sessionScope) throw new Error('Cette tentative appartient à une autre session client ; vérifiez votre compte avant toute nouvelle commande')
+      return exclusive(() => sendAttempt(attempt, { epoch, customerId: owner, scope }))
     },
     async track(id, accessToken) {
       const request = ++trackingRequest
@@ -548,11 +596,15 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       if (!api.customerMe || !api.setCustomerToken) return null
       if (authInFlight) throw new Error('Une opération du compte est déjà en cours.')
       const epoch = ++authEpoch
+      stopTracking()
       invalidatePayment()
       ++supportRequest
       customerSessionToken = null
       api.setCustomerToken(null)
-      set({ customer: null, customerSessionVersion: epoch, addresses: [], supportTickets: [], supportPending: null, supportBusy: false, supportLoading: false, supportError: null })
+      ++customerOrdersRequest
+      ++customerOrderListRequest
+      ++customerOrderDetailRequest
+      set({ customer: null, customerSessionVersion: epoch, addresses: [], supportTickets: [], supportPending: null, supportBusy: false, supportLoading: false, supportError: null, customerOrders: [], customerOrdersNextCursor: null, customerOrdersLoading: false, customerOrdersError: null, customerOrder: null, customerOrderLoading: false })
       storageReady()
       const token = await storage.getItem(CUSTOMER_TOKEN_KEY)
       if (epoch !== authEpoch) return null
@@ -580,6 +632,49 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
         await clearCustomerSession()
         return null
       }
+    },
+    loadCustomerOrders({ refresh = false } = {}) {
+      if (!state.customer || !api.customerOrders) return Promise.reject(new Error('Connexion client requise'))
+      if (state.customerOrdersLoading) return Promise.resolve(clone(state.customerOrders))
+      if (!refresh && !state.customerOrdersNextCursor && state.customerOrders.length) return Promise.resolve(clone(state.customerOrders))
+      const request = ++customerOrderListRequest; const owner = state.customer.id; const epoch = authEpoch
+      const after = refresh ? null : state.customerOrdersNextCursor
+      set({ customerOrdersLoading: true, customerOrdersError: null, ...(refresh ? { customerOrders: [], customerOrdersNextCursor: null, customerOrder: null } : {}) })
+      return Promise.resolve().then(() => api.customerOrders(20, after)).then(page => {
+        if (request !== customerOrderListRequest || epoch !== authEpoch || state.customer?.id !== owner) return null
+        if (!page || !Array.isArray(page.items)) throw new Error('Réponse commandes incomplète')
+        if (page.nextCursor !== null && typeof page.nextCursor !== 'string') throw new Error('Curseur commandes invalide')
+        const seen = new Set(); const items = page.items.filter(item => item && typeof item.id === 'string' && !seen.has(item.id) && seen.add(item.id)).map(item => ({ ...clone(item), accessToken: '' }))
+        const merged = refresh ? items : [...state.customerOrders, ...items.filter(item => !state.customerOrders.some(old => old.id === item.id))]
+        set({ customerOrders: merged, customerOrdersNextCursor: page.nextCursor, customerOrdersLoading: false, customerOrdersError: null })
+        return clone(merged)
+      }).catch(async error => {
+        if (request !== customerOrderListRequest || epoch !== authEpoch || state.customer?.id !== owner) return null
+        set({ customerOrdersLoading: false, customerOrdersError: errorView(error) })
+        if (error?.kind === 'auth') await clearCustomerSession()
+        throw error
+      })
+    },
+    loadCustomerOrder(id) {
+      if (!state.customer || !api.customerOrder) return Promise.reject(new Error('Connexion client requise'))
+      if (typeof id !== 'string' || !id) return Promise.reject(new Error('Commande invalide'))
+      const request = ++customerOrderDetailRequest; const owner = state.customer.id; const epoch = authEpoch
+      set({ customerOrderLoading: true, customerOrdersError: null })
+      return Promise.resolve().then(() => api.customerOrder(id)).then(order => {
+        if (request !== customerOrderDetailRequest || epoch !== authEpoch || state.customer?.id !== owner) return null
+        if (!order) throw new Error('Commande introuvable ou accès refusé')
+        const value = { ...clone(order), accessToken: '' }
+        set({ customerOrder: value, customerOrderLoading: false }); return clone(value)
+      }).catch(async error => {
+        if (request !== customerOrderDetailRequest || epoch !== authEpoch || state.customer?.id !== owner) return null
+        set({ customerOrderLoading: false, customerOrdersError: errorView(error) })
+        if (error?.kind === 'auth') await clearCustomerSession()
+        throw error
+      })
+    },
+    clearCustomerOrder() {
+      ++customerOrderDetailRequest
+      set({ customerOrder: null, customerOrderLoading: false })
     },
     async requestCustomerOtp(phone) {
       if (!api.requestCustomerOtp) throw new Error('La connexion réelle est momentanément indisponible.')
@@ -614,10 +709,13 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       if (!otpChallenge || otpChallenge.id !== challengeId || Date.now() >= otpChallenge.deadline) throw new Error('Challenge OTP expiré')
       if (authInFlight) throw new Error('Une opération du compte est déjà en cours.')
       const epoch = ++authEpoch
+      stopTracking()
       customerSessionToken = null
       api.setCustomerToken(null)
       ++supportRequest
-      set({ customer: null, customerSessionVersion: epoch, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null })
+      ++customerOrderListRequest
+      ++customerOrderDetailRequest
+      set({ customer: null, customerSessionVersion: epoch, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null, customerOrders: [], customerOrdersNextCursor: null, customerOrdersLoading: false, customerOrdersError: null, customerOrder: null, customerOrderLoading: false })
       return authExclusive(async() => {
         storageReady()
         try { await storage.removeItem(CUSTOMER_TOKEN_KEY) } finally { await purgeSupportAttempt() }
@@ -647,13 +745,17 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       set({ payment: null, paymentBusy: false })
       customerSessionToken = null
       ++authEpoch
+      stopTracking()
       ++supportRequest
+      ++customerOrdersRequest
+      ++customerOrderListRequest
+      ++customerOrderDetailRequest
       otpChallenge = null
       // Start revocation with the current token, then clear local access synchronously.
       let failure
       const revoked = (async() => { try { if (api.customerLogout) await api.customerLogout() } catch (error) { failure = error } })()
       if (api.setCustomerToken) api.setCustomerToken(null)
-      set({ customer: null, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null })
+      set({ customer: null, order: null, lastOrder: null, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null })
       try { if (storage.removeItem) { try { await storage.removeItem(CUSTOMER_TOKEN_KEY) } finally { await purgeSupportAttempt() } } } finally { await revoked }
       if (failure) throw failure
       return true
@@ -752,10 +854,8 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       return supportExclusive(true)
     },
     stopPolling() {
-      ++trackingRequest
+      stopTracking()
       invalidatePayment()
-      if (pollTimer) clearInterval(pollTimer)
-      pollTimer = null
     }
   }
   return actions

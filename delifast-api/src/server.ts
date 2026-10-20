@@ -13,6 +13,8 @@ import { calculateCheckout } from "./pricing.js";
 import {
   placeOrder,
   customerOrder,
+  customerOrders,
+  customerOrderByCustomer,
   operationsOrders,
   availableRiders,
   transition,
@@ -54,6 +56,7 @@ const knownCodes = new Set([
   "MINIMUM_ORDER_NOT_MET",
   "INVALID_INPUT",
   "INVALID_CART",
+  "INVALID_CURSOR",
   "INVALID_QUANTITY",
   "INVALID_INPUT",
   "RESTAURANT_NOT_FOUND",
@@ -141,6 +144,10 @@ const resolvers: any = {
       calculateCheckout(getDb(), normalizeCart(input)),
     order: (_: any, { id, accessToken }: any) =>
       customerOrder(getDb(), id, accessToken),
+    customerOrders: (_: any, { limit, after }: any, ctx: any) =>
+      customerOrders(getDb(), requireCustomer(ctx).id, limit, after),
+    customerOrder: (_: any, { id }: any, ctx: any) =>
+      customerOrderByCustomer(getDb(), requireCustomer(ctx).id, id),
     paymentSession: (_: any, { orderId, accessToken }: any, ctx: any) =>
       ctx.payments.getSession(orderId, accessToken),
     operationsOrders: (_: any, _a: any, ctx: any) =>
@@ -177,14 +184,16 @@ const resolvers: any = {
   Mutation: {
     createDeliveryZone: (_: any, { restaurantId, input }: any, ctx: any) => createDeliveryZone(getDb(), requireRole(ctx, ["ADMIN"]), restaurantId, input),
     updateDeliveryZone: (_: any, { id, expectedVersion, input }: any, ctx: any) => updateDeliveryZone(getDb(), requireRole(ctx, ["ADMIN"]), id, expectedVersion, input),
-    placeOrder: (_: any, { input }: any, ctx: any) =>
-      placeOrder(
+    placeOrder: (_: any, { input }: any, ctx: any) => {
+      if (ctx.customerAuthPresented && !ctx.customer) requireCustomer(ctx);
+      return placeOrder(
         getDb(),
         normalizeCart(input),
         normalizeAddress(input.deliveryAddress),
         input.idempotencyKey,
         ctx.customer?.id,
-      ),
+      );
+    },
     startPayment: (_: any, { input }: any, ctx: any) =>
       ctx.payments.start(input),
     refreshPayment: (_: any, { orderId, accessToken }: any, ctx: any) =>
@@ -417,6 +426,10 @@ export async function createApp(
   });
   app.use(
     "/graphql",
+    (_req, res, next) => {
+      res.setHeader("Cache-Control", "no-store, private");
+      next();
+    },
     rateLimit(),
     expressMiddleware(apollo, {
       context: async ({ req }) => ({
@@ -425,6 +438,9 @@ export async function createApp(
         otpProvider,
         peerIp: req.socket.remoteAddress || "unknown",
         payments,
+        customerAuthPresented:
+          typeof req.headers.authorization === "string" &&
+          req.headers.authorization.trim().length > 0,
       }),
     }),
   );
