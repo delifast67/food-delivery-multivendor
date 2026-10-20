@@ -99,6 +99,18 @@ function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetc
     if (!Object.prototype.hasOwnProperty.call(data, key)) throw new DelifastApiError('Réponse backend incomplète', 'unavailable')
     return data[key]
   }
+  function otpChallenge(value) {
+    if (!value || typeof value.challengeId !== 'string' || !value.challengeId || !Number.isFinite(value.expiresIn) || value.expiresIn <= 0 || !Number.isFinite(value.retryAfter) || value.retryAfter < 0) {
+      throw new DelifastApiError('Réponse OTP backend incomplète', 'unavailable')
+    }
+    return value
+  }
+  function customerSession(value) {
+    if (!value || typeof value.token !== 'string' || !value.token || !value.customer || typeof value.customer.id !== 'string' || typeof value.customer.phone !== 'string') {
+      throw new DelifastApiError('Réponse de connexion backend incomplète', 'unavailable')
+    }
+    return value
+  }
   return {
     restaurants: (point) => field('restaurants', point == null ? {} : { point }),
     restaurant: (id) => field('restaurant', { id }),
@@ -108,9 +120,9 @@ function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetc
     setCustomerToken(token) { customerToken = token || null },
     customerMe: () => field('customerMe', {}, true),
     customerAddresses: () => field('customerAddresses', {}, true),
-    requestCustomerOtp: phone => field('requestCustomerOtp', { phone }),
-    resendCustomerOtp: challengeId => field('resendCustomerOtp', { challengeId }),
-    verifyCustomerOtp: (challengeId, code) => field('verifyCustomerOtp', { challengeId, code }),
+    requestCustomerOtp: phone => field('requestCustomerOtp', { phone }).then(otpChallenge),
+    resendCustomerOtp: challengeId => field('resendCustomerOtp', { challengeId }).then(otpChallenge),
+    verifyCustomerOtp: (challengeId, code) => field('verifyCustomerOtp', { challengeId, code }).then(customerSession),
     customerLogout: () => field('customerLogout', {}, true),
     createCustomerAddress: input => field('createCustomerAddress', { input: serializeDeliveryAddressInput(input) }, true),
     updateCustomerAddress: (id, input) => field('updateCustomerAddress', { id, input: serializeDeliveryAddressInput(input) }, true),

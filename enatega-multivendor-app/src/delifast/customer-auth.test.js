@@ -50,7 +50,7 @@ test('les 9 opérations customer suivent le protocole Bearer privé/public et wh
 
 test('la demande OTP valide strictement le téléphone +226 et le provider absent est normalisé sans appel', async () => {
   let calls = 0
-  const controller = createController({ api: { requestCustomerOtp: async () => { calls++; return {} } }, storage: storage() })
+  const controller = createController({ api: { requestCustomerOtp: async () => { calls++; return { challengeId: 'ch', expiresIn: 30, retryAfter: 5 } } }, storage: storage() })
   await assert.rejects(controller.requestCustomerOtp('70000000'), /Téléphone BF invalide/)
   await assert.rejects(controller.requestCustomerOtp('+2267000000'), /Téléphone BF invalide/)
   await assert.rejects(controller.requestCustomerOtp('+22670000000x'), /Téléphone BF invalide/)
@@ -67,10 +67,12 @@ test('le code OTP est exactement à 6 chiffres, rejeté avant API, et seul le to
   const controller = createController({ storage: store, api: {
     setCustomerToken: () => {},
     verifyCustomerOtp: async (challenge, code) => { calls++; assert.equal(code, '123456'); return { token: 'server-token', customer: { id: 'c', phone: '+22670000000' } } },
-    customerAddresses: async () => []
+    customerAddresses: async () => [],
+    requestCustomerOtp: async () => ({ challengeId: 'challenge', expiresIn: 30, retryAfter: 0 })
   } })
   for (const bad of ['1234', '12345', '1234567', '12a456', '']) await assert.rejects(controller.verifyCustomerOtp('challenge', bad), /Code de vérification invalide/)
   assert.equal(calls, 0)
+  await controller.requestCustomerOtp('+22670000000')
   await controller.verifyCustomerOtp('challenge', '123456')
   assert.equal(store.db[CUSTOMER_TOKEN_KEY], 'server-token')
   assert.equal(store.db.otp, undefined)
@@ -82,8 +84,45 @@ test('les appels auth concurrents sont exclusifs : la seconde action est rejeté
   const first = controller.requestCustomerOtp('+22670000000'); await tick()
   await assert.rejects(controller.requestCustomerOtp('+22670000000'), /action|cours|occup|busy/i)
   assert.equal(calls, 1)
-  wait.resolve({ challengeId: 'ch' }); await first
+  wait.resolve({ challengeId: 'ch', expiresIn: 30, retryAfter: 0 }); await first
 })
+
+test('un challenge OTP mobile expiré est rejeté avant tout appel provider', async () => {
+  const realNow = Date.now; let now = 1000; let verifies = 0
+  Date.now = () => now
+  try {
+    const controller = createController({ storage: storage(), api: {
+      requestCustomerOtp: async () => ({ challengeId: 'expired', expiresIn: 1, retryAfter: 0 }),
+      verifyCustomerOtp: async () => { verifies++; return { token: 'server-token', customer: { id: 'c', phone: '+22670000000' } } }
+    } })
+    await controller.requestCustomerOtp('+22670000000')
+    now += 1001
+    await assert.rejects(controller.verifyCustomerOtp('expired', '123456'), /expiré/)
+    assert.equal(verifies, 0)
+  } finally { Date.now = realNow }
+})
+
+for (const method of ['requestCustomerOtp', 'resendCustomerOtp']) {
+  test(`${method} tardif après logout ne réinstalle pas un challenge utilisable`, async () => {
+    const wait = deferred(); let verifies = 0
+    const challenge = { challengeId: 'ch', expiresIn: 30, retryAfter: 0 }
+    const controller = createController({ storage: storage(), api: {
+      setCustomerToken: () => {},
+      requestCustomerOtp: async () => method === 'requestCustomerOtp' ? wait.promise : challenge,
+      resendCustomerOtp: async () => wait.promise,
+      verifyCustomerOtp: async () => { verifies++; throw new Error('Appel interdit') },
+      customerLogout: async () => true
+    } })
+    if (method === 'resendCustomerOtp') await controller.requestCustomerOtp('+22670000000')
+    const pending = controller[method](method === 'requestCustomerOtp' ? '+22670000000' : 'ch')
+    await tick()
+    await controller.logoutCustomer()
+    wait.resolve(challenge)
+    await assert.rejects(pending, /annulée/)
+    await assert.rejects(controller.verifyCustomerOtp('ch', '123456'), /expiré/)
+    assert.equal(verifies, 0)
+  })
+}
 
 test('restoreCustomer ignore une restauration obsolète après logout et ne réinstalle pas les anciennes adresses', async () => {
   const wait = deferred(); const store = storage({ [CUSTOMER_TOKEN_KEY]: 'old-token' }); let currentToken
@@ -106,10 +145,12 @@ test('verify obsolète après logout ne restaure pas session ni stockage, et log
   const wait = deferred(); const store = storage(); let token
   const controller = createController({ storage: store, api: {
     setCustomerToken: value => { token = value },
+    requestCustomerOtp: async () => ({ challengeId: 'ch', expiresIn: 30, retryAfter: 0 }),
     verifyCustomerOtp: async () => wait.promise,
     customerAddresses: async () => [{ id: 'stale' }],
     customerLogout: async () => true
   } })
+  await controller.requestCustomerOtp('+22670000000')
   const verifying = controller.verifyCustomerOtp('ch', '123456'); await tick()
   const logout = controller.logoutCustomer(); await logout
   wait.resolve({ token: 'late-token', customer: { id: 'c', phone: '+22670000000' } })

@@ -10,6 +10,8 @@ const original = {
   hash: config.customerOtpHashKey,
   sender: config.orangeSenderAddress,
   name: config.orangeSenderName,
+  timeout: config.orangeTimeoutMs,
+  maxResponseBytes: config.orangeMaxResponseBytes,
 };
 let setupNumber = 0;
 const valid = () => {
@@ -36,6 +38,8 @@ afterEach(() => {
     customerOtpHashKey: original.hash,
     orangeSenderAddress: original.sender,
     orangeSenderName: original.name,
+    orangeTimeoutMs: original.timeout,
+    orangeMaxResponseBytes: original.maxResponseBytes,
   });
 });
 
@@ -195,5 +199,48 @@ describe("OrangeSmsProvider", () => {
       await expect(createSmsProvider().send("+22670000001", "one")).rejects.toThrow(/indisponible/);
       expect(fetchMock).not.toHaveBeenCalled();
     }
+  });
+
+  it.each([200, 202, 400, 403, 429, 500, 503])("rejects SMS HTTP %s without retrying or leaking provider data", async (status) => {
+    valid();
+    const secret = "fixture-sensitive-provider-body";
+    const logs = ["log", "warn", "error", "info", "debug"].map((method) =>
+      vi.spyOn(console, method as "log").mockImplementation(() => undefined));
+    try {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(response({ access_token: secret, expires_in: 3600 }))
+        .mockResolvedValueOnce(response({ error: secret }, status));
+      vi.stubGlobal("fetch", fetchMock);
+      const error = await createSmsProvider().send("+22670000001", "Code 123456").catch((e) => e);
+      expect(error).toMatchObject({ message: "La connexion réelle est momentanément indisponible.", extensions: { code: "AUTH_UNAVAILABLE" } });
+      expect(JSON.stringify(error)).not.toContain(secret);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      for (const log of logs) expect(log).not.toHaveBeenCalled();
+    } finally {
+      for (const log of logs) log.mockRestore();
+    }
+  });
+
+  it.each([null, {}, { access_token: "fixture", expires_in: 0 },
+    { access_token: "fixture", expires_in: 3600, token_type: "Basic" },
+    { access_token: "fixture\r\nheader", expires_in: 3600 }])("never sends SMS after an invalid OAuth response %#", async (body) => {
+    valid();
+    const fetchMock = vi.fn().mockResolvedValue(response(body));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(createSmsProvider().send("+22670000001", "Code 123456")).rejects.toMatchObject({ extensions: { code: "AUTH_UNAVAILABLE" } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("/oauth/");
+  });
+
+  it("does not retry a disconnected SMS request or expose its error", async () => {
+    valid();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ access_token: "fixture-token", expires_in: 3600 }))
+      .mockRejectedValueOnce(new Error("fixture-token Code 123456 provider disconnected"));
+    vi.stubGlobal("fetch", fetchMock);
+    const error = await createSmsProvider().send("+22670000001", "Code 123456").catch((e) => e);
+    expect(error).toMatchObject({ extensions: { code: "AUTH_UNAVAILABLE" } });
+    expect(String(error)).not.toMatch(/fixture-token|123456|disconnected/);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

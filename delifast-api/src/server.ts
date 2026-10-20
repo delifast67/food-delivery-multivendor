@@ -294,11 +294,12 @@ export async function createApp(
     resolvers,
     csrfPrevention: true,
     validationRules: [complexityRule],
-    formatError: (f: any) => {
-      const complex = /complex|opération|operation|only be the only/i.test(
-        String(f.message),
-      );
+    formatError: (f: any, error: any) => {
+      // Apollo wraps validation errors and replaces their public extension code.
+      const complex = f.extensions?.code === "QUERY_TOO_COMPLEX" ||
+        error?.originalError?.extensions?.code === "QUERY_TOO_COMPLEX";
       const invalidVariables = f.extensions?.code === "BAD_USER_INPUT";
+      const invalidDocument = f.extensions?.code === "GRAPHQL_VALIDATION_FAILED";
       const code = invalidVariables
         ? "INVALID_INPUT"
         : complex
@@ -310,11 +311,15 @@ export async function createApp(
               ? f.extensions.code
               : "INTERNAL_ERROR";
       return {
-        message: invalidVariables
-          ? "Entrées invalides"
-          : code === "INTERNAL_ERROR"
-            ? "Erreur interne"
-            : f.message,
+        // GraphQL validation messages can embed inline OTPs or other input values.
+        // Classify by extension code, never by attacker-controlled message text.
+        message: complex
+          ? "Requête trop complexe"
+          : invalidVariables || invalidDocument
+            ? "Entrées invalides"
+            : code === "INTERNAL_ERROR"
+              ? "Erreur interne"
+              : f.message,
         extensions: { code },
       };
     },

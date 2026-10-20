@@ -35,6 +35,7 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
   let discoveryRequest = 0
   let authEpoch = 0
   let authInFlight = null
+  let otpChallenge = null
   const ADDRESS_FIELDS = ['recipientName', 'phone', 'city', 'neighborhood', 'landmark', 'instructions', 'point']
   const serializeAddress = (input) => {
     const value = input && typeof input === 'object' ? input : {}
@@ -321,16 +322,33 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
       if (!api.requestCustomerOtp) throw new Error('La connexion réelle est momentanément indisponible.')
       const value = String(phone || '').trim()
       if (!/^\+226\d{8}$/.test(value)) throw new Error('Téléphone BF invalide (+226, format E.164 requis)')
-      return authExclusive(() => api.requestCustomerOtp(value))
+      const epoch = authEpoch
+      return authExclusive(async() => {
+        if (epoch !== authEpoch) throw new Error('Connexion annulée')
+        const challenge = await api.requestCustomerOtp(value)
+        if (epoch !== authEpoch) throw new Error('Connexion annulée')
+        if (!challenge || typeof challenge.challengeId !== 'string' || !challenge.challengeId || !Number.isFinite(challenge.expiresIn) || challenge.expiresIn <= 0 || !Number.isFinite(challenge.retryAfter) || challenge.retryAfter < 0) throw new Error('Réponse OTP backend incomplète')
+        otpChallenge = { id: challenge.challengeId, deadline: Date.now() + challenge.expiresIn * 1000 }
+        return clone(challenge)
+      })
     },
     async resendCustomerOtp(challengeId) {
       if (!api.resendCustomerOtp) throw new Error('La connexion réelle est momentanément indisponible.')
-      if (!challengeId) throw new Error('Challenge OTP invalide')
-      return authExclusive(() => api.resendCustomerOtp(challengeId))
+      if (!challengeId || !otpChallenge || otpChallenge.id !== challengeId || Date.now() >= otpChallenge.deadline) throw new Error('Challenge OTP expiré')
+      const epoch = authEpoch
+      return authExclusive(async() => {
+        if (epoch !== authEpoch) throw new Error('Connexion annulée')
+        const challenge = await api.resendCustomerOtp(challengeId)
+        if (epoch !== authEpoch) throw new Error('Connexion annulée')
+        if (!challenge || typeof challenge.challengeId !== 'string' || !challenge.challengeId || !Number.isFinite(challenge.expiresIn) || challenge.expiresIn <= 0 || !Number.isFinite(challenge.retryAfter) || challenge.retryAfter < 0) throw new Error('Réponse OTP backend incomplète')
+        otpChallenge = { id: challenge.challengeId, deadline: Date.now() + challenge.expiresIn * 1000 }
+        return clone(challenge)
+      })
     },
     async verifyCustomerOtp(challengeId, code) {
       if (!api.verifyCustomerOtp) throw new Error('La connexion réelle est momentanément indisponible.')
       if (!challengeId || !/^\d{6}$/.test(String(code || ''))) throw new Error('Code de vérification invalide')
+      if (!otpChallenge || otpChallenge.id !== challengeId || Date.now() >= otpChallenge.deadline) throw new Error('Challenge OTP expiré')
       if (authInFlight) throw new Error('Une opération du compte est déjà en cours.')
       const epoch = ++authEpoch
       return authExclusive(async() => {
@@ -344,11 +362,13 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
         const addresses = api.customerAddresses ? await api.customerAddresses() : []
         if (epoch !== authEpoch) { api.setCustomerToken(null); await storage.removeItem(CUSTOMER_TOKEN_KEY); throw new Error('Connexion annulée') }
         set({ customer: clone(session.customer), addresses: clone(addresses) || [] })
+        otpChallenge = null
         return clone(session.customer)
       })
     },
     async logoutCustomer() {
       ++authEpoch
+      otpChallenge = null
       // Start revocation with the current token, then clear local access synchronously.
       let failure
       const revoked = (async() => { try { if (api.customerLogout) await api.customerLogout() } catch (error) { failure = error } })()

@@ -199,4 +199,16 @@ describe("customer transport protocol", () => {
       "createdAt",
     );
   });
+
+  it("rejects an incomplete OTP success instead of treating it as a challenge", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { requestCustomerOtp: { challengeId: "" } } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(delifastApi.requestCustomerOtp(address.phone)).rejects.toMatchObject({
+      kind: "unavailable",
+    });
+  });
 });

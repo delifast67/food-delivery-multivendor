@@ -383,4 +383,21 @@ describe("server owned OTP lifecycle", () => {
     ).rejects.toMatchObject(err("OTP_REJECTED"));
     expect(await db.collection("customer_sessions").countDocuments()).toBe(0);
   });
+
+  it.each(["initial", "resend"])("rejects an expired challenge when the %s send completes late", async (mode) => {
+    const f = fixture();
+    const initial = mode === "resend" ? await requestOtp(db, f.provider, PHONE, "ip") : undefined;
+    if (initial) await cool();
+    const original = f.provider.send;
+    f.provider.send = vi.fn(async (phone, message) => {
+      await original(phone, message);
+      await challenges().updateOne({ phone, status: "PROCESSING" }, { $set: { expiresAt: new Date(0) } });
+    });
+    await expect(initial ? resendOtp(db, f.provider, initial.challengeId, "resend-ip") : requestOtp(db, f.provider, PHONE, "ip"))
+      .rejects.toMatchObject(err("AUTH_UNAVAILABLE"));
+    const c = await challenges().findOne({ phone: PHONE });
+    await expect(verifyOtp(db, f.provider, c.challengeId, f.code())).rejects.toMatchObject(err("INVALID_CHALLENGE"));
+    expect(await db.collection("customer_sessions").countDocuments()).toBe(0);
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });

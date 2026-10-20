@@ -122,6 +122,19 @@ afterAll(async () => {
 });
 
 describe("customer GraphQL authentication", () => {
+  it.each([
+    'mutation{verifyCustomerOtp(challengeId:"00000000-0000-4000-8000-000000000000",code:654321){token}}',
+    'mutation{verifyCustomerOtp(challengeId:"00000000-0000-4000-8000-000000000000",code:{secret:"fixture-private-value"}){token}}',
+    'mutation{verifyCustomerOtp(challengeId:"00000000-0000-4000-8000-000000000000",code:{secret:"fixture-private-value-operation"}){token}}',
+  ])("never echoes invalid inline OTP values in validation errors: %s", async (query) => {
+    const result = await gql(query);
+    expect(errorCode(result)).toBe("GRAPHQL_VALIDATION_FAILED");
+    expect(result.body.errors[0].message).toBe("Entrées invalides");
+    expect(JSON.stringify(result.body)).not.toMatch(/654321|fixture-private-value/);
+    expect(sendCalls).toBe(0);
+    expect(await db.collection("customer_sessions").countDocuments()).toBe(0);
+  });
+
   it("returns challenge metadata only and authenticates with the server-generated OTP", async () => {
     const requestOtp = await gql(
       "mutation($p:String!){requestCustomerOtp(phone:$p){challengeId expiresIn retryAfter}}",

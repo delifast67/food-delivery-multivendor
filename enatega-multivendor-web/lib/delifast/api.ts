@@ -193,6 +193,35 @@ const SIMULATE_PAYMENT = `mutation SimulateDemoPayment($orderId: ID!) { simulate
 const TRANSITION = `mutation TransitionOrder($orderId: ID!, $status: String!, $expectedStatus: String!) { transitionOrder(orderId: $orderId, status: $status, expectedStatus: $expectedStatus) { ${ORDER_OPERATIONS_FIELDS} } }`;
 const ASSIGN = `mutation AssignRider($orderId: ID!, $riderId: ID!, $expectedStatus: String!) { assignRider(orderId: $orderId, riderId: $riderId, expectedStatus: $expectedStatus) { ${ORDER_OPERATIONS_FIELDS} } }`;
 
+function validOtpChallenge(value: unknown): CustomerOtpChallenge {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    typeof (value as CustomerOtpChallenge).challengeId !== "string" ||
+    !(value as CustomerOtpChallenge).challengeId ||
+    !Number.isFinite((value as CustomerOtpChallenge).expiresIn) ||
+    (value as CustomerOtpChallenge).expiresIn <= 0 ||
+    !Number.isFinite((value as CustomerOtpChallenge).retryAfter) ||
+    (value as CustomerOtpChallenge).retryAfter < 0
+  )
+    throw new DelifastApiError("Réponse OTP backend incomplète", "unavailable");
+  return value as CustomerOtpChallenge;
+}
+
+function validCustomerSession(value: unknown): CustomerSession {
+  const session = value as CustomerSession | null;
+  if (
+    !session ||
+    typeof session.token !== "string" ||
+    !session.token ||
+    !session.customer ||
+    typeof session.customer.id !== "string" ||
+    typeof session.customer.phone !== "string"
+  )
+    throw new DelifastApiError("Réponse de connexion backend incomplète", "unavailable");
+  return session;
+}
+
 async function request<T>(
   query: string,
   variables?: Record<string, unknown>,
@@ -320,11 +349,11 @@ export const delifastApi = {
   customerAddresses: (token: string) =>
     request<{ customerAddresses: CustomerAddress[] }>(CUSTOMER_ADDRESSES, undefined, token).then((data) => data.customerAddresses),
   requestCustomerOtp: (phone: string) =>
-    request<{ requestCustomerOtp: CustomerOtpChallenge }>(REQUEST_CUSTOMER_OTP, { phone }).then((data) => data.requestCustomerOtp),
+    request<{ requestCustomerOtp: CustomerOtpChallenge }>(REQUEST_CUSTOMER_OTP, { phone }).then((data) => validOtpChallenge(data.requestCustomerOtp)),
   resendCustomerOtp: (challengeId: string) =>
-    request<{ resendCustomerOtp: CustomerOtpChallenge }>(RESEND_CUSTOMER_OTP, { challengeId }).then((data) => data.resendCustomerOtp),
+    request<{ resendCustomerOtp: CustomerOtpChallenge }>(RESEND_CUSTOMER_OTP, { challengeId }).then((data) => validOtpChallenge(data.resendCustomerOtp)),
   verifyCustomerOtp: (challengeId: string, code: string) =>
-    request<{ verifyCustomerOtp: CustomerSession }>(VERIFY_CUSTOMER_OTP, { challengeId, code }).then((data) => data.verifyCustomerOtp),
+    request<{ verifyCustomerOtp: CustomerSession }>(VERIFY_CUSTOMER_OTP, { challengeId, code }).then((data) => validCustomerSession(data.verifyCustomerOtp)),
   customerLogout: (token: string) =>
     request<{ customerLogout: boolean }>(CUSTOMER_LOGOUT, undefined, token).then((data) => data.customerLogout),
   createCustomerAddress: (token: string, input: DeliveryAddress) =>
