@@ -37,6 +37,9 @@ for (const [name, node] of constants) {
 for (const required of ['PaymentSession', 'StartPayment', 'RefreshPayment']) {
   assert.ok(operations.has(required), `Opération de paiement neutre absente du contrôle : ${required}`);
 }
+for (const required of ['PublicRestaurantPage', 'RestaurantProfile', 'PublicMenuPage', 'PublicMenuCategoryPage']) {
+  assert.ok(operations.has(required), `Opération catalogue public borné absente du contrôle : ${required}`);
+}
 for (const required of ['Restaurants', 'Restaurant', 'CalculateCheckout', 'PlaceOrder', 'Order', 'StaffLogin', 'OperationsOrders', 'AvailableRiders', 'Me', 'StaffLogout', 'SimulateDemoPayment', 'TransitionOrder', 'AssignRider', 'OperationsRestaurants', 'CreateMenuItem', 'UpdateMenuItem', 'SetMenuItemArchived', 'SetRestaurantOpen', 'CreateMenuCategory', 'UpdateMenuCategory', 'SetMenuCategoryArchived', 'CustomerMe', 'UpdateCustomerProfile', 'CustomerAddresses', 'RequestCustomerOtp', 'ResendCustomerOtp', 'VerifyCustomerOtp', 'CustomerLogout', 'CreateCustomerAddress', 'UpdateCustomerAddress', 'DeleteCustomerAddress', 'CustomerSupport', 'OperationsSupport', 'CreateSupport', 'TransitionSupport']) {
   assert.ok(operations.has(required), `Opération obligatoire absente du contrôle : ${required}`);
 }

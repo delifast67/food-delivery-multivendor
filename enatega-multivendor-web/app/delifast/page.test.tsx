@@ -66,6 +66,31 @@ afterEach(cleanup);
 beforeEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
+  const profiles = restaurants.map(({ menu: _menu, ...profile }) => ({
+    ...profile,
+    open: true,
+    version: 1,
+  }));
+  vi.spyOn(delifastApi, "publicRestaurantPage").mockResolvedValue({
+    items: profiles,
+    nextCursor: null,
+  });
+  vi.spyOn(delifastApi, "restaurantProfile").mockImplementation(
+    async (id) => profiles.find((r) => r.id === id) ?? null,
+  );
+  vi.spyOn(delifastApi, "publicMenuPage").mockImplementation(
+    async (restaurantId) => {
+      const source = restaurants.find((r) => r.id === restaurantId)!;
+      return {
+        sections: [{ category: null, items: source.menu }],
+        nextCursor: null,
+      };
+    },
+  );
+  vi.spyOn(delifastApi, "publicMenuCategoryPage").mockResolvedValue({
+    items: [],
+    nextCursor: null,
+  });
   vi.spyOn(delifastApi, "restaurants").mockResolvedValue(restaurants);
   vi.spyOn(delifastApi, "checkout").mockResolvedValue(checkout);
   vi.spyOn(delifastApi, "order").mockResolvedValue(null);
@@ -74,12 +99,14 @@ beforeEach(() => {
 describe("Delifast UI state", () => {
   it("allows selecting another restaurant after clearing the mono-restaurant cart", async () => {
     render(<DelifastPage />);
-    await screen.findByText("Chez A");
+    await screen.findByRole("heading", { name: "Restaurants partenaires" });
+    await selectRestaurant("Chez A");
     fireEvent.click(screen.getByRole("button", { name: "Ajouter Riz" }));
     fireEvent.click(screen.getByRole("button", { name: "Vider le panier" }));
+    await selectRestaurant("Chez B");
     fireEvent.click(screen.getByRole("button", { name: "Ajouter Poulet" }));
     expect(screen.getAllByText("Poulet").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Riz")).toBeInTheDocument(); // menu remains visible; cart has only Poulet
+    expect(screen.queryByText("Riz")).not.toBeInTheDocument(); // explicit selection shows one menu; cart has only Poulet
     expect(screen.getByText("1 article")).toBeInTheDocument();
   });
 
@@ -92,7 +119,8 @@ describe("Delifast UI state", () => {
         }),
     );
     render(<DelifastPage />);
-    await screen.findByText("Chez A");
+    await screen.findByRole("heading", { name: "Restaurants partenaires" });
+    await selectRestaurant("Chez A");
     fireEvent.click(screen.getByRole("button", { name: "Ajouter Riz" }));
     await waitFor(() =>
       expect(
@@ -122,8 +150,22 @@ describe("Delifast UI state", () => {
   });
 });
 
+async function selectRestaurant(name: string) {
+  const heading = await screen.findByRole("heading", { name, level: 3 });
+  const card = heading.closest("article");
+  if (!card) throw new Error(`Restaurant card not found: ${name}`);
+  fireEvent.click(card.querySelector("button")!);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("region", { name: `Menu de ${name}` }),
+    ).toBeInTheDocument(),
+  );
+}
+
 async function prepareOrder() {
-  await screen.findByText("Chez A");
+  await screen.findByRole("heading", { name: "Restaurants partenaires" });
+  await selectRestaurant("Chez A");
+  await screen.findByRole("button", { name: "Ajouter Riz" });
   fireEvent.click(screen.getByRole("button", { name: "Ajouter Riz" }));
   await waitFor(() =>
     expect(
@@ -161,19 +203,19 @@ describe("Delifast recovery", () => {
     );
     await screen.findByRole("button", { name: "Reprendre la même tentative" });
     expect(screen.getByLabelText("Nom du destinataire")).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Ajouter Poulet" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Voir le menu" })).toBeDisabled();
     const original = place.mock.calls[0][0];
     expect(
       JSON.parse(localStorage.getItem(attemptStorageKey)!).idempotencyKey,
     ).toBe(original.idempotencyKey);
     first.unmount();
     render(<DelifastPage />);
-    const retry = await screen.findByRole("button", {
-      name: "Reprendre la même tentative",
-    });
-    fireEvent.click(retry);
+    await screen.findByLabelText("Nom du destinataire");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Reprendre la même tentative",
+      }),
+    );
     await screen.findByText("COMMANDE ENREGISTRÉE");
     expect(place).toHaveBeenCalledTimes(2);
     expect(place.mock.calls[1][0]).toEqual(original);
@@ -181,6 +223,7 @@ describe("Delifast recovery", () => {
       screen.getByRole("button", { name: "Retour aux restaurants" }),
     );
     expect(localStorage.getItem(attemptStorageKey)).toBeNull();
+    await selectRestaurant("Chez B");
     expect(
       await screen.findByRole("button", { name: "Ajouter Poulet" }),
     ).not.toBeDisabled();
@@ -212,10 +255,9 @@ describe("Delifast recovery", () => {
     vi.mocked(delifastApi.order).mockRejectedValue(new Error("offline"));
     const place = vi.spyOn(delifastApi, "placeOrder").mockResolvedValue(order);
     render(<DelifastPage />);
-    await screen.findByText("Chez A");
-    expect(
-      screen.getByRole("button", { name: "Ajouter Poulet" }),
-    ).toBeDisabled();
+    await screen.findByRole("heading", { name: "Restaurants partenaires" });
+    await selectRestaurant("Chez A");
+    expect(screen.getByRole("button", { name: "Voir le menu" })).toBeDisabled();
     fireEvent.click(
       screen.getByRole("button", { name: "Reprendre la même tentative" }),
     );
@@ -256,9 +298,11 @@ describe("Delifast recovery", () => {
 
   it("releases the restaurant when the last item is removed", async () => {
     render(<DelifastPage />);
-    await screen.findByText("Chez A");
+    await screen.findByRole("heading", { name: "Restaurants partenaires" });
+    await selectRestaurant("Chez A");
     fireEvent.click(screen.getByRole("button", { name: "Ajouter Riz" }));
     fireEvent.click(screen.getByRole("button", { name: "Diminuer Riz" }));
+    await selectRestaurant("Chez B");
     fireEvent.click(screen.getByRole("button", { name: "Ajouter Poulet" }));
     expect(
       screen.getByRole("button", { name: "Augmenter Poulet" }),
@@ -375,26 +419,38 @@ describe("Delifast suivi opérationnel", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screen.getByRole("heading", {
-      name: "Votre commande est en attente de paiement.",
-    })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: "Votre commande est en attente de paiement.",
+      }),
+    ).toBeInTheDocument();
     try {
-      fireEvent.click(screen.getByRole("button", { name: "Actualiser le suivi" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Actualiser le suivi" }),
+      );
       await vi.advanceTimersByTimeAsync(30000);
       expect(delifastApi.order).toHaveBeenCalledTimes(3);
       await act(async () => {
-        secondRefresh.resolve({ ...order, status: "DELIVERED", paymentStatus: "PAID" });
+        secondRefresh.resolve({
+          ...order,
+          status: "DELIVERED",
+          paymentStatus: "PAID",
+        });
         await Promise.resolve();
       });
-      expect(screen.getByRole("heading", {
-        name: "Votre commande a été livrée (démo).",
-      })).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", {
+          name: "Votre commande a été livrée (démo).",
+        }),
+      ).toBeInTheDocument();
       await act(async () => {
         firstRefresh.resolve(order);
         await Promise.resolve();
       });
       expect(
-        screen.getByRole("heading", { name: "Votre commande a été livrée (démo)." }),
+        screen.getByRole("heading", {
+          name: "Votre commande a été livrée (démo).",
+        }),
       ).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
@@ -415,25 +471,41 @@ describe("Delifast suivi opérationnel", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screen.getByRole("heading", {
-      name: "Votre commande est en attente de paiement.",
-    })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: "Votre commande est en attente de paiement.",
+      }),
+    ).toBeInTheDocument();
     try {
-      fireEvent.click(screen.getByRole("button", { name: "Actualiser le suivi" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Actualiser le suivi" }),
+      );
       await vi.advanceTimersByTimeAsync(30000);
       await act(async () => {
-        secondRefresh.resolve({ ...order, status: "DELIVERED", paymentStatus: "PAID" });
+        secondRefresh.resolve({
+          ...order,
+          status: "DELIVERED",
+          paymentStatus: "PAID",
+        });
         await Promise.resolve();
       });
-      expect(screen.getByRole("heading", {
-        name: "Votre commande a été livrée (démo).",
-      })).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", {
+          name: "Votre commande a été livrée (démo).",
+        }),
+      ).toBeInTheDocument();
       await act(async () => {
         firstRefresh.reject(new Error("Réseau interrompu"));
         await Promise.resolve();
       });
-      expect(screen.queryByText("Actualisation impossible : Réseau interrompu")).not.toBeInTheDocument();
-      expect(screen.getByRole("heading", { name: "Votre commande a été livrée (démo)." })).toBeInTheDocument();
+      expect(
+        screen.queryByText("Actualisation impossible : Réseau interrompu"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", {
+          name: "Votre commande a été livrée (démo).",
+        }),
+      ).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
@@ -443,9 +515,12 @@ describe("Delifast suivi opérationnel", () => {
     rememberOrder();
     const restoration = deferred<Order | null>();
     vi.mocked(delifastApi.order).mockReturnValue(restoration.promise);
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
     const view = render(<DelifastPage />);
-    await screen.findByText("Chez A");
+    await screen.findByRole("heading", { name: "Restaurants partenaires" });
+    await selectRestaurant("Chez A");
     view.unmount();
     restoration.resolve(order);
     await Promise.resolve();
@@ -467,18 +542,30 @@ describe("Delifast suivi opérationnel", () => {
     await screen.findByRole("heading", {
       name: "Votre commande est en attente de paiement.",
     });
-    fireEvent.click(screen.getByRole("button", { name: "Actualiser le suivi" }));
-    fireEvent.click(screen.getByRole("button", { name: "Retour aux restaurants" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Actualiser le suivi" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Retour aux restaurants" }),
+    );
     await prepareOrder();
-    fireEvent.click(screen.getByRole("button", { name: "Enregistrer la commande" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Enregistrer la commande" }),
+    );
     await screen.findByText("COMMANDE ENREGISTRÉE");
-    expect(screen.getByRole("button", { name: "Actualiser le suivi" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Actualiser le suivi" }),
+    ).toBeEnabled();
     await act(async () => {
       staleRefresh.resolve({ ...order, status: "DELIVERED" });
       await Promise.resolve();
     });
     expect(screen.getByText("o2")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Votre commande est en attente de paiement." })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: "Votre commande est en attente de paiement.",
+      }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -529,11 +616,29 @@ describe("Delifast options and menu grouping", () => {
     },
   ];
   beforeEach(() => {
-    vi.mocked(delifastApi.restaurants).mockResolvedValue(richRestaurants);
+    const profile = richRestaurants.map(
+      ({ menu: _menu, categories: _categories, ...rest }) => ({
+        ...rest,
+        version: 1,
+      }),
+    );
+    vi.mocked(delifastApi.publicRestaurantPage).mockResolvedValue({
+      items: profile,
+      nextCursor: null,
+    });
+    vi.mocked(delifastApi.publicMenuPage).mockResolvedValue({
+      sections: [{ category: null, items: richRestaurants[0].menu }],
+      nextCursor: null,
+    });
+    vi.mocked(delifastApi.publicMenuCategoryPage).mockResolvedValue({
+      items: richRestaurants[0].categories,
+      nextCursor: null,
+    });
   });
   it("bloque l'ajout tant qu'un groupe requis n'est pas choisi", async () => {
     render(<DelifastPage />);
-    await screen.findByText("Chez Options");
+    await screen.findByRole("heading", { name: "Restaurants partenaires" });
+    await selectRestaurant("Chez Options");
     fireEvent.click(screen.getByRole("button", { name: "Configurer Bowl" }));
     fireEvent.click(screen.getByRole("button", { name: "Ajouter au panier" }));
     expect(screen.getByRole("alert")).toHaveTextContent("options requises");
@@ -544,7 +649,8 @@ describe("Delifast options and menu grouping", () => {
   it("envoie les sélections dans le payload serveur", async () => {
     const place = vi.spyOn(delifastApi, "placeOrder").mockResolvedValue(order);
     render(<DelifastPage />);
-    await screen.findByText("Chez Options");
+    await screen.findByRole("heading", { name: "Restaurants partenaires" });
+    await selectRestaurant("Chez Options");
     fireEvent.click(screen.getByRole("button", { name: "Configurer Bowl" }));
     fireEvent.click(screen.getByLabelText(/Grand/));
     fireEvent.click(screen.getByRole("button", { name: "Ajouter au panier" }));
@@ -576,7 +682,8 @@ describe("Delifast options and menu grouping", () => {
   });
   it("garde deux configurations distinctes et ajuste chaque clé", async () => {
     render(<DelifastPage />);
-    await screen.findByText("Chez Options");
+    await screen.findByRole("heading", { name: "Restaurants partenaires" });
+    await selectRestaurant("Chez Options");
     for (const option of [/Petit/, /Grand/]) {
       fireEvent.click(screen.getByRole("button", { name: "Configurer Bowl" }));
       fireEvent.click(screen.getByLabelText(option));
@@ -590,13 +697,15 @@ describe("Delifast options and menu grouping", () => {
   });
   it("désactive une option indisponible", async () => {
     render(<DelifastPage />);
-    await screen.findByText("Chez Options");
+    await screen.findByRole("heading", { name: "Restaurants partenaires" });
+    await selectRestaurant("Chez Options");
     fireEvent.click(screen.getByRole("button", { name: "Configurer Bowl" }));
     expect(screen.getByLabelText(/Indisponible/)).toBeDisabled();
   });
   it("affiche le fallback sans catégorie pour une catégorie inconnue", async () => {
     render(<DelifastPage />);
-    await screen.findByText("Chez Options");
+    await screen.findByRole("heading", { name: "Restaurants partenaires" });
+    await selectRestaurant("Chez Options");
     expect(
       screen.getByRole("heading", { name: "Sans catégorie" }),
     ).toBeInTheDocument();
@@ -604,9 +713,27 @@ describe("Delifast options and menu grouping", () => {
   it("permet de désélectionner un choix facultatif limité à un", async () => {
     const optional = structuredClone(richRestaurants);
     optional[0].menu[0].optionGroups[0].minSelections = 0;
-    vi.mocked(delifastApi.restaurants).mockResolvedValue(optional);
+    vi.mocked(delifastApi.publicRestaurantPage).mockResolvedValue({
+      items: [
+        {
+          id: "rx",
+          name: "Chez Options",
+          description: "",
+          open: true,
+          version: 1,
+        },
+      ],
+      nextCursor: null,
+    });
+    vi.mocked(delifastApi.publicMenuPage).mockResolvedValue({
+      sections: [
+        { category: { ...optional[0].categories[0] }, items: optional[0].menu },
+      ],
+      nextCursor: null,
+    });
     render(<DelifastPage />);
-    await screen.findByText("Chez Options");
+    await screen.findByRole("heading", { name: "Restaurants partenaires" });
+    await selectRestaurant("Chez Options");
     fireEvent.click(screen.getByRole("button", { name: "Configurer Bowl" }));
     const option = screen.getByRole("checkbox", { name: /Grand/ });
     fireEvent.click(option);
@@ -628,11 +755,14 @@ describe("Zones de livraison côté client", () => {
   it("transmet le point à la découverte et au devis, puis invalide le devis hors zone", async () => {
     const { DelifastApiError } = await import("@/lib/delifast/api");
     render(<DelifastPage />);
-    await screen.findByText("Chez A");
-    expect(delifastApi.restaurants).toHaveBeenCalledWith({
-      latitude: 12.3714,
-      longitude: -1.5197,
-    });
+    await screen.findByRole("heading", { name: "Restaurants partenaires" });
+    await selectRestaurant("Chez A");
+    expect(delifastApi.publicRestaurantPage).toHaveBeenCalledWith(
+      { latitude: 12.3714, longitude: -1.5197 },
+      "",
+      false,
+      null,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Ajouter Riz" }));
     await waitFor(() =>
       expect(
@@ -644,7 +774,10 @@ describe("Zones de livraison côté client", () => {
         point: { latitude: 12.3714, longitude: -1.5197 },
       }),
     );
-    vi.mocked(delifastApi.restaurants).mockResolvedValue([]);
+    vi.mocked(delifastApi.publicRestaurantPage).mockResolvedValue({
+      items: [],
+      nextCursor: null,
+    });
     vi.mocked(delifastApi.checkout).mockRejectedValue(
       new DelifastApiError(
         "Point hors zone de livraison",
@@ -657,10 +790,12 @@ describe("Zones de livraison côté client", () => {
       target: { value: "0" },
     });
     await waitFor(() =>
-      expect(delifastApi.restaurants).toHaveBeenLastCalledWith({
-        latitude: 0,
-        longitude: -1.5197,
-      }),
+      expect(delifastApi.publicRestaurantPage).toHaveBeenLastCalledWith(
+        { latitude: 0, longitude: -1.5197 },
+        "",
+        false,
+        null,
+      ),
     );
     await screen.findByText("Point hors zone de livraison");
     expect(
@@ -690,7 +825,10 @@ describe("Confirmation sans avertissement périmé", () => {
     vi.spyOn(delifastApi, "placeOrder").mockResolvedValue(order);
     render(<DelifastPage />);
     await prepareOrder();
-    fireEvent.click(screen.getByRole("button", { name: "Ajouter Poulet" }));
+    const bCard = screen
+      .getAllByRole("heading", { name: "Chez B" })[0]
+      .closest("article")!;
+    fireEvent.click(bCard.querySelector("button")!);
     expect(screen.getByRole("status")).toHaveTextContent(
       "Votre panier est mono-restaurant",
     );

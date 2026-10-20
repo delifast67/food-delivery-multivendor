@@ -38,7 +38,7 @@ Le resolver et les fonctions métier autorisent seulement `ADMIN` et `RESTAURANT
 
 Création/édition/archive/restauration et ouverture gardent leurs mutations et versions CAS historiques. Une création relit la page serveur, sans insertion locale hors tri ni 21e ligne. Les brouillons de plat et leur catégorie survivent à la navigation des catégories ; les changements de session réinitialisent les formulaires et ignorent les réponses tardives. Les erreurs retirent les lignes/formulaires périmés ; double soumission verrouillée synchroniquement et conflits relus sans rejeu. Après une réponse d’écriture perdue, navigation/recherche ne réarment pas les écritures : une actualisation explicite réussie est requise. Cette relecture ne prouve pas une non-création : vérifier le résultat avant toute nouvelle création, les mutations historiques n’étant pas idempotentes.
 
-**Limites restantes :** catalogues publics Web/Expo et API historiques complètes conservés non bornés pour ne pas casser découverte, options et regroupement par catégorie ; leur migration nécessitera conjointement un contrat public paginé, les sélecteurs Web et le `discovery.js` mobile (où les plats de catégorie archivée retombent dans « Autres »). Le client local Store ne possède pas d’écran de gestion menu/catégories : commandes/support seulement. Pages non transactionnelles, pas de total global ni d’export exhaustif ; les créations/suppressions concurrentes peuvent modifier leur contenu. Aucun changement aux fournisseurs, paiements/SMS, Orange ou About. La recette Chromium n’est pas une validation native Android/iOS.
+**Limites restantes :** les API historiques complètes sont conservées non bornées pour compatibilité ; les écrans publics Web et Expo utilisent désormais les pages publiques dédiées. Le client local Store ne possède pas d’écran de gestion menu/catégories : commandes/support seulement. Pages non transactionnelles, pas de total global ni d’export exhaustif ; les créations/suppressions concurrentes peuvent modifier leur contenu. Les filtres et la vérification des zones ne constituent pas une borne globale du travail serveur. Aucun changement aux fournisseurs, paiements/SMS, Orange ou About. La recette Chromium n’est pas une validation native Android/iOS.
 
 Depuis la racine du dépôt :
 
@@ -52,3 +52,21 @@ DELIFAST_TEST_NETNS=system DELIFAST_TEST_CHROMIUM=/usr/bin/chromium \
 ```
 
 Cette recette parcourt 66 restaurants et plus de 120 plats synthétiques ; elle vérifie pages et réponses minimales, recherches exactes indépendantes, détails à la demande, éditions et archives versionnées, conflits et réponses perdues, permissions restaurant et affichage à 390 px. Elle n’émet aucune commande, aucun SMS ni paiement réel et bloque le réseau extérieur.
+
+## Catalogue public : pages serveur de 20
+
+Le parcours `/delifast` charge les restaurants sans menus imbriqués via `publicRestaurantPage`, puis les plats et catégories du restaurant choisi via `publicMenuPage` et `publicMenuCategoryPage`. Chaque demande est limitée à 20 éléments ; les suites sont demandées explicitement. Recherche nom/description, filtre catégorie et catégorie « Autres » sont traités côté serveur. Les plats et options indisponibles gardent leur disponibilité réelle ; les archives ne sont pas proposées. Les sections de menu sont fournies par le serveur, sans déduire le regroupement d’une liste de catégories partielle.
+
+Le panier reste mono-restaurant, conserve ses options lors des recherches et demande toujours ses montants au serveur. Une tentative incertaine garde exactement sa clé et son payload. Sa restauration lit un profil restaurant léger par ID, sans dépendre des restaurants présents dans la page courante. Les anciennes méthodes `restaurants` et `restaurant` restent disponibles sans limite ajoutée silencieusement ; elles ne sont plus utilisées par cet écran.
+
+Les pages chargées ne sont ni un total exhaustif, ni un snapshot, ni un cache hors ligne persistant. Après plusieurs demandes, le navigateur peut conserver davantage que 20 éléments en mémoire : la borne porte sur chaque réponse. Aucun changement aux commandes, paiements, SMS, Orange ou À propos.
+
+La recette publique dédiée utilise une API réelle et MongoDB jetable dans un espace réseau privé, avec 65 restaurants, 45 catégories (40 actives) et 67 plats (61 non archivés). Elle contrôle les requêtes de 20 éléments maximum, les recherches hors première page, les filtres, les options, le prix serveur et la conservation du panier, puis l’absence de débordement à 390 px. Les mutations GraphQL et les requêtes extérieures sont interdites ; aucune commande ni session de paiement ne doit être créée.
+
+```bash
+# Playwright, Chromium et MongoDB préinstallés ; aucune installation réseau dans la recette.
+DELIFAST_TEST_NETNS=system \
+  DELIFAST_TEST_PYTHON="$(command -v python3)" \
+  DELIFAST_TEST_CHROMIUM=/usr/bin/chromium \
+  node scripts/delifast-public-catalogue-acceptance.mjs
+```

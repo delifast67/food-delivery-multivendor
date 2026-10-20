@@ -72,6 +72,24 @@ export type Restaurant = {
   open?: boolean;
 };
 
+export type RestaurantProfile = Omit<Restaurant, "menu" | "categories">;
+export type PublicRestaurantPage = {
+  items: RestaurantProfile[];
+  nextCursor: string | null;
+};
+export type PublicMenuSection = {
+  category: MenuCategory | null;
+  items: MenuItem[];
+};
+export type PublicMenuPage = {
+  sections: PublicMenuSection[];
+  nextCursor: string | null;
+};
+export type PublicMenuCategoryPage = {
+  items: MenuCategory[];
+  nextCursor: string | null;
+};
+
 export type DeliveryPoint = { latitude: number; longitude: number };
 export type DeliveryZone = {
   id: string;
@@ -289,6 +307,10 @@ const CATEGORY_DETAIL = `query OperationsMenuCategory($restaurantId: ID!, $id: I
 const MENU_ITEM_FIELDS = `id name description priceXof available archived version categoryId optionGroups { ${GROUP_FIELDS} }`;
 const MENU_SUMMARY_FIELDS = `id name priceXof available archived version categoryId`;
 const MENU_SUMMARIES = `query OperationsMenuItemSummaries($restaurantId: ID!, $after: ID, $menuItemId: ID) { operationsMenuItemSummaries(restaurantId: $restaurantId, limit: 20, after: $after, menuItemId: $menuItemId) { items { ${MENU_SUMMARY_FIELDS} } nextCursor } }`;
+const PUBLIC_RESTAURANT_PAGE = `query PublicRestaurantPage($point: DeliveryPointInput, $search: String, $openOnly: Boolean, $after: String) { publicRestaurantPage(point: $point, search: $search, openOnly: $openOnly, limit: 20, after: $after) { items { id name description open version } nextCursor } }`;
+const RESTAURANT_PROFILE = `query RestaurantProfile($id: ID!) { restaurant(id: $id) { id name description open version } }`;
+const PUBLIC_MENU_PAGE = `query PublicMenuPage($restaurantId: ID!, $search: String, $categoryId: ID, $after: String) { publicMenuPage(restaurantId: $restaurantId, search: $search, categoryId: $categoryId, limit: 20, after: $after) { sections { category { ${CATEGORY_FIELDS} } items { ${MENU_ITEM_FIELDS} } } nextCursor } }`;
+const PUBLIC_MENU_CATEGORY_PAGE = `query PublicMenuCategoryPage($restaurantId: ID!, $after: String) { publicMenuCategoryPage(restaurantId: $restaurantId, limit: 20, after: $after) { items { ${CATEGORY_FIELDS} } nextCursor } }`;
 const MENU_DETAIL = `query OperationsMenuItem($restaurantId: ID!, $id: ID!) { operationsMenuItem(restaurantId: $restaurantId, id: $id) { ${MENU_ITEM_FIELDS} } }`;
 const CREATE_MENU_ITEM = `mutation CreateMenuItem($restaurantId: ID!, $input: MenuItemInput!) { createMenuItem(restaurantId: $restaurantId, input: $input) { ${MENU_ITEM_FIELDS} } }`;
 const UPDATE_MENU_ITEM = `mutation UpdateMenuItem($id: ID!, $expectedVersion: Int!, $input: MenuItemInput!) { updateMenuItem(id: $id, expectedVersion: $expectedVersion, input: $input) { ${MENU_ITEM_FIELDS} } }`;
@@ -477,6 +499,44 @@ export const delifastApi = {
       { id, expectedVersion, status, note },
       token,
     ).then((d) => d.transitionSupportTicket),
+  publicRestaurantPage: (
+    point?: DeliveryPoint,
+    search = "",
+    openOnly = false,
+    after: string | null = null,
+  ) =>
+    request<{ publicRestaurantPage: PublicRestaurantPage }>(
+      PUBLIC_RESTAURANT_PAGE,
+      { point: point ?? null, search, openOnly, after },
+    ).then((data) => data.publicRestaurantPage),
+  restaurantProfile: (id: string) =>
+    request<{ restaurant: RestaurantProfile | null }>(RESTAURANT_PROFILE, {
+      id,
+    }).then((data) => {
+      if (data.restaurant && data.restaurant.id !== id)
+        throw new DelifastApiError(
+          "Réponse restaurant incohérente",
+          "unavailable",
+        );
+      return data.restaurant;
+    }),
+  publicMenuPage: (
+    restaurantId: string,
+    search = "",
+    categoryId: string | null = null,
+    after: string | null = null,
+  ) =>
+    request<{ publicMenuPage: PublicMenuPage }>(PUBLIC_MENU_PAGE, {
+      restaurantId,
+      search,
+      categoryId,
+      after,
+    }).then((data) => data.publicMenuPage),
+  publicMenuCategoryPage: (restaurantId: string, after: string | null = null) =>
+    request<{ publicMenuCategoryPage: PublicMenuCategoryPage }>(
+      PUBLIC_MENU_CATEGORY_PAGE,
+      { restaurantId, after },
+    ).then((data) => data.publicMenuCategoryPage),
   restaurants: (point?: DeliveryPoint) =>
     request<{ restaurants: Restaurant[] }>(RESTAURANTS, {
       point: point ?? null,

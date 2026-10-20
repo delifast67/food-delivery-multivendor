@@ -17,12 +17,14 @@ import {
   type Order,
   type OrderAttempt,
   type OrderPayload,
-  type Restaurant,
+  type RestaurantProfile,
+  type MenuCategory,
   type DeliveryPoint,
 } from "@/lib/delifast/api";
 import "./delifast.css";
 import CustomerAccount from "./CustomerAccount";
 import PaymentPanel from "./PaymentPanel";
+import { useCursorPage } from "@/lib/delifast/useCursorPage";
 
 const emptyAddress: DeliveryAddress = {
   recipientName: "",
@@ -86,9 +88,13 @@ const statusTitle: Record<string, string> = {
 };
 
 export default function DelifastPage() {
-  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [restaurantSearch, setRestaurantSearch] = useState("");
+  const [openOnly, setOpenOnly] = useState(false);
+  const [menuSearch, setMenuSearch] = useState("");
+  const [menuCategoryId, setMenuCategoryId] = useState<string | null>(null);
+  const [itemCache, setItemCache] = useState<Record<string, MenuItem>>({});
   const [point, setPoint] = useState<DeliveryPoint>(emptyAddress.point!);
-  const [selected, setSelected] = useState<Restaurant | null>(null);
+  const [selected, setSelected] = useState<RestaurantProfile | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [checkout, setCheckout] = useState<Awaited<
     ReturnType<typeof delifastApi.checkout>
@@ -96,12 +102,12 @@ export default function DelifastPage() {
   const [address, setAddress] = useState<DeliveryAddress>(emptyAddress);
   const [attempt, setAttempt] = useState<OrderAttempt | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
-  const [loading, setLoading] = useState("restaurants");
+  const [loading, setLoading] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [trackingLoading, setTrackingLoading] = useState(false);
   const [configuring, setConfiguring] = useState<{
-    restaurant: Restaurant;
+    restaurant: RestaurantProfile;
     item: MenuItem;
   } | null>(null);
   const [draftSelections, setDraftSelections] = useState<OptionSelection[]>([]);
@@ -109,24 +115,85 @@ export default function DelifastPage() {
   const trackingRequestRef = useRef(0);
   const locked = !!attempt && !order;
 
+  const restaurantPages = useCursorPage(
+    JSON.stringify([point, restaurantSearch, openOnly]),
+    true,
+    (after) =>
+      delifastApi.publicRestaurantPage(
+        point,
+        restaurantSearch,
+        openOnly,
+        after,
+      ),
+  );
+  const menuPages = useCursorPage(
+    JSON.stringify([selected?.id, menuSearch, menuCategoryId]),
+    !!selected,
+    async (after) => {
+      const page = await delifastApi.publicMenuPage(
+        selected!.id,
+        menuSearch,
+        menuCategoryId,
+        after,
+      );
+      return {
+        items: page.sections.flatMap((section) =>
+          section.items.map((item) => ({
+            id: item.id,
+            item,
+            category: section.category,
+          })),
+        ),
+        nextCursor: page.nextCursor,
+      };
+    },
+  );
+  const categoryPages = useCursorPage(selected?.id ?? "", !!selected, (after) =>
+    delifastApi.publicMenuCategoryPage(selected!.id, after),
+  );
+  const restaurants = restaurantPages.items;
+  const categories = categoryPages.items;
+  const menuSections = useMemo(() => {
+    const sections = new Map<
+      string,
+      { category: MenuCategory | null; items: MenuItem[] }
+    >();
+    for (const row of menuPages.items) {
+      const key = row.category?.id ?? "__uncategorized";
+      if (!sections.has(key))
+        sections.set(key, { category: row.category, items: [] });
+      sections.get(key)!.items.push(row.item);
+    }
+    return [...sections.values()].sort(
+      (a, b) =>
+        (a.category?.sortOrder ?? Infinity) -
+        (b.category?.sortOrder ?? Infinity),
+    );
+  }, [menuPages.items]);
   useEffect(() => {
-    let cancelled = false;
-    setRestaurants([]);
-    delifastApi
-      .restaurants(point)
-      .then((value) => {
-        if (!cancelled) setRestaurants(value);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(messageFor(e));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading("");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [point]);
+    if (menuPages.items.length)
+      setItemCache((cache) => ({
+        ...cache,
+        ...Object.fromEntries(
+          menuPages.items.map(({ item }) => [item.id, item]),
+        ),
+      }));
+  }, [menuPages.items]);
+  const selectRestaurant = (restaurant: RestaurantProfile) => {
+    if (locked || selected?.id === restaurant.id) return;
+    if (selected && selected.id !== restaurant.id && cart.length) {
+      setNotice(
+        "Votre panier est mono-restaurant. Videz-le avant de choisir un autre restaurant.",
+      );
+      return;
+    }
+    setSelected(restaurant);
+    setConfiguring(null);
+    setMenuCategoryId(null);
+    setMenuSearch("");
+    setError("");
+    setNotice("");
+  };
   useEffect(() => {
     let cancelled = false;
     try {
@@ -164,18 +231,25 @@ export default function DelifastPage() {
     };
   }, []);
   useEffect(() => {
-    if (!attempt || !restaurants.length || selected) return;
-    const restored = restaurants.find(
-      (restaurant) => restaurant.id === attempt.payload.restaurantId,
-    );
-    if (restored) {
-      setSelected(restored);
-      setCart(attempt.payload.items);
-      setAddress(attempt.payload.deliveryAddress);
-      if (attempt.payload.deliveryAddress.point)
-        setPoint(attempt.payload.deliveryAddress.point);
-    }
-  }, [attempt, restaurants, selected]);
+    if (!attempt || selected) return;
+    let cancelled = false;
+    delifastApi
+      .restaurantProfile(attempt.payload.restaurantId)
+      .then((profile) => {
+        if (cancelled || !profile) return;
+        setSelected(profile);
+        setCart(attempt.payload.items);
+        setAddress(attempt.payload.deliveryAddress);
+        if (attempt.payload.deliveryAddress.point)
+          setPoint(attempt.payload.deliveryAddress.point);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(messageFor(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt, selected]);
   const refreshOrder = async () => {
     if (!order) return;
     const requestId = ++trackingRequestRef.current;
@@ -238,7 +312,7 @@ export default function DelifastPage() {
     () => cart.reduce((sum, line) => sum + line.quantity, 0),
     [cart],
   );
-  const openConfigurator = (restaurant: Restaurant, item: MenuItem) => {
+  const openConfigurator = (restaurant: RestaurantProfile, item: MenuItem) => {
     if (locked || !item.available) return;
     if (selected && selected.id !== restaurant.id) {
       setNotice(
@@ -365,7 +439,9 @@ export default function DelifastPage() {
       setPoint(saved.point);
       setCheckout(null);
     }
-    setNotice("Adresse sélectionnée. Restaurants et tarifs recalculés par le serveur.");
+    setNotice(
+      "Adresse sélectionnée. Restaurants et tarifs recalculés par le serveur.",
+    );
   };
   const saveAttempt = (value: OrderAttempt) => {
     localStorage.setItem(attemptStorageKey, JSON.stringify(value));
@@ -582,11 +658,44 @@ export default function DelifastPage() {
               <span className="df-kicker">01 · CHOISIR</span>
               <h2>Restaurants partenaires</h2>
             </div>
-            <span>{restaurants.length} adresses démo</span>
+            <span>{restaurants.length} adresses</span>
           </div>
-          {loading === "restaurants" ? (
+          <div className="df-catalog-filters">
+            <label htmlFor="restaurant-search">Rechercher un restaurant</label>
+            <input
+              id="restaurant-search"
+              value={restaurantSearch}
+              placeholder="Nom du restaurant"
+              maxLength={160}
+              onChange={(e) => setRestaurantSearch(e.target.value)}
+            />
+            <label>
+              <input
+                type="checkbox"
+                checked={openOnly}
+                onChange={(e) => setOpenOnly(e.target.checked)}
+              />{" "}
+              Ouverts uniquement
+            </label>
+          </div>
+          {restaurantPages.error && (
+            <div className="df-error" role="alert">
+              {restaurantPages.error}{" "}
+              <button
+                onClick={restaurantPages.retry}
+                disabled={restaurantPages.loading}
+              >
+                Réessayer les restaurants
+              </button>
+            </div>
+          )}
+          {restaurantPages.loading && (
             <p className="df-muted">Chargement des restaurants…</p>
-          ) : (
+          )}
+          {restaurantPages.loaded && !restaurants.length && (
+            <p className="df-muted">Aucun restaurant sur cette page.</p>
+          )}
+          {
             <div className="df-grid">
               {restaurants.map((restaurant) => (
                 <article
@@ -605,79 +714,162 @@ export default function DelifastPage() {
                       </strong>
                     )}
                   </div>
-                  <div className="df-menu">
-                    {(() => {
-                      const groups = new Map<
-                        string,
-                        { name: string; sort: number; items: MenuItem[] }
-                      >();
-                      restaurant.menu
-                        .filter((item) => !item.archived)
-                        .forEach((item) => {
-                          const category = restaurant.categories?.find(
-                            (c) => c.id === item.categoryId && !c.archived,
-                          );
-                          const key = category?.id ?? "__none";
-                          const group = groups.get(key) ?? {
-                            name: category?.name ?? "Sans catégorie",
-                            sort: category?.sortOrder ?? 999999,
-                            items: [],
-                          };
-                          group.items.push(item);
-                          groups.set(key, group);
-                        });
-                      return [...groups.values()]
-                        .sort((a, b) => a.sort - b.sort)
-                        .map((group) => (
-                          <div className="df-category" key={group.name}>
-                            <h4>{group.name}</h4>
-                            {group.items.map((item) => (
-                              <div
-                                className={`df-item ${!item.available ? "unavailable" : ""}`}
-                                key={item.id}
-                              >
-                                <div>
-                                  <strong>{item.name}</strong>
-                                  <small>{item.description}</small>
-                                  <span>
-                                    {formatXof(item.priceXof)}
-                                    {item.optionGroups?.length
-                                      ? " · options"
-                                      : ""}
-                                  </span>
-                                </div>
-                                <button
-                                  aria-label={
-                                    item.optionGroups?.length
-                                      ? `Configurer ${item.name}`
-                                      : `Ajouter ${item.name}`
-                                  }
-                                  disabled={
-                                    !item.available ||
-                                    restaurant.open === false ||
-                                    locked
-                                  }
-                                  onClick={() =>
-                                    openConfigurator(restaurant, item)
-                                  }
-                                >
-                                  {restaurant.open === false
-                                    ? "Fermé"
-                                    : item.available
-                                      ? item.optionGroups?.length
-                                        ? "Configurer"
-                                        : "+"
-                                      : "Indisponible"}
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        ));
-                    })()}
-                  </div>
+                  <button
+                    className="df-secondary"
+                    onClick={() => selectRestaurant(restaurant)}
+                    disabled={locked}
+                  >
+                    {selected?.id === restaurant.id
+                      ? "Restaurant sélectionné"
+                      : "Voir le menu"}
+                  </button>
                 </article>
               ))}
             </div>
+          }
+          {restaurantPages.cursor && (
+            <button
+              className="df-secondary"
+              disabled={restaurantPages.loading}
+              onClick={restaurantPages.more}
+            >
+              Charger plus de restaurants
+            </button>
+          )}
+          {selected && (
+            <section
+              aria-label={`Menu de ${selected.name}`}
+              className="df-menu"
+            >
+              <div className="df-section-head">
+                <div>
+                  <span className="df-kicker">MENU</span>
+                  <h2>{selected.name}</h2>
+                </div>
+              </div>
+              <div className="df-catalog-filters">
+                <label htmlFor="menu-search">Rechercher un plat</label>
+                <input
+                  id="menu-search"
+                  value={menuSearch}
+                  placeholder="Nom du plat"
+                  maxLength={160}
+                  onChange={(e) => setMenuSearch(e.target.value)}
+                />
+                <label htmlFor="menu-category">Catégorie</label>
+                <select
+                  id="menu-category"
+                  value={menuCategoryId ?? ""}
+                  onChange={(e) => setMenuCategoryId(e.target.value || null)}
+                >
+                  <option value="">Toutes les catégories</option>
+                  <option value="__uncategorized">Autres</option>
+                  {categories
+                    .filter((c) => !c.archived)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                </select>
+                {categoryPages.loading && (
+                  <p className="df-muted">Chargement des catégories…</p>
+                )}
+                {categoryPages.error && (
+                  <div className="df-error" role="alert">
+                    {categoryPages.error}{" "}
+                    <button
+                      onClick={categoryPages.retry}
+                      disabled={categoryPages.loading}
+                    >
+                      Réessayer les catégories
+                    </button>
+                  </div>
+                )}
+                {categoryPages.cursor && (
+                  <button
+                    className="df-secondary"
+                    disabled={categoryPages.loading}
+                    onClick={categoryPages.more}
+                  >
+                    Charger plus de catégories
+                  </button>
+                )}
+              </div>
+              {menuPages.error && (
+                <div className="df-error" role="alert">
+                  {menuPages.error}{" "}
+                  <button
+                    onClick={menuPages.retry}
+                    disabled={menuPages.loading}
+                  >
+                    Réessayer le menu
+                  </button>
+                </div>
+              )}
+              {menuPages.loaded && !menuSections.length && (
+                <p className="df-muted">Aucun plat pour ces filtres.</p>
+              )}
+              {menuPages.loading && !menuSections.length ? (
+                <p className="df-muted">Chargement du menu…</p>
+              ) : (
+                menuSections.map((section, index) => (
+                  <div
+                    className="df-category"
+                    key={section.category?.id ?? `none-${index}`}
+                  >
+                    <h4>{section.category?.name ?? "Sans catégorie"}</h4>
+                    {section.items
+                      .filter((item) => !item.archived)
+                      .map((item) => (
+                        <div
+                          className={`df-item ${!item.available ? "unavailable" : ""}`}
+                          key={item.id}
+                        >
+                          <div>
+                            <strong>{item.name}</strong>
+                            <small>{item.description}</small>
+                            <span>
+                              {formatXof(item.priceXof)}
+                              {item.optionGroups?.length ? " · options" : ""}
+                            </span>
+                          </div>
+                          <button
+                            aria-label={
+                              item.optionGroups?.length
+                                ? `Configurer ${item.name}`
+                                : `Ajouter ${item.name}`
+                            }
+                            disabled={
+                              !item.available ||
+                              selected.open === false ||
+                              locked
+                            }
+                            onClick={() => openConfigurator(selected, item)}
+                          >
+                            {selected.open === false
+                              ? "Fermé"
+                              : item.available
+                                ? item.optionGroups?.length
+                                  ? "Configurer"
+                                  : "+"
+                                : "Indisponible"}
+                          </button>
+                        </div>
+                      ))}
+                  </div>
+                ))
+              )}
+              {menuPages.cursor && (
+                <button
+                  className="df-secondary"
+                  disabled={menuPages.loading}
+                  onClick={menuPages.more}
+                >
+                  Charger plus de plats
+                </button>
+              )}
+            </section>
           )}
         </div>
         <aside className="df-cart">
@@ -717,9 +909,7 @@ export default function DelifastPage() {
             <>
               <div className="df-cart-lines">
                 {cart.map((line) => {
-                  const item = selected?.menu.find(
-                    (entry) => entry.id === line.menuItemId,
-                  );
+                  const item = itemCache[line.menuItemId];
                   return item ? (
                     <div
                       className="df-cart-line"
@@ -782,7 +972,15 @@ export default function DelifastPage() {
                         </button>
                       </div>
                     </div>
-                  ) : null;
+                  ) : (
+                    <div
+                      className="df-cart-line"
+                      key={canonicalCartLineKey(line)}
+                    >
+                      <strong>{line.menuItemId}</strong>
+                      <span>{line.quantity} × · détails hors page</span>
+                    </div>
+                  );
                 })}
               </div>
               <button
@@ -1014,7 +1212,13 @@ export default function DelifastPage() {
     </main>
   );
 }
-function Header({ cartCount, onChooseAddress }: { cartCount: number; onChooseAddress: (address: DeliveryAddress) => void }) {
+function Header({
+  cartCount,
+  onChooseAddress,
+}: {
+  cartCount: number;
+  onChooseAddress: (address: DeliveryAddress) => void;
+}) {
   return (
     <header className="df-header">
       <a className="df-brand" href="/delifast">

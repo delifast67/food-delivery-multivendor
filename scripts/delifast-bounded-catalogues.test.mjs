@@ -78,3 +78,19 @@ test('le rôle restaurant ne recharge aucune collection imbriquée dans son prof
   assert.doesNotMatch(ui, /delifastApi\.operationsRestaurants\(/);
   assert.doesNotMatch(ui, /restaurant\?\.(menu|categories)/);
 });
+
+test('le catalogue public Web utilise uniquement les pages serveur et un profil sans collections', () => {
+  const api = readFileSync(new URL('../enatega-multivendor-web/lib/delifast/api.ts', import.meta.url), 'utf8');
+  const paths = execFileSync('git', ['ls-files', '-z', 'enatega-multivendor-web/app/delifast'], { cwd: root }).toString().split('\0').filter(path => /\.[jt]sx?$/.test(path) && !/\.(test|spec)\./.test(path));
+  for (const path of paths) {
+    const text = readFileSync(new URL('../' + path, import.meta.url), 'utf8');
+    assert.doesNotMatch(text, /delifastApi\s*\.\s*(restaurants|restaurant)\s*\(/, path);
+  }
+  for (const field of ['publicRestaurantPage', 'publicMenuPage', 'publicMenuCategoryPage']) {
+    assert.match(api, new RegExp(`${field}\\([^\\n]+limit: 20,`));
+  }
+  const profile = api.match(/const RESTAURANT_PROFILE = `([^`]+)`/)[1];
+  const restaurants = api.match(/const PUBLIC_RESTAURANT_PAGE = `([^`]+)`/)[1];
+  assert.doesNotMatch(profile, /\b(menu|categories)\s*\{/);
+  assert.doesNotMatch(restaurants, /\b(menu|categories)\s*\{/);
+});
