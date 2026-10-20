@@ -28,6 +28,8 @@ export async function POST(request: NextRequest) {
         },
         body,
         cache: 'no-store',
+        // Never forward GraphQL bodies or sessions to a redirected destination.
+        redirect: 'error',
         signal: AbortSignal.timeout(10000),
       }
     );

@@ -24,6 +24,8 @@ export async function POST(request: NextRequest) {
       },
       body,
       cache: "no-store",
+      // Never forward GraphQL bodies or sessions to a redirected destination.
+      redirect: "error",
     });
     return new NextResponse(await upstream.text(), {
       status: upstream.status,

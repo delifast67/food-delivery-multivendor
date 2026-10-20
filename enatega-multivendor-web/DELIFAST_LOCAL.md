@@ -22,4 +22,8 @@ npm test -- --run lib/delifast/api.test.ts
 npm run build
 ```
 
-Le mode local utilise un layout minimal: pas de providers legacy, Clarity, emailjs, favicons externes ni font Google réseau.
+Delifast n’hérite pas des providers historiques : son layout et le layout racine ne chargent ni Firebase, ni Clarity, ni EmailJS. Les deux scripts externes autrefois présents à la racine sont maintenant confinés au layout du groupe historique `(localized)`, inaccessible par le routage local normal. Les polices sont embarquées ; le thème reste géré localement. Les gardes `node --test ../scripts/delifast-web-config.test.mjs` couvrent cette séparation.
+
+Le proxy refuse les redirections de l’API (`redirect: "error"`) et renvoie 502 sans suivre une seconde destination. Le test `node --test ../scripts/delifast-proxy-boundary.test.mjs` couvre les réponses directes, les échecs et de vraies redirections HTTP sur boucle locale. Une destination distante définie explicitement dans `DELIFAST_API_URL` n’est toutefois pas bloquée par une allowlist.
+
+Les anciens workers publics et les configurations natives ne sont pas supprimés ; un worker déjà enregistré peut survivre à ce changement de layout. La CSP conserve des autorisations de destinations larges. Le [relevé des dépendances hébergées](../README_DELIFAST_LOCAL.md#dépendances-hébergées-et-firebase--vérification-du-code-local) précise les fonctions inactives dans le parcours local et les décisions externes restant à prendre.
