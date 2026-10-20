@@ -13,14 +13,31 @@ const native = Object.fromEntries(['ActivityIndicator', 'Button', 'FlatList', 'K
 native.FlatList = ({ data = [], renderItem, ListEmptyComponent }) => React.createElement('FlatList', null, data.length ? data.map((item, index) => React.createElement(React.Fragment, { key: item.id || index }, renderItem({ item, index }))) : ListEmptyComponent)
 native.Platform = { OS: 'ios' }
 native.StyleSheet = { create: x => x }
-const source = babel.transformSync(fs.readFileSync(path.join(__dirname, 'App.js'), 'utf8'), {
-  configFile: false, babelrc: false,
-  plugins: [require.resolve('@babel/plugin-transform-react-jsx'), require.resolve('@babel/plugin-transform-modules-commonjs')]
-}).code
-const moduleMock = { exports: {} }
-const requireMock = name => name === 'react-native' ? native : name === 'expo-secure-store' ? {} : name === 'expo-crypto' ? { randomUUID: () => require('node:crypto').randomUUID(), CryptoDigestAlgorithm: { SHA256: 'sha256' }, digestStringAsync: async (algorithm, value) => require('node:crypto').createHash(algorithm).update(value).digest('hex') } : require(name)
-new Function('require', 'module', 'exports', source)(requireMock, moduleMock, moduleMock.exports)
-const App = moduleMock.exports.default
+const backListeners = new Set()
+native.BackHandler = { addEventListener: (name, listener) => { assert.equal(name, 'hardwareBackPress'); backListeners.add(listener); return { remove: () => backListeners.delete(listener) } } }
+const modules = new Map()
+function loadLocal(file) {
+  if (modules.has(file)) return modules.get(file).exports
+  const moduleMock = { exports: {} }
+  modules.set(file, moduleMock)
+  const source = babel.transformSync(fs.readFileSync(file, 'utf8'), {
+    configFile: false, babelrc: false,
+    plugins: [require.resolve('@babel/plugin-transform-react-jsx'), require.resolve('@babel/plugin-transform-modules-commonjs')]
+  }).code
+  const requireMock = name => {
+    if (name === 'react-native') return native
+    if (name === 'react-native-safe-area-context') return { SafeAreaProvider: ({ children }) => React.createElement('SafeAreaProvider', null, children), SafeAreaView: 'SafeAreaView', useSafeAreaInsets: () => ({ top: 24, bottom: 20, left: 0, right: 0 }) }
+    if (name === 'expo-secure-store') return {}
+    if (name === 'expo-crypto') return { randomUUID: () => require('node:crypto').randomUUID(), CryptoDigestAlgorithm: { SHA256: 'sha256' }, digestStringAsync: async (algorithm, value) => require('node:crypto').createHash(algorithm).update(value).digest('hex') }
+    if (name.startsWith('.')) return loadLocal(require.resolve(path.resolve(path.dirname(file), name)))
+    return require(name)
+  }
+  new Function('require', 'module', 'exports', source)(requireMock, moduleMock, moduleMock.exports)
+  return moduleMock.exports
+}
+const App = loadLocal(path.join(__dirname, 'App.js')).default
+// Exercer le composant de bouton lui-même, pas un remplacement de sa logique.
+const buttons = tree => tree.root.findAll(node => typeof node.props.title === 'string' && typeof node.props.onPress === 'function' && (node.type === 'Button' || typeof node.type === 'function'))
 const text = node => typeof node === 'string' ? node : node?.children?.map(text).join(' ') || ''
 const treeText = tree => text(tree.toJSON())
 const restaurant = { id: 'r1', name: 'Restaurant fictif', description: 'Menu test', open: true, categories: [{ id: 'cat', name: 'Repas', sortOrder: 0 }], menu: [{ id: 'plat', name: 'Riz test', description: 'Fictif', priceXof: 1000, available: true, categoryId: 'cat', optionGroups: [] }] }
@@ -35,7 +52,7 @@ async function mount (client = api(), storage = memory()) {
   return tree
 }
 async function press (tree, title, type = 'Button') {
-  const button = tree.root.findAllByType(type).find(node => type === 'Button' ? node.props.title === title : text(node).includes(title))
+  const button = (type === 'Button' ? buttons(tree) : tree.root.findAllByType(type)).find(node => type === 'Button' ? node.props.title === title : text(node).includes(title))
   assert.ok(button, `Contrôle manquant : ${title}`)
   await renderer.act(async () => { await button.props.onPress() })
 }
@@ -149,7 +166,7 @@ test('compte mobile : le délai de renvoi vient du challenge et changer de tél�
   await press(tree, 'Compte', 'TouchableOpacity')
   await renderer.act(async () => { tree.root.findByType('TextInput').props.onChangeText('+22670123456') })
   await press(tree, 'Demander un code')
-  const resend = tree.root.findAllByType('Button').find(node => /Renvoyer dans/.test(node.props.title))
+  const resend = buttons(tree).find(node => /Renvoyer dans/.test(node.props.title))
   assert.ok(resend)
   assert.equal(resend.props.disabled, true)
   await renderer.act(async () => { await resend.props.onPress() })
@@ -252,7 +269,7 @@ test('support : formulaire borné, création confirmée seulement après répons
   const tree = await supportMount({ customerSupportTickets: async () => [], createSupportTicket: async value => { input = value; return { ...supportTicket, subject: value.subject, description: value.description } } })
   await press(tree, 'Compte', 'TouchableOpacity'); await press(tree, 'Mes tickets de support')
   assert.match(treeText(tree), /Aucun ticket sur cette page/)
-  assert.equal(tree.root.findAllByType('Button').find(node => node.props.title === 'Créer le ticket').props.disabled, true)
+  assert.equal(buttons(tree).find(node => node.props.title === 'Créer le ticket').props.disabled, true)
   const fields = tree.root.findAllByType('TextInput')
   assert.deepEqual(fields.map(node => node.props.maxLength), [120, 4000])
   await editSupport(tree, 'Sujet du ticket', ' Nouveau sujet ')
@@ -314,10 +331,10 @@ test('support : aucune création optimiste pendant une réponse serveur en atten
   await press(tree, 'Compte', 'TouchableOpacity'); await press(tree, 'Mes tickets de support')
   await editSupport(tree, 'Sujet du ticket', 'Sujet non confirmé')
   await editSupport(tree, 'Description du ticket', 'Demande fictive')
-  await renderer.act(async () => { void tree.root.findAllByType('Button').find(node => node.props.title === 'Créer le ticket').props.onPress() })
+  await renderer.act(async () => { void buttons(tree).find(node => node.props.title === 'Créer le ticket').props.onPress() })
   assert.doesNotMatch(treeText(tree), /Référence :/)
   assert.ok(tree.root.findAllByType('TextInput').every(node => node.props.editable === false))
-  const retry = tree.root.findAllByType('Button').find(node => node.props.title === 'Reprendre le ticket')
+  const retry = buttons(tree).find(node => node.props.title === 'Reprendre le ticket')
   if (retry) assert.equal(retry.props.disabled, true)
   await renderer.act(async () => { finish({ ...supportTicket, subject: 'Sujet confirmé par API' }); await delayed })
   assert.match(treeText(tree), /Sujet confirmé par API/)
@@ -336,7 +353,7 @@ async function mountTracking(client) {
 test('paiement mobile indisponible : aucun bouton payer ni faux succès', async () => {
   const tree = await mountTracking(api({ paymentSession: async () => { throw Object.assign(new Error('Paiement indisponible'), { code: 'PAYMENT_DISABLED' }) } }))
   assert.match(treeText(tree), /Paiement indisponible/)
-  assert.equal(tree.root.findAllByType('Button').some(n => /^Payer avec/.test(n.props.title)), false)
+  assert.equal(buttons(tree).some(n => /^Payer avec/.test(n.props.title)), false)
   assert.doesNotMatch(treeText(tree), /Paiement confirmé par le serveur/)
   await unmount(tree)
 })
@@ -344,7 +361,7 @@ test('paiement mobile sandbox complété : avertissement non réel et aucun nouv
   const tree = await mountTracking(api({ paymentSession: async () => paymentFixture({ mode: 'test', providerStatus: 'completed', checkoutUrl: null }) }))
   assert.match(treeText(tree), /il ne confirme pas un paiement réel/)
   assert.doesNotMatch(treeText(tree), /Paiement confirmé par le serveur/)
-  assert.equal(tree.root.findAllByType('Button').some(n => /^Payer avec/.test(n.props.title)), false)
+  assert.equal(buttons(tree).some(n => /^Payer avec/.test(n.props.title)), false)
   await unmount(tree)
 })
 test('paiement mobile ouverture explicite seulement puis confirmation par le serveur', async () => {
@@ -358,4 +375,196 @@ test('paiement mobile ouverture explicite seulement puis confirmation par le ser
   await press(tree, 'Vérifier le statut serveur')
   assert.match(treeText(tree), /Paiement confirmé par le serveur/)
   await unmount(tree)
+})
+
+// Navigation applicative : primitives simulées, vrais hooks et contrôleurs.
+const tabs = tree => tree.root.findAll(node => node.type === 'TouchableOpacity' && node.props.accessibilityRole === 'tab')
+async function selectTab(tree, label) {
+  const tab = tabs(tree).find(node => (node.props.accessibilityLabel || text(node)).startsWith(label))
+  assert.ok(tab, `Onglet manquant : ${label}`)
+  await renderer.act(async () => { await tab.props.onPress() })
+}
+async function hardwareBack() {
+  let handled = false
+  await renderer.act(async () => {
+    for (const listener of [...backListeners].reverse()) {
+      if (listener()) { handled = true; break }
+    }
+  })
+  return handled
+}
+
+test('navigation basse : quatre destinations accessibles et sélection cohérente', async () => {
+  const tree = await mount()
+  assert.equal(tabs(tree).length, 4)
+  for (const label of ['Panier', 'Commandes', 'Compte', 'Accueil']) {
+    await selectTab(tree, label)
+    const selected = tabs(tree).filter(node => node.props.accessibilityState?.selected)
+    assert.equal(selected.length, 1)
+    assert.ok((selected[0].props.accessibilityLabel || text(selected[0])).startsWith(label))
+  }
+  assert.match(treeText(tree), /Restaurant fictif/)
+  await unmount(tree)
+})
+
+test('navigation basse : panier vide accessible sans restaurant et retour sûr', async () => {
+  native.Platform.OS = 'android'
+  const tree = await mount()
+  try {
+    await selectTab(tree, 'Panier')
+    assert.match(treeText(tree), /panier est vide/i)
+    assert.equal(await hardwareBack(), true)
+    assert.match(treeText(tree), /Restaurant fictif/)
+    assert.equal(await hardwareBack(), false)
+  } finally { await unmount(tree); native.Platform.OS = 'ios' }
+})
+
+test('navigation basse : onglet Compte conserve le téléphone et OTP sans autre connexion', async () => {
+  const tree = await mount()
+  await selectTab(tree, 'Compte')
+  assert.match(treeText(tree), /Connexion par téléphone/)
+  assert.equal(tree.root.findAllByType('TextInput').length, 1)
+  assert.doesNotMatch(treeText(tree), /Connexion avec Google|Connexion avec Facebook|Mot de passe/i)
+  await unmount(tree)
+})
+
+test('navigation basse : dernière commande restaurée suivie sans exposer son jeton', async () => {
+  const storage = memory()
+  await storage.setItem('delifast-last-order', JSON.stringify({ id: order.id, accessToken: order.accessToken }))
+  const tree = await mount(api(), storage)
+  await selectTab(tree, 'Commandes')
+  assert.match(treeText(tree), /order-test/)
+  assert.doesNotMatch(treeText(tree), /never-show-this-token/)
+  await press(tree, 'Actualiser le suivi')
+  assert.match(treeText(tree), /PAYMENT_PENDING/)
+  assert.doesNotMatch(treeText(tree), /never-show-this-token/)
+  await unmount(tree)
+})
+
+test('retour Android : ferme la configuration avant de quitter le menu', async () => {
+  native.Platform.OS = 'android'
+  const tree = await mount()
+  try {
+    await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+    await press(tree, 'Riz test', 'TouchableOpacity')
+    assert.ok(buttons(tree).some(node => node.props.title === 'Ajouter au panier'))
+    assert.equal(await hardwareBack(), true)
+    assert.equal(buttons(tree).some(node => node.props.title === 'Ajouter au panier'), false)
+    assert.match(treeText(tree), /Riz test/)
+    assert.equal(await hardwareBack(), true)
+    assert.match(treeText(tree), /Restaurants/)
+    assert.equal(await hardwareBack(), false)
+  } finally { await unmount(tree); native.Platform.OS = 'ios' }
+})
+
+test('retour Android : support vers compte puis accueil et nettoyage du listener', async () => {
+  native.Platform.OS = 'android'
+  const before = backListeners.size
+  const tree = await supportMount()
+  try {
+    await selectTab(tree, 'Compte')
+    await press(tree, 'Mes tickets de support')
+    assert.match(treeText(tree), /Créer un ticket/)
+    assert.equal(await hardwareBack(), true)
+    assert.match(treeText(tree), /Profil client/)
+    assert.equal(await hardwareBack(), true)
+    assert.match(treeText(tree), /Restaurant fictif/)
+  } finally { await unmount(tree); native.Platform.OS = 'ios' }
+  assert.equal(backListeners.size, before)
+})
+
+test('navigation basse : un panier existant et son devis survivent au changement d’onglet', async () => {
+  const tree = await mount()
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  await press(tree, 'Riz test', 'TouchableOpacity')
+  await press(tree, 'Ajouter au panier')
+  await selectTab(tree, 'Compte')
+  await selectTab(tree, 'Panier')
+  assert.match(treeText(tree), /Riz test/)
+  assert.match(treeText(tree), /Total serveur/)
+  assert.match(treeText(tree).replace(/[\u202f\u00a0 ]/g, ''), /1700XOF/)
+  await unmount(tree)
+})
+
+test('navigation basse : la reprise incertaine ne débloque jamais les restaurants', async () => {
+  const storage = memory()
+  await storage.setItem('delifast-order-attempt', JSON.stringify({ idempotencyKey: 'key-tabs-locked', payload: { restaurantId: 'r1', items: [{ menuItemId: 'plat', quantity: 1, selections: [] }], deliveryAddress: address } }))
+  const tree = await mount(api(), storage)
+  await selectTab(tree, 'Commandes')
+  assert.ok(buttons(tree).some(node => /Réessayer|Reprendre/.test(node.props.title)))
+  await selectTab(tree, 'Compte')
+  await selectTab(tree, 'Accueil')
+  const restaurantButton = tree.root.findAllByType('TouchableOpacity').find(node => text(node).includes('Restaurant fictif'))
+  assert.equal(restaurantButton.props.disabled, true)
+  await unmount(tree)
+})
+
+test('boutons tactiles : rôle, état désactivé et absence de handler actif', async () => {
+  const tree = await mount()
+  await selectTab(tree, 'Compte')
+  const button = tree.root.findAllByType('TouchableOpacity').find(node => node.props.accessibilityLabel === 'Demander un code')
+  assert.equal(button.props.accessibilityRole, 'button')
+  assert.deepEqual(button.props.accessibilityState, { disabled: false })
+  assert.equal(typeof button.props.onPress, 'function')
+  await unmount(tree)
+  const supportTree = await supportMount()
+  await selectTab(supportTree, 'Compte')
+  await press(supportTree, 'Mes tickets de support')
+  const disabled = supportTree.root.findAllByType('TouchableOpacity').find(node => node.props.accessibilityLabel === 'Créer le ticket')
+  assert.equal(disabled.props.disabled, true)
+  assert.equal(disabled.props.accessibilityState.disabled, true)
+  assert.equal(disabled.props.onPress, undefined)
+  assert.ok(disabled.props.style[0].minHeight >= 48)
+  await unmount(supportTree)
+})
+
+test('structure native : fournisseur de zones système et formulaire compte adapté au clavier', async () => {
+  const tree = await mount()
+  assert.equal(tree.root.findAllByType('SafeAreaProvider').length, 1)
+  assert.equal(tree.root.findAllByType('SafeAreaView').length, 1)
+  await selectTab(tree, 'Compte')
+  const keyboard = tree.root.findByType('KeyboardAvoidingView')
+  assert.equal(keyboard.props.behavior, 'padding')
+  assert.equal(tree.root.findByType('ScrollView').props.keyboardShouldPersistTaps, 'handled')
+  await unmount(tree)
+})
+
+test('commandes : une référence locale seule ne devient jamais un statut serveur inventé', async () => {
+  const storage = memory()
+  await storage.setItem('delifast-last-order', JSON.stringify({ id: order.id, accessToken: order.accessToken }))
+  const tree = await mount(api(), storage)
+  await selectTab(tree, 'Commandes')
+  assert.match(treeText(tree), /order-test/)
+  assert.doesNotMatch(treeText(tree), /PAYMENT_PENDING|PENDING|Livrée|Payée/)
+  await unmount(tree)
+})
+
+test('navigation : le menu garde Accueil sélectionné et quitter efface la configuration', async () => {
+  const tree = await mount()
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  assert.ok(tabs(tree).find(node => node.props.accessibilityLabel === 'Accueil').props.accessibilityState.selected)
+  await press(tree, 'Riz test', 'TouchableOpacity')
+  await selectTab(tree, 'Compte')
+  await selectTab(tree, 'Accueil')
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  assert.equal(buttons(tree).some(node => node.props.title === 'Ajouter au panier'), false)
+  await unmount(tree)
+})
+
+test('retour Android : suivi vers Commandes sans appel de paiement ou nouvelle commande', async () => {
+  native.Platform.OS = 'android'
+  let submitted = 0
+  let paid = 0
+  const storage = memory()
+  await storage.setItem('delifast-last-order', JSON.stringify({ id: order.id, accessToken: order.accessToken }))
+  const tree = await mount(api({ placeOrder: async () => { submitted++; return order }, startPayment: async () => { paid++; throw new Error('Interdit') } }), storage)
+  try {
+    await selectTab(tree, 'Commandes')
+    await press(tree, 'Actualiser le suivi')
+    assert.ok(tabs(tree).find(node => node.props.accessibilityLabel === 'Commandes').props.accessibilityState.selected)
+    assert.equal(await hardwareBack(), true)
+    assert.match(treeText(tree), /Aucun historique serveur complet/)
+    assert.equal(submitted, 0)
+    assert.equal(paid, 0)
+  } finally { await unmount(tree); native.Platform.OS = 'ios' }
 })

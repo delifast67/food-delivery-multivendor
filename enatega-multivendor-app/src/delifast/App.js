@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import * as SecureStore from 'expo-secure-store'
 import * as Crypto from 'expo-crypto'
-import { ActivityIndicator, AppState, Button, FlatList, KeyboardAvoidingView, Linking, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { ActivityIndicator, AppState, BackHandler, FlatList, KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { createClient } from './api'
 import { createController } from './controller'
 import { createSecureStorage } from './secure-storage'
@@ -58,6 +59,29 @@ function Header({ title, onBack, right }) {
   )
 }
 
+function AppButton({ title, onPress, disabled, color }) {
+  return <TouchableOpacity accessibilityRole='button' accessibilityLabel={title} accessibilityState={{ disabled: !!disabled }} disabled={!!disabled} onPress={disabled ? undefined : onPress} activeOpacity={0.75} style={[styles.button, disabled && styles.buttonDisabled]}>
+    <Text style={[styles.buttonText, color && { color }]}>{title}</Text>
+  </TouchableOpacity>
+}
+
+function BottomTabs({ current, onNavigate, cartCount }) {
+  const active = ({ menu: 'restaurants', tracking: 'orders' })[current] || current
+  const tabs = [
+    ['restaurants', 'Accueil'],
+    ['cart', `Panier${cartCount ? ` (${cartCount})` : ''}`],
+    ['orders', 'Commandes'],
+    ['account', 'Compte']
+  ]
+  return <View style={styles.bottomTabs} accessibilityRole='tablist'>
+    {tabs.map(([target, label]) => <TouchableOpacity key={target} accessibilityRole='tab' accessibilityLabel={target === 'cart' ? 'Panier' : label} accessibilityState={{ selected: active === target }} style={[styles.tab, active === target && styles.tabActive]} onPress={() => onNavigate(target)}>
+      <Text style={[styles.tabText, active === target && styles.tabTextActive]}>{label}</Text>
+    </TouchableOpacity>)}
+  </View>
+}
+
+const BRAND = { primary: '#90E36D', onPrimary: '#10200A', background: '#F7FBF5', muted: '#536451', border: '#DCE8D8' }
+
 function App({ api, storage }) {
   const resolvedStorage = useMemo(() => storage || createSecureStorage(SecureStore), [storage])
   const [state, setState] = useState(null)
@@ -93,6 +117,21 @@ function App({ api, storage }) {
   }, [challenge])
 
   useEffect(() => {
+    if (!BackHandler || typeof BackHandler.addEventListener !== 'function') return undefined
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (selected) { setSelected(null); return true }
+      const target = {
+        support: 'account', tracking: 'orders', menu: 'restaurants',
+        cart: state?.restaurant ? 'menu' : 'restaurants', address: 'cart',
+        account: 'restaurants', orders: 'restaurants'
+      }[screen]
+      if (target) { setScreen(target); return true }
+      return false
+    })
+    return () => subscription && subscription.remove()
+  }, [screen, selected, state?.restaurant])
+
+  useEffect(() => {
     if (screen !== 'tracking' || !state?.order || !controller.loadPaymentSession) return undefined
     controller.loadPaymentSession().catch(() => {})
     if (!AppState || typeof AppState.addEventListener !== 'function') return undefined
@@ -123,6 +162,7 @@ function App({ api, storage }) {
   const restaurant = state.restaurant
   const pending = state.pending
   const lastOrder = state.lastOrder
+  const navigate = target => { setSelected(null); setLocalError(''); setScreen(target) }
 
   const openRestaurant = async(item) => {
     if (item.open === false) return
@@ -172,7 +212,7 @@ function App({ api, storage }) {
             </TouchableOpacity>
           }
         />
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
           <Text style={styles.title}>Restaurants</Text>
           <Text style={styles.subtitle}>Démonstration locale — aucun paiement disponible.</Text>
           <Text style={styles.warning}>Démonstration locale : aucun paiement réel ni paiement à la livraison n’est disponible.</Text>
@@ -182,7 +222,7 @@ function App({ api, storage }) {
             <View style={styles.notice}>
               <Text style={styles.noticeTitle}>Commande en attente</Text>
               <Text>Une tentative est enregistrée sur cet appareil.</Text>
-              <Button
+              <AppButton
                 title='Réessayer'
                 onPress={async() => {
                   setLocalError('')
@@ -201,7 +241,7 @@ function App({ api, storage }) {
             <View style={styles.notice}>
               <Text style={styles.noticeTitle}>Dernière commande</Text>
               <Text>Référence : {lastOrder.id}</Text>
-              <Button title='Actualiser le suivi' onPress={trackLast} disabled={state.busy} />
+              <AppButton title='Actualiser le suivi' onPress={trackLast} disabled={state.busy} />
             </View>
           )}
           <FlatList
@@ -226,8 +266,23 @@ function App({ api, storage }) {
             </TouchableOpacity>
           )}
         </ScrollView>
+        <BottomTabs current={screen} onNavigate={navigate} cartCount={cartCount} />
       </SafeAreaView>
     )
+  }
+
+  if (screen === 'orders') {
+    return <SafeAreaView style={styles.safe}>
+      <Header title='Commandes' onBack={() => setScreen('restaurants')} />
+      <ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
+        <Text style={styles.title}>Commandes</Text>
+        <Text style={styles.subtitle}>Suivi local de la dernière commande et des tentatives en attente. Aucun historique serveur complet n’est affiché ici.</Text>
+        {pending && <View style={styles.notice}><Text style={styles.noticeTitle}>Commande à reprendre</Text><Text>Une tentative est enregistrée sur cet appareil.</Text><AppButton title='Réessayer' onPress={async () => { try { await controller.retryPending(); setScreen('tracking') } catch (e) { setLocalError(errorText(e)) } }} disabled={state.busy || !state.restored} /></View>}
+        {lastOrder ? <View style={styles.card}><Text style={styles.cardTitle}>Dernière commande</Text><Text>Référence : {lastOrder.id}</Text>{(state.order && state.order.id === lastOrder.id) ? <Text style={styles.muted}>{state.order.status || 'Statut serveur indisponible'} · {state.order.paymentStatus || 'Statut de paiement indisponible'}</Text> : <Text style={styles.muted}>Actualisez pour consulter le statut serveur.</Text>}<AppButton title='Actualiser le suivi' onPress={trackLast} disabled={state.busy} /></View> : <Text style={styles.muted}>Aucune commande restaurée.</Text>}
+        {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
+      </ScrollView>
+      <BottomTabs current={screen} onNavigate={navigate} cartCount={cartCount} />
+    </SafeAreaView>
   }
 
   if (screen === 'account') {
@@ -269,32 +324,32 @@ function App({ api, storage }) {
     const verifyOtp = async() => { setLocalError(''); const submitted = otp; setOtp(''); try { await controller.verifyCustomerOtp(challenge.challengeId, submitted); setChallenge(null) } catch (error) { setLocalError(errorText(error)) } }
     const resendOtp = async() => { if (cooldown) return; setLocalError(''); try { const value = expired ? await controller.requestCustomerOtp(loginPhone) : await controller.resendCustomerOtp(challenge.challengeId); const receivedAt = Date.now(); setChallenge({ ...value, receivedAt, expiresAt: receivedAt + Number(value.expiresIn || 0) * 1000, retryAt: receivedAt + Number(value.retryAfter || 0) * 1000 }) } catch (error) { setLocalError(errorText(error)) } }
     const logout = async() => { setLocalError(''); setChallenge(null); setOtp(''); setLoginPhone(''); resetAddress(); try { await controller.logoutCustomer() } catch (error) { setLocalError(errorText(error)) } }
-    return <SafeAreaView style={styles.safe}><Header title='Compte client' onBack={() => setScreen('restaurants')} /><ScrollView contentContainerStyle={styles.content}>
+    return <SafeAreaView style={styles.safe}><Header title='Compte client' onBack={() => setScreen('restaurants')} /><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}><ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
       {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
       {!customer ? <>
         <Text style={styles.sectionTitle}>Connexion par téléphone</Text><Text style={styles.subtitle}>Format E.164 obligatoire : +226 suivi de 8 chiffres. Aucun code n’est affiché ou conservé par l’application.</Text>
         <TextInput style={styles.input} placeholder='+22670000000' value={loginPhone} onChangeText={setLoginPhone} keyboardType='phone-pad' editable={!state.authBusy && !challenge} />
-        {!challenge ? <Button title='Demander un code' disabled={state.authBusy} onPress={requestOtp} /> : <>
+        {!challenge ? <AppButton title='Demander un code' disabled={state.authBusy} onPress={requestOtp} /> : <>
           <Text style={styles.muted}>{expired ? 'Code expiré. Demandez un nouveau code.' : `Code valable encore ${Math.max(0, Math.ceil((expiresAt - otpNow) / 1000))} s.`}</Text>
           <TextInput style={styles.input} placeholder='Code de vérification' value={otp} onChangeText={setOtp} keyboardType='number-pad' editable={!state.authBusy && !expired} secureTextEntry />
-          <Button title='Valider le code' disabled={state.authBusy || expired || !otp} onPress={verifyOtp} />
-          <Button title={cooldown ? `Renvoyer dans ${Math.ceil((retryAt - otpNow) / 1000)} s` : expired ? 'Recommencer' : 'Renvoyer le code'} disabled={state.authBusy || cooldown} onPress={resendOtp} />
-          <Button title='Changer de téléphone' disabled={state.authBusy} onPress={() => { setChallenge(null); setOtp('') }} />
+          <AppButton title='Valider le code' disabled={state.authBusy || expired || !otp} onPress={verifyOtp} />
+          <AppButton title={cooldown ? `Renvoyer dans ${Math.ceil((retryAt - otpNow) / 1000)} s` : expired ? 'Recommencer' : 'Renvoyer le code'} disabled={state.authBusy || cooldown} onPress={resendOtp} />
+          <AppButton title='Changer de téléphone' disabled={state.authBusy} onPress={() => { setChallenge(null); setOtp('') }} />
         </>}
       </> : <>
         <Text style={styles.sectionTitle}>Profil client</Text>
         <Text style={styles.subtitle}>Ces données privées sont utilisées uniquement lorsqu’un paiement les exige. Elles restent en mémoire et ne sont pas enregistrées sur l’appareil.</Text>
         {['firstName', 'lastName', 'email'].map(key => <TextInput key={key} style={styles.input} placeholder={key === 'firstName' ? 'Prénom' : key === 'lastName' ? 'Nom' : 'Email (optionnel)'} keyboardType={key === 'email' ? 'email-address' : 'default'} autoCapitalize={key === 'email' ? 'none' : 'words'} value={profile[key]} onChangeText={value => setProfile({ ...profile, [key]: value })} editable={!profileBusy} />)}
-        <Button title='Enregistrer le profil' disabled={profileBusy} onPress={saveProfile} />
-        <Text style={styles.sectionTitle}>Téléphone : {customer.phone}</Text><Button title='Se déconnecter' disabled={state.authBusy} onPress={logout} />
-        <Button title='Mes tickets de support' disabled={state.authBusy} onPress={() => { setLocalError(''); setScreen('support'); controller.loadSupportTickets().catch(() => {}) }} />
+        <AppButton title='Enregistrer le profil' disabled={profileBusy} onPress={saveProfile} />
+        <Text style={styles.sectionTitle}>Téléphone : {customer.phone}</Text><AppButton title='Se déconnecter' disabled={state.authBusy} onPress={logout} />
+        <AppButton title='Mes tickets de support' disabled={state.authBusy} onPress={() => { setLocalError(''); setScreen('support'); controller.loadSupportTickets().catch(() => {}) }} />
         <Text style={styles.sectionTitle}>Carnet d’adresses</Text>
-        {(state.addresses || []).map(item => <View style={styles.card} key={item.id}><Text style={styles.cardTitle}>{item.recipientName}</Text><Text>{item.city} · {item.neighborhood}</Text><Button title='Utiliser pour la livraison' disabled={addressBusy || !state.restored} onPress={() => chooseAddress(item)} /><Button title='Modifier' disabled={addressBusy} onPress={() => editAddress(item)} /><Button title='Supprimer' disabled={addressBusy} onPress={() => removeAddress(item.id)} /></View>)}
+        {(state.addresses || []).map(item => <View style={styles.card} key={item.id}><Text style={styles.cardTitle}>{item.recipientName}</Text><Text>{item.city} · {item.neighborhood}</Text><AppButton title='Utiliser pour la livraison' disabled={addressBusy || !state.restored} onPress={() => chooseAddress(item)} /><AppButton title='Modifier' disabled={addressBusy} onPress={() => editAddress(item)} /><AppButton title='Supprimer' disabled={addressBusy} onPress={() => removeAddress(item.id)} /></View>)}
         <Text style={styles.sectionTitle}>{editingAddressId ? 'Modifier l’adresse' : 'Ajouter une adresse'}</Text>
         {['recipientName', 'phone', 'city', 'neighborhood', 'landmark', 'instructions'].map(key => <TextInput key={key} style={styles.input} placeholder={key} value={accountAddress[key] || ''} onChangeText={value => setAccountAddress({ ...accountAddress, [key]: value })} editable={!addressBusy} />)}
-        <TextInput style={styles.input} placeholder='Latitude' keyboardType='numeric' editable={!addressBusy} value={String(accountAddress.point.latitude)} onChangeText={value => setAccountAddress({ ...accountAddress, point: { ...accountAddress.point, latitude: Number(value.replace(',', '.')) } })} /><TextInput style={styles.input} placeholder='Longitude' keyboardType='numeric' editable={!addressBusy} value={String(accountAddress.point.longitude)} onChangeText={value => setAccountAddress({ ...accountAddress, point: { ...accountAddress.point, longitude: Number(value.replace(',', '.')) } })} /><Button title={editingAddressId ? 'Enregistrer les modifications' : 'Ajouter cette adresse'} disabled={addressBusy} onPress={saveAddress} />{editingAddressId && <Button title='Annuler la modification' disabled={addressBusy} onPress={resetAddress} />}
+        <TextInput style={styles.input} placeholder='Latitude' keyboardType='numeric' editable={!addressBusy} value={String(accountAddress.point.latitude)} onChangeText={value => setAccountAddress({ ...accountAddress, point: { ...accountAddress.point, latitude: Number(value.replace(',', '.')) } })} /><TextInput style={styles.input} placeholder='Longitude' keyboardType='numeric' editable={!addressBusy} value={String(accountAddress.point.longitude)} onChangeText={value => setAccountAddress({ ...accountAddress, point: { ...accountAddress.point, longitude: Number(value.replace(',', '.')) } })} /><AppButton title={editingAddressId ? 'Enregistrer les modifications' : 'Ajouter cette adresse'} disabled={addressBusy} onPress={saveAddress} />{editingAddressId && <AppButton title='Annuler la modification' disabled={addressBusy} onPress={resetAddress} />}
       </>}
-    </ScrollView></SafeAreaView>
+    </ScrollView></KeyboardAvoidingView><BottomTabs current={screen} onNavigate={navigate} cartCount={cartCount} /></SafeAreaView>
   }
 
   if (screen === 'support') {
@@ -315,11 +370,11 @@ function App({ api, storage }) {
       <SafeAreaView style={styles.safe}>
         <Header title='Mes tickets de support' onBack={() => setScreen('account')} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
-          <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps='handled'>
+          <ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
             <Text style={styles.subtitle}>Démonstration locale. Seuls vos tickets enregistrés sur le serveur sont affichés. Sans chat ni pièces jointes ; aucune notification n’est envoyée.</Text>
             {!state.customer ? <>
               <Text style={styles.warning}>Connexion client requise. Reconnectez-vous pour consulter vos tickets.</Text>
-              <Button title='Aller au compte' onPress={() => setScreen('account')} />
+              <AppButton title='Aller au compte' onPress={() => setScreen('account')} />
             </> : <>
               {state.supportError && <Text accessibilityRole='alert' style={styles.error}>{errorText(state.supportError)}</Text>}
               <Text style={styles.sectionTitle}>Créer un ticket</Text>
@@ -331,17 +386,17 @@ function App({ api, storage }) {
                 <Text style={styles.noticeTitle}>Demande à reprendre</Text>
                 <Text>{attempt.subject || attempt.payload?.subject}</Text>
                 <Text>Le résultat de cette tentative doit être confirmé. Reprenez la même demande pour éviter un doublon.</Text>
-                <Button title='Reprendre le ticket' disabled={locked} onPress={() => sendTicket(true)} />
-              </View> : <Button title={state.supportBusy ? 'Enregistrement en cours…' : 'Créer le ticket'} disabled={locked || !supportSubject.trim() || !supportDescription.trim()} onPress={() => sendTicket()} />}
+                <AppButton title='Reprendre le ticket' disabled={locked} onPress={() => sendTicket(true)} />
+              </View> : <AppButton title={state.supportBusy ? 'Enregistrement en cours…' : 'Créer le ticket'} disabled={locked || !supportSubject.trim() || !supportDescription.trim()} onPress={() => sendTicket()} />}
               <Text style={styles.sectionTitle}>Mes demandes</Text>
-              <Button title='Actualiser les tickets' disabled={locked} onPress={() => controller.loadSupportTickets(page).catch(() => {})} />
+              <AppButton title='Actualiser les tickets' disabled={locked} onPress={() => controller.loadSupportTickets(page).catch(() => {})} />
               {state.supportLoading && <ActivityIndicator color='#1f6f5b' />}
               {!state.supportLoading && !state.supportError && !(state.supportTickets || []).length && <Text style={styles.muted}>Aucun ticket sur cette page.</Text>}
               {(state.supportTickets || []).map(ticket => <View key={ticket.id} style={styles.card}>
                 <Text style={styles.cardTitle}>{ticket.subject}</Text>
                 <Text>{supportStatus(ticket.status)} · Référence : {ticket.id}</Text>
                 <Text style={styles.muted}>Créé le {ticket.createdAt} · Mis à jour le {ticket.updatedAt}</Text>
-                <Button title={expandedTicket === ticket.id ? 'Masquer le détail' : 'Voir le détail'} onPress={() => setExpandedTicket(expandedTicket === ticket.id ? null : ticket.id)} />
+                <AppButton title={expandedTicket === ticket.id ? 'Masquer le détail' : 'Voir le détail'} onPress={() => setExpandedTicket(expandedTicket === ticket.id ? null : ticket.id)} />
                 {expandedTicket === ticket.id && <>
                   <Text>{ticket.description}</Text>
                   <Text style={styles.label}>Historique serveur</Text>
@@ -352,8 +407,8 @@ function App({ api, storage }) {
                 </>}
               </View>)}
               <Text style={styles.muted}>Page {Math.floor(page / 20) + 1} · ordre de création</Text>
-              <Button title='Page précédente' disabled={locked || page === 0} onPress={() => { setExpandedTicket(null); controller.loadSupportTickets(Math.max(0, page - 20)).catch(() => {}) }} />
-              <Button title='Page suivante' disabled={locked || !state.supportHasMore || page >= 10000} onPress={() => { setExpandedTicket(null); controller.loadSupportTickets(page + 20).catch(() => {}) }} />
+              <AppButton title='Page précédente' disabled={locked || page === 0} onPress={() => { setExpandedTicket(null); controller.loadSupportTickets(Math.max(0, page - 20)).catch(() => {}) }} />
+              <AppButton title='Page suivante' disabled={locked || !state.supportHasMore || page >= 10000} onPress={() => { setExpandedTicket(null); controller.loadSupportTickets(page + 20).catch(() => {}) }} />
             </>}
           </ScrollView>
         </KeyboardAvoidingView>
@@ -382,7 +437,7 @@ function App({ api, storage }) {
             </TouchableOpacity>
           }
         />
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
           {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
           {categories.map((category) => (
             <View key={category.id}>
@@ -440,7 +495,7 @@ function App({ api, storage }) {
                     })}
                 </View>
               ))}
-              <Button
+              <AppButton
                 title='Ajouter au panier'
                 onPress={async() => {
                   try {
@@ -453,10 +508,11 @@ function App({ api, storage }) {
                 }}
                 disabled={state.busy || !!pending || !state.restored}
               />
-              <Button title='Annuler' onPress={() => setSelected(null)} />
+              <AppButton title='Annuler' onPress={() => setSelected(null)} />
             </View>
           )}
         </ScrollView>
+        <BottomTabs current={screen} onNavigate={navigate} cartCount={cartCount} />
       </SafeAreaView>
     )
   }
@@ -464,12 +520,12 @@ function App({ api, storage }) {
   if (screen === 'cart') {
     return (
       <SafeAreaView style={styles.safe}>
-        <Header title='Votre panier' onBack={() => setScreen('menu')} />
-        <ScrollView contentContainerStyle={styles.content}>
+        <Header title='Votre panier' onBack={() => setScreen(restaurant ? 'menu' : 'restaurants')} />
+        <ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
           <Text style={styles.subtitle}>Estimation du menu uniquement. Les frais affichés ci-dessous viennent du serveur.</Text>
           {cart.items.length === 0
             ? (
-            <Text style={styles.muted}>Votre panier est vide.</Text>
+            <><Text style={styles.muted}>Votre panier est vide.</Text><AppButton title='Retour à l’accueil' onPress={() => setScreen('restaurants')} /></>
               )
             : (
                 cart.items.map((item, index) => {
@@ -485,7 +541,7 @@ function App({ api, storage }) {
                   </View>
                   {labels.length > 0 && <Text style={styles.muted}>Options sélectionnées : {labels.join(', ')}</Text>}
                   <View style={styles.quantity}>
-                    <Button
+                    <AppButton
                       title='−'
                       onPress={async() => {
                         try {
@@ -497,7 +553,7 @@ function App({ api, storage }) {
                       disabled={state.busy || !!pending || !state.restored}
                     />
                     <Text style={styles.quantityText}>{item.quantity}</Text>
-                    <Button
+                    <AppButton
                       title='+'
                       onPress={async() => {
                         try {
@@ -525,8 +581,8 @@ function App({ api, storage }) {
           {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
           {cart.items.length > 0 && (
             <>
-              <Button title='Actualiser le total' onPress={async() => { setLocalError(''); try { await controller.refreshQuote() } catch (e) { setLocalError(errorText(e)) } }} disabled={state.busy || !!pending || !state.restored} /><Button title='Livrer à cette adresse' onPress={() => setScreen('address')} disabled={state.busy || !!pending || !state.restored || !state.quote} />
-              <Button
+              <AppButton title='Actualiser le total' onPress={async() => { setLocalError(''); try { await controller.refreshQuote() } catch (e) { setLocalError(errorText(e)) } }} disabled={state.busy || !!pending || !state.restored} /><AppButton title='Livrer à cette adresse' onPress={() => setScreen('address')} disabled={state.busy || !!pending || !state.restored || !state.quote} />
+              <AppButton
                 title='Vider le panier pour changer de restaurant'
                 color='#a33'
                 onPress={async() => {
@@ -542,6 +598,7 @@ function App({ api, storage }) {
             </>
           )}
         </ScrollView>
+        <BottomTabs current={screen} onNavigate={navigate} cartCount={cartCount} />
       </SafeAreaView>
     )
   }
@@ -551,11 +608,11 @@ function App({ api, storage }) {
       <SafeAreaView style={styles.safe}>
         <Header title='Adresse de livraison' onBack={() => setScreen('cart')} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
-          <ScrollView contentContainerStyle={styles.content}>
+          <ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
             <Text style={styles.subtitle}>Point de livraison — exemple fictif 12.3714, -1.5197. Les restaurants et frais sont filtrés et calculés par le serveur.</Text>
             <TextInput editable={!state.busy && !pending} style={styles.input} placeholder='Latitude (ex. 12.3714)' value={String(address.point.latitude)} keyboardType='numeric' onChangeText={(value) => setAddress({ ...address, point: { ...address.point, latitude: Number(value.replace(',', '.')) } })} />
             <TextInput editable={!state.busy && !pending} style={styles.input} placeholder='Longitude (ex. -1.5197)' value={String(address.point.longitude)} keyboardType='numeric' onChangeText={(value) => setAddress({ ...address, point: { ...address.point, longitude: Number(value.replace(',', '.')) } })} />
-            <Button title='Recharger les restaurants pour ce point' onPress={async() => { setLocalError(''); try { await controller.setDeliveryPoint(address.point) } catch (e) { setLocalError(errorText(e)) } }} disabled={state.busy || !!pending || !state.restored} />
+            <AppButton title='Recharger les restaurants pour ce point' onPress={async() => { setLocalError(''); try { await controller.setDeliveryPoint(address.point) } catch (e) { setLocalError(errorText(e)) } }} disabled={state.busy || !!pending || !state.restored} />
             {[
               ['recipientName', 'Nom du destinataire'],
               ['phone', 'Téléphone (+226)'],
@@ -568,7 +625,7 @@ function App({ api, storage }) {
             ))}
             {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
             <Text style={styles.warning}>Démonstration locale : aucun paiement réel ni paiement à la livraison n’est disponible.</Text>
-            {state.quote && <Text style={styles.total}>Total serveur : {money(state.quote.total)}</Text>}{state.quote.delivery && <Text style={styles.muted}>Zone : {state.quote.delivery.zoneName} · Livraison : {money(state.quote.delivery.deliveryFee)} · environ {state.quote.delivery.estimatedMinutes} min</Text>}<Button title={state.busy ? 'Envoi en cours…' : 'Envoyer la commande'} onPress={submit} disabled={state.busy || !!pending || !state.restored || !cart.items.length || !state.quote} />
+            {state.quote && <Text style={styles.total}>Total serveur : {money(state.quote.total)}</Text>}{state.quote?.delivery && <Text style={styles.muted}>Zone : {state.quote.delivery.zoneName} · Livraison : {money(state.quote.delivery.deliveryFee)} · environ {state.quote.delivery.estimatedMinutes} min</Text>}<AppButton title={state.busy ? 'Envoi en cours…' : 'Envoyer la commande'} onPress={submit} disabled={state.busy || !!pending || !state.restored || !cart.items.length || !state.quote} />
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -598,14 +655,14 @@ function App({ api, storage }) {
     <SafeAreaView style={styles.safe}>
       <Header
         title='Suivi de commande'
-        onBack={() => setScreen('restaurants')}
+        onBack={() => setScreen('orders')}
         right={
           <TouchableOpacity onPress={trackLast} disabled={state.busy}>
             <Text style={styles.link}>Actualiser</Text>
           </TouchableOpacity>
         }
       />
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
         {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
         {order
           ? (
@@ -622,9 +679,9 @@ function App({ api, storage }) {
               {payment?.status === 'review' && <Text style={styles.warning}>Tentative incertaine : ne repayez pas. Vérifiez l’état serveur.</Text>}
               {payment?.status === 'failure' && <Text style={styles.warning}>Ne créez pas une autre tentative : contactez le marchand pour le rapprochement.</Text>}
               {payment?.status === 'sandbox' && <Text style={styles.warning}>Résultat sandbox reçu : il ne confirme pas un paiement réel.</Text>}
-              {payment?.session?.checkoutUrl && !paymentPaid && payment.status === 'pending' && <Button title='Ouvrir le checkout sécurisé' onPress={openCheckout} disabled={state.paymentBusy} />}
-              {!paymentPaid && payment?.status === 'not_started' && !payment?.session && <>{(!payment.channel || payment.channel === 'ORANGE_MONEY_BF') && <Button title='Payer avec Orange Money' onPress={() => beginPayment('ORANGE_MONEY_BF')} disabled={state.paymentBusy || state.busy} />}{(!payment.channel || payment.channel === 'MOOV_MONEY_BF') && <Button title='Payer avec Moov Money' onPress={() => beginPayment('MOOV_MONEY_BF')} disabled={state.paymentBusy || state.busy} />}</>}
-              {!paymentPaid && <Button title='Vérifier le statut serveur' onPress={confirmPayment} disabled={state.paymentBusy} />}
+              {payment?.session?.checkoutUrl && !paymentPaid && payment.status === 'pending' && <AppButton title='Ouvrir le checkout sécurisé' onPress={openCheckout} disabled={state.paymentBusy} />}
+              {!paymentPaid && payment?.status === 'not_started' && !payment?.session && <>{(!payment.channel || payment.channel === 'ORANGE_MONEY_BF') && <AppButton title='Payer avec Orange Money' onPress={() => beginPayment('ORANGE_MONEY_BF')} disabled={state.paymentBusy || state.busy} />}{(!payment.channel || payment.channel === 'MOOV_MONEY_BF') && <AppButton title='Payer avec Moov Money' onPress={() => beginPayment('MOOV_MONEY_BF')} disabled={state.paymentBusy || state.busy} />}</>}
+              {!paymentPaid && <AppButton title='Vérifier le statut serveur' onPress={confirmPayment} disabled={state.paymentBusy} />}
               {paymentPaid && <Text style={styles.total}>Paiement confirmé par le serveur.</Text>}
             </View>
             <Text style={styles.sectionTitle}>Historique</Text>
@@ -639,53 +696,64 @@ function App({ api, storage }) {
           : (
           <Text style={styles.muted}>Aucune commande restaurée.</Text>
             )}
-        <Button title='Retour aux restaurants' onPress={() => setScreen('restaurants')} />
+        <AppButton title='Retour aux restaurants' onPress={() => setScreen('restaurants')} />
       </ScrollView>
+      <BottomTabs current={screen} onNavigate={navigate} cartCount={cartCount} />
     </SafeAreaView>
   )
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#f7f8f6' },
+  safe: { flex: 1, backgroundColor: BRAND.background },
   flex: { flex: 1 },
   content: { padding: 18, paddingBottom: 40 },
-  header: { minHeight: 58, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#e1e5df', backgroundColor: '#fff' },
+  header: { minHeight: 58, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: BRAND.border, backgroundColor: '#fff' },
   back: { width: 82 },
-  backText: { color: '#1f6f5b', fontWeight: '600' },
-  headerTitle: { flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '700', color: '#18231e' },
+  backText: { color: BRAND.onPrimary, fontWeight: '600' },
+  headerTitle: { flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '700', color: BRAND.onPrimary },
   headerRight: { width: 82, alignItems: 'flex-end' },
-  link: { color: '#1f6f5b', fontWeight: '700' },
-  title: { fontSize: 30, fontWeight: '800', color: '#18231e', marginBottom: 4 },
-  subtitle: { color: '#63716a', marginBottom: 16 },
-  sectionTitle: { fontSize: 20, fontWeight: '800', color: '#18231e', marginTop: 18, marginBottom: 10 },
-  card: { padding: 15, backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: '#e1e5df', marginBottom: 10 },
+  link: { color: BRAND.onPrimary, fontWeight: '700' },
+  title: { fontSize: 30, fontWeight: '800', color: BRAND.onPrimary, marginBottom: 4 },
+  subtitle: { color: BRAND.muted, marginBottom: 16 },
+  sectionTitle: { fontSize: 20, fontWeight: '800', color: BRAND.onPrimary, marginTop: 18, marginBottom: 10 },
+  card: { padding: 15, backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: BRAND.border, marginBottom: 10 },
   cardClosed: { opacity: 0.55 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
-  cardTitle: { fontSize: 16, fontWeight: '700', color: '#18231e', flex: 1 },
-  price: { fontWeight: '700', color: '#1f6f5b' },
-  muted: { color: '#63716a', marginTop: 6 },
-  open: { color: '#1f6f5b', fontWeight: '700' },
+  cardTitle: { fontSize: 16, fontWeight: '700', color: BRAND.onPrimary, flex: 1 },
+  price: { fontWeight: '700', color: BRAND.onPrimary },
+  muted: { color: BRAND.muted, marginTop: 6 },
+  open: { color: BRAND.onPrimary, fontWeight: '700' },
   closed: { color: '#a33', fontWeight: '700' },
   loader: { margin: 12 },
   error: { color: '#a33', backgroundColor: '#fff0ef', padding: 10, borderRadius: 6, marginBottom: 12 },
-  notice: { padding: 13, backgroundColor: '#eef6f1', borderRadius: 8, marginBottom: 14 },
+  notice: { padding: 13, backgroundColor: '#F0F9EC', borderRadius: 8, marginBottom: 14 },
   noticeTitle: { fontWeight: '800', marginBottom: 4 },
-  outlineButton: { borderWidth: 1, borderColor: '#1f6f5b', padding: 12, borderRadius: 6, alignItems: 'center', marginTop: 8 },
-  outlineText: { color: '#1f6f5b', fontWeight: '700' },
-  modalCard: { padding: 16, backgroundColor: '#fff', borderRadius: 10, borderWidth: 2, borderColor: '#1f6f5b', marginTop: 8 },
+  outlineButton: { borderWidth: 1, borderColor: BRAND.primary, padding: 12, borderRadius: 6, alignItems: 'center', marginTop: 8 },
+  outlineText: { color: BRAND.onPrimary, fontWeight: '700' },
+  modalCard: { padding: 16, backgroundColor: '#fff', borderRadius: 10, borderWidth: 2, borderColor: BRAND.primary, marginTop: 8 },
   optionGroup: { marginBottom: 10 },
   label: { fontWeight: '700', marginBottom: 5 },
   optionRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, gap: 8 },
   checkbox: { fontSize: 20, color: '#68756e' },
-  checked: { fontSize: 20, color: '#1f6f5b', fontWeight: '800' },
+  checked: { fontSize: 20, color: BRAND.onPrimary, fontWeight: '800' },
   optionName: { flex: 1 },
   quantity: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', marginTop: 8 },
   quantityText: { minWidth: 30, textAlign: 'center', fontWeight: '700' },
   totals: { backgroundColor: '#fff', padding: 14, borderRadius: 8, marginVertical: 12, gap: 5 },
-  total: { fontSize: 17, fontWeight: '800', color: '#18231e', marginTop: 4 },
+  total: { fontSize: 17, fontWeight: '800', color: BRAND.onPrimary, marginTop: 4 },
   input: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#d8dfd9', borderRadius: 7, padding: 12, marginBottom: 10, minHeight: 46 },
   warning: { color: '#765b18', backgroundColor: '#fff8dd', padding: 12, borderRadius: 7, marginBottom: 16 },
-  history: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#e1e5df' }
+  history: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: BRAND.border },
+  bottomTabs: { flexDirection: 'row', backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: BRAND.border, paddingBottom: 4 },
+  tab: { flex: 1, minHeight: 52, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2 },
+  tabActive: { borderTopWidth: 3, borderTopColor: BRAND.primary },
+  tabText: { color: BRAND.muted, fontSize: 12, fontWeight: '600' },
+  tabTextActive: { color: BRAND.onPrimary, fontWeight: '800' },
+  button: { minHeight: 48, paddingVertical: 13, paddingHorizontal: 16, marginVertical: 5, borderRadius: 14, backgroundColor: BRAND.primary, alignItems: 'center', justifyContent: 'center' },
+  buttonDisabled: { backgroundColor: '#E1E8DE' },
+  buttonText: { color: BRAND.onPrimary, fontWeight: '700', fontSize: 15, textAlign: 'center' }
 })
 
-export default App
+export default function DelifastApp(props) {
+  return <SafeAreaProvider><App {...props} /></SafeAreaProvider>
+}
