@@ -95,17 +95,39 @@ export type OrderFilters = {
   restaurantId?: string;
   search?: string;
 };
-export type OrderSummary = Pick<Order, 'id' | 'status' | 'paymentStatus' | 'createdAt' | 'updatedAt' | 'restaurantId' | 'riderId'> & { deliveryAddress: Pick<Order['deliveryAddress'], 'recipientName'>; checkout: Pick<Checkout, 'total'> };
+export type OrderSummary = Pick<
+  Order,
+  | 'id'
+  | 'status'
+  | 'paymentStatus'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'restaurantId'
+  | 'riderId'
+> & {
+  deliveryAddress: Pick<Order['deliveryAddress'], 'recipientName'>;
+  checkout: Pick<Checkout, 'total'>;
+};
 export type OrderPage = { items: OrderSummary[]; nextCursor: string | null };
-export type RestaurantSummary = Pick<Restaurant, 'id' | 'name' | 'open' | 'version'>;
-export type RestaurantSummaryPage = { items: RestaurantSummary[]; nextCursor: string | null };
+export type RestaurantSummary = Pick<
+  Restaurant,
+  'id' | 'name' | 'open' | 'version'
+>;
+export type RestaurantSummaryPage = {
+  items: RestaurantSummary[];
+  nextCursor: string | null;
+};
+export type RiderSummary = { id: string; name: string };
+export type RiderSummaryPage = {
+  items: RiderSummary[];
+  nextCursor: string | null;
+};
 export type DelifastSnapshot = {
   me: StaffUser;
   orders: OrderSummary[];
   nextCursor: string | null;
   restaurants: RestaurantSummary[];
   restaurantNextCursor: string | null;
-  riders: StaffUser[];
 };
 export type SupportStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED';
 export type SupportEvent = {
@@ -159,7 +181,7 @@ const RESTAURANT_FIELDS =
   'id name description open deliveryZoneIds version weeklySchedule { day startMinute endMinute }';
 const ORDER_FIELDS =
   'id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity baseUnitPrice unitPrice selectedOptions { groupName name priceXof } total } }';
-const OPERATIONS_QUERY = `query Operations($limit: Int, $after: String, $status: String, $payment: String, $restaurantId: ID, $search: String, $restaurantAfter: ID, $catalogRestaurantId: ID) { operationsOrdersPage(limit: $limit, after: $after, status: $status, payment: $payment, restaurantId: $restaurantId, search: $search) { items { id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName } checkout { total } } nextCursor } operationsRestaurantSummaries(limit: 20, after: $restaurantAfter, restaurantId: $catalogRestaurantId) { items { id name open version } nextCursor } availableRiders { id name role restaurantId } }`;
+const OPERATIONS_QUERY = `query Operations($limit: Int, $after: String, $status: String, $payment: String, $restaurantId: ID, $search: String, $restaurantAfter: ID, $catalogRestaurantId: ID) { operationsOrdersPage(limit: $limit, after: $after, status: $status, payment: $payment, restaurantId: $restaurantId, search: $search) { items { id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName } checkout { total } } nextCursor } operationsRestaurantSummaries(limit: 20, after: $restaurantAfter, restaurantId: $catalogRestaurantId) { items { id name open version } nextCursor } }`;
 const MAX_RESPONSE_BYTES = 2_000_000;
 /** Bound bytes before JSON parsing: a huge list must fail closed, not freeze the admin. */
 async function readBody(response: Response): Promise<GraphQLBody> {
@@ -197,7 +219,8 @@ async function readBody(response: Response): Promise<GraphQLBody> {
 
 const SUPPORT_FIELDS =
   'id customerId creatorId creatorRole restaurantId subject description status version createdAt updatedAt history { status at actorRole note }';
-const SUPPORT_SUMMARY_FIELDS = 'id subject creatorRole status version createdAt updatedAt';
+const SUPPORT_SUMMARY_FIELDS =
+  'id subject creatorRole status version createdAt updatedAt';
 function storageGet(key: string) {
   try {
     return typeof window !== 'undefined'
@@ -312,8 +335,14 @@ export class DelifastClient {
     restaurantId?: string
   ): Promise<DelifastSnapshot> {
     for (const value of [restaurantAfter, restaurantId]) {
-      if (value !== undefined && (typeof value !== 'string' || !value.trim() || value.length > 128))
-        throw new DelifastError('Identifiant restaurant invalide', 'INVALID_ARGUMENT');
+      if (
+        value !== undefined &&
+        (typeof value !== 'string' || !value.trim() || value.length > 128)
+      )
+        throw new DelifastError(
+          'Identifiant restaurant invalide',
+          'INVALID_ARGUMENT'
+        );
     }
     // Never request operational data until the restored session has been checked.
     const meData = await this.request<{ me: StaffUser | null }>(ME_QUERY);
@@ -327,13 +356,16 @@ export class DelifastClient {
     const data = await this.request<{
       operationsOrdersPage: OrderPage;
       operationsRestaurantSummaries: RestaurantSummaryPage;
-      availableRiders: StaffUser[];
     }>(OPERATIONS_QUERY, {
       ...filters,
       limit: 20,
       ...(after ? { after } : {}),
-      ...(restaurantAfter === undefined ? {} : { restaurantAfter: restaurantAfter.trim() }),
-      ...(restaurantId === undefined ? {} : { catalogRestaurantId: restaurantId.trim() }),
+      ...(restaurantAfter === undefined
+        ? {}
+        : { restaurantAfter: restaurantAfter.trim() }),
+      ...(restaurantId === undefined
+        ? {}
+        : { catalogRestaurantId: restaurantId.trim() }),
     });
     if (
       !data.operationsOrdersPage ||
@@ -341,39 +373,153 @@ export class DelifastClient {
       data.operationsOrdersPage.items.length > 20 ||
       (data.operationsOrdersPage.nextCursor !== null &&
         typeof data.operationsOrdersPage.nextCursor !== 'string') ||
-      !this.validRestaurantPage(data.operationsRestaurantSummaries) ||
-      !Array.isArray(data.availableRiders)
+      !this.validRestaurantPage(data.operationsRestaurantSummaries)
     )
       throw new DelifastError('Liste API invalide', 'INVALID_RESPONSE');
     return {
       me: meData.me,
       orders: data.operationsOrdersPage.items,
       nextCursor: data.operationsOrdersPage.nextCursor,
-      restaurants: data.operationsRestaurantSummaries.items.map(({ id, name, open, version }) => ({ id, name, open, version })),
+      restaurants: data.operationsRestaurantSummaries.items.map(
+        ({ id, name, open, version }) => ({ id, name, open, version })
+      ),
       restaurantNextCursor: data.operationsRestaurantSummaries.nextCursor,
-      riders: data.availableRiders,
     };
   }
   private validRestaurantPage(page: RestaurantSummaryPage): boolean {
-    return Boolean(page && Array.isArray(page.items) && page.items.length <= 20 &&
-      (page.nextCursor === null || (typeof page.nextCursor === 'string' && page.nextCursor.length > 0 && page.nextCursor.length <= 128)) &&
-      page.items.every(item => item && typeof item.id === 'string' && item.id.length > 0 && item.id.length <= 128 &&
-        typeof item.name === 'string' && typeof item.open === 'boolean' && Number.isInteger(item.version) && item.version >= 0 &&
-        Object.keys(item).every(key => ['id', 'name', 'open', 'version'].includes(key))) &&
-      new Set(page.items.map(item => item.id)).size === page.items.length &&
-      (page.nextCursor === null || (page.items.length > 0 && page.nextCursor === page.items[page.items.length - 1].id)));
+    return Boolean(
+      page &&
+        Array.isArray(page.items) &&
+        page.items.length <= 20 &&
+        (page.nextCursor === null ||
+          (typeof page.nextCursor === 'string' &&
+            page.nextCursor.length > 0 &&
+            page.nextCursor.length <= 128)) &&
+        page.items.every(
+          (item) =>
+            item &&
+            typeof item.id === 'string' &&
+            item.id.length > 0 &&
+            item.id.length <= 128 &&
+            typeof item.name === 'string' &&
+            typeof item.open === 'boolean' &&
+            Number.isInteger(item.version) &&
+            item.version >= 0 &&
+            Object.keys(item).every((key) =>
+              ['id', 'name', 'open', 'version'].includes(key)
+            )
+        ) &&
+        new Set(page.items.map((item) => item.id)).size === page.items.length &&
+        (page.nextCursor === null ||
+          (page.items.length > 0 &&
+            page.nextCursor === page.items[page.items.length - 1].id))
+    );
+  }
+  async operationsRiderSummaries(
+    limit = 20,
+    after?: string,
+    riderId?: string
+  ): Promise<RiderSummaryPage> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 20)
+      throw new DelifastError('Limite livreurs invalide', 'INVALID_ARGUMENT');
+    for (const value of [after, riderId]) {
+      if (
+        value !== undefined &&
+        (typeof value !== 'string' || !value.trim() || value.length > 128)
+      )
+        throw new DelifastError(
+          'Identifiant livreur invalide',
+          'INVALID_ARGUMENT'
+        );
+    }
+    const data = await this.request<{
+      operationsRiderSummaries: RiderSummaryPage;
+    }>(
+      `query OperationsRiderSummaries($limit: Int, $after: ID, $riderId: ID) { operationsRiderSummaries(limit: $limit, after: $after, riderId: $riderId) { items { id name } nextCursor } }`,
+      {
+        limit,
+        ...(after ? { after: after.trim() } : {}),
+        ...(riderId ? { riderId: riderId.trim() } : {}),
+      }
+    );
+    const page = data.operationsRiderSummaries;
+    if (
+      !page ||
+      !Array.isArray(page.items) ||
+      page.items.length > limit ||
+      (page.nextCursor !== null &&
+        (typeof page.nextCursor !== 'string' || !page.nextCursor))
+    )
+      throw new DelifastError('Liste livreurs invalide', 'INVALID_RESPONSE');
+    if (
+      !page.items.every(
+        (item) =>
+          item &&
+          typeof item.id === 'string' &&
+          item.id.length > 0 &&
+          item.id.length <= 128 &&
+          typeof item.name === 'string' &&
+          Object.keys(item).every((k) => k === 'id' || k === 'name')
+      ) ||
+      new Set(page.items.map((item) => item.id)).size !== page.items.length
+    )
+      throw new DelifastError('Liste livreurs invalide', 'INVALID_RESPONSE');
+    if (
+      page.nextCursor !== null &&
+      (page.items.length === 0 ||
+        page.nextCursor !== page.items[page.items.length - 1].id)
+    )
+      throw new DelifastError('Curseur livreurs invalide', 'INVALID_RESPONSE');
+    return page;
+  }
+  async operationsRider(id: string): Promise<StaffUser | null> {
+    if (typeof id !== 'string' || !id.trim() || id.length > 128)
+      throw new DelifastError(
+        'Identifiant livreur invalide',
+        'INVALID_ARGUMENT'
+      );
+    const exactId = id.trim();
+    const data = await this.request<{ operationsRider: StaffUser | null }>(
+      `query OperationsRider($id: ID!) { operationsRider(id: $id) { id name role restaurantId } }`,
+      { id: exactId }
+    );
+    const item = data.operationsRider;
+    if (
+      item !== null &&
+      (!item ||
+        item.id !== exactId ||
+        item.role !== 'RIDER' ||
+        typeof item.name !== 'string' ||
+        (item.restaurantId !== null && typeof item.restaurantId !== 'string'))
+    )
+      throw new DelifastError('Détail livreur invalide', 'INVALID_RESPONSE');
+    return item;
   }
   async operationsRestaurant(id: string): Promise<Restaurant | null> {
     if (typeof id !== 'string' || !id.trim() || id.length > 128)
-      throw new DelifastError('Identifiant restaurant invalide', 'INVALID_ARGUMENT');
+      throw new DelifastError(
+        'Identifiant restaurant invalide',
+        'INVALID_ARGUMENT'
+      );
     const exactId = id.trim();
-    const data = await this.request<{ operationsRestaurant: Restaurant | null }>(
-      `query OperationsRestaurant($id: ID!) { operationsRestaurant(id: $id) { ${RESTAURANT_FIELDS} } }`, { id: exactId }
+    const data = await this.request<{
+      operationsRestaurant: Restaurant | null;
+    }>(
+      `query OperationsRestaurant($id: ID!) { operationsRestaurant(id: $id) { ${RESTAURANT_FIELDS} } }`,
+      { id: exactId }
     );
     const item = data.operationsRestaurant;
-    if (item !== null && (!item || item.id !== exactId || typeof item.name !== 'string' || typeof item.description !== 'string' ||
-      typeof item.open !== 'boolean' || !Number.isInteger(item.version) || !Array.isArray(item.deliveryZoneIds) ||
-      (item.weeklySchedule !== null && !Array.isArray(item.weeklySchedule))))
+    if (
+      item !== null &&
+      (!item ||
+        item.id !== exactId ||
+        typeof item.name !== 'string' ||
+        typeof item.description !== 'string' ||
+        typeof item.open !== 'boolean' ||
+        !Number.isInteger(item.version) ||
+        !Array.isArray(item.deliveryZoneIds) ||
+        (item.weeklySchedule !== null && !Array.isArray(item.weeklySchedule)))
+    )
       throw new DelifastError('Détail restaurant invalide', 'INVALID_RESPONSE');
     return item;
   }
@@ -399,7 +545,10 @@ export class DelifastClient {
       `query OperationsSupportTickets($limit: Int, $offset: Int) { operationsSupportTickets(limit: $limit, offset: $offset) { ${SUPPORT_FIELDS} } }`,
       { limit, offset }
     );
-    if (!Array.isArray(data.operationsSupportTickets) || data.operationsSupportTickets.length > limit)
+    if (
+      !Array.isArray(data.operationsSupportTickets) ||
+      data.operationsSupportTickets.length > limit
+    )
       throw new DelifastError('Liste support invalide', 'INVALID_RESPONSE');
     return data.operationsSupportTickets;
   }
@@ -415,24 +564,56 @@ export class DelifastClient {
       throw new DelifastError('Décalage support invalide', 'INVALID_ARGUMENT');
     const trimmed = ticketId === undefined ? undefined : ticketId.trim();
     if (trimmed !== undefined && (trimmed.length < 1 || trimmed.length > 128))
-      throw new DelifastError('Identifiant de ticket invalide', 'INVALID_ARGUMENT');
-    if (status !== undefined && !(['OPEN', 'IN_PROGRESS', 'RESOLVED'] as SupportStatus[]).includes(status))
+      throw new DelifastError(
+        'Identifiant de ticket invalide',
+        'INVALID_ARGUMENT'
+      );
+    if (
+      status !== undefined &&
+      !(['OPEN', 'IN_PROGRESS', 'RESOLVED'] as SupportStatus[]).includes(status)
+    )
       throw new DelifastError('Statut support invalide', 'INVALID_ARGUMENT');
     const data = await this.request<{
       operationsSupportTicketSummaries: SupportTicketSummary[];
     }>(
       `query OperationsSupportTicketSummaries($limit: Int = 20, $offset: Int = 0, $ticketId: ID, $status: SupportStatus) { operationsSupportTicketSummaries(limit: $limit, offset: $offset, ticketId: $ticketId, status: $status) { ${SUPPORT_SUMMARY_FIELDS} } }`,
-      { limit, offset, ...(trimmed === undefined ? {} : { ticketId: trimmed }), ...(status === undefined ? {} : { status }) }
+      {
+        limit,
+        offset,
+        ...(trimmed === undefined ? {} : { ticketId: trimmed }),
+        ...(status === undefined ? {} : { status }),
+      }
     );
     const summaries = data.operationsSupportTicketSummaries;
-    if (!Array.isArray(summaries) || summaries.length > limit || summaries.some(summary =>
-      !summary || typeof summary.id !== 'string' || typeof summary.subject !== 'string' ||
-      typeof summary.creatorRole !== 'string' || typeof summary.status !== 'string' ||
-      !Number.isInteger(summary.version) || typeof summary.createdAt !== 'string' ||
-      typeof summary.updatedAt !== 'string' || Object.keys(summary).some(key =>
-        !['id', 'subject', 'creatorRole', 'status', 'version', 'createdAt', 'updatedAt'].includes(key))))
+    if (
+      !Array.isArray(summaries) ||
+      summaries.length > limit ||
+      summaries.some(
+        (summary) =>
+          !summary ||
+          typeof summary.id !== 'string' ||
+          typeof summary.subject !== 'string' ||
+          typeof summary.creatorRole !== 'string' ||
+          typeof summary.status !== 'string' ||
+          !Number.isInteger(summary.version) ||
+          typeof summary.createdAt !== 'string' ||
+          typeof summary.updatedAt !== 'string' ||
+          Object.keys(summary).some(
+            (key) =>
+              ![
+                'id',
+                'subject',
+                'creatorRole',
+                'status',
+                'version',
+                'createdAt',
+                'updatedAt',
+              ].includes(key)
+          )
+      )
+    )
       throw new DelifastError('Résumé support invalide', 'INVALID_RESPONSE');
-    return summaries.map(summary => ({
+    return summaries.map((summary) => ({
       id: summary.id,
       subject: summary.subject,
       creatorRole: summary.creatorRole,
@@ -449,7 +630,13 @@ export class DelifastClient {
       `query OperationsSupportTicket($id: ID!) { operationsSupportTicket(id: $id) { ${SUPPORT_FIELDS} } }`,
       { id }
     );
-    if (data.operationsSupportTicket !== null && (!data.operationsSupportTicket || data.operationsSupportTicket.id !== id || !Number.isInteger(data.operationsSupportTicket.version) || !Array.isArray(data.operationsSupportTicket.history)))
+    if (
+      data.operationsSupportTicket !== null &&
+      (!data.operationsSupportTicket ||
+        data.operationsSupportTicket.id !== id ||
+        !Number.isInteger(data.operationsSupportTicket.version) ||
+        !Array.isArray(data.operationsSupportTicket.history))
+    )
       throw new DelifastError('Détail support invalide', 'INVALID_RESPONSE');
     return data.operationsSupportTicket;
   }
@@ -464,8 +651,17 @@ export class DelifastClient {
       { id, expectedVersion, status, note }
     );
     const ticket = data.transitionSupportTicket;
-    if (!ticket || ticket.id !== id || ticket.status !== status || ticket.version !== expectedVersion + 1 || !Array.isArray(ticket.history))
-      throw new DelifastError('Retour de transition support invalide', 'INVALID_RESPONSE');
+    if (
+      !ticket ||
+      ticket.id !== id ||
+      ticket.status !== status ||
+      ticket.version !== expectedVersion + 1 ||
+      !Array.isArray(ticket.history)
+    )
+      throw new DelifastError(
+        'Retour de transition support invalide',
+        'INVALID_RESPONSE'
+      );
     return ticket;
   }
   async transition(
@@ -591,11 +787,16 @@ export class DelifastClient {
       variables
     );
     const value = data[field] as Record<string, unknown> | null;
-    if (!value || typeof value !== 'object' || Array.isArray(value) ||
-        value.id !== (variables.orderId ?? variables.id) ||
-        (field === 'transitionOrder' && value.status !== variables.status) ||
-        (field === 'assignRider' && value.riderId !== variables.riderId) ||
-        (field === 'setRestaurantOpen' && (value.open !== variables.open || !Number.isInteger(value.version))))
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      value.id !== (variables.orderId ?? variables.id) ||
+      (field === 'transitionOrder' && value.status !== variables.status) ||
+      (field === 'assignRider' && value.riderId !== variables.riderId) ||
+      (field === 'setRestaurantOpen' &&
+        (value.open !== variables.open || !Number.isInteger(value.version)))
+    )
       throw new DelifastError(
         'Réponse de mise à jour incomplète : relisez l’état serveur avant de décider.',
         'INVALID_RESPONSE'

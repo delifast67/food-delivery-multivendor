@@ -48,3 +48,5 @@
 }
 
 @media(max-width:900px){.df-grid>.df-detail{grid-row:1}}
+.df-rider-picker{display:grid;gap:8px}.df-rider-filter{display:flex;gap:8px;align-items:end;flex-wrap:wrap}.df-rider-filter label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;flex:1 1 180px}.df-rider-filter input{min-width:0;width:100%}
+@media(max-width:560px){.df-rider-filter button{flex:1 1 120px}.df-rider-picker select{width:100%;min-width:0}}

@@ -35,6 +35,10 @@ export async function connect(
   await db
     .collection("staff_users")
     .createIndex({ email: 1 }, { unique: true });
+  await db.collection("staff_users").createIndex(
+    { role: 1, active: 1, id: 1 },
+    { name: "staff_riders_active_id" },
+  );
   await db
     .collection("staff_sessions")
     .createIndex({ id: 1 }, { unique: true });

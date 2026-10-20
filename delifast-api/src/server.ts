@@ -19,6 +19,8 @@ import {
   operationsOrdersPage,
   operationsOrder,
   availableRiders,
+  operationsRiderSummaries,
+  operationsRider,
   transition,
   simulatePayment,
   assign,
@@ -176,6 +178,10 @@ const resolvers: any = {
       operationsOrder(getDb(), requireRole(ctx, ["ADMIN", "RESTAURANT", "RIDER"]), id),
     availableRiders: (_: any, _a: any, ctx: any) =>
       availableRiders(getDb(), requireRole(ctx, ["ADMIN"])),
+    operationsRiderSummaries: (_: any, { limit, after, riderId }: any, ctx: any) =>
+      operationsRiderSummaries(getDb(), requireRole(ctx, ["ADMIN"]), limit, after, riderId),
+    operationsRider: (_: any, { id }: any, ctx: any) =>
+      operationsRider(getDb(), requireRole(ctx, ["ADMIN"]), id),
     me: (_: any, _a: any, ctx: any) => ctx.user || null,
     customerMe: (_: any, _a: any, ctx: any) => ctx.customer || null,
     customerAddresses: (_: any, _a: any, ctx: any) => listAddresses(getDb(), ctx),

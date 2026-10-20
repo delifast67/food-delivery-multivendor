@@ -29,6 +29,14 @@ Après révocation persistée, `staffLogout` et `customerLogout` retirent aussi 
 
 ## API et paiement
 
-Le schéma public est [`schema/v1.graphql`](schema/v1.graphql) : `operationsOrders`, `availableRiders`, `me`, `staffLogin`, `staffLogout`, `simulateDemoPayment`, `transitionOrder` et `assignRider`. `PaymentProvider` est une abstraction locale dans `src/payment.ts`; seul `DemoPaymentProvider` est construit avec `DELIFAST_DEMO_PAYMENTS=true`. Aucun webhook ou fournisseur réel n'est simulé.
+Le schéma public est [`schema/v1.graphql`](schema/v1.graphql) : `operationsOrders`, `availableRiders`, `operationsRiderSummaries`, `operationsRider`, `me`, `staffLogin`, `staffLogout`, `simulateDemoPayment`, `transitionOrder` et `assignRider`. `PaymentProvider` est une abstraction locale dans `src/payment.ts`; seul `DemoPaymentProvider` est construit avec `DELIFAST_DEMO_PAYMENTS=true`. Aucun webhook ou fournisseur réel n'est simulé.
+
+### Catalogue opérationnel des livreurs
+
+- `operationsRiderSummaries(limit: Int = 20, after: ID, riderId: ID)` est **strictement ADMIN**. Il ne retourne que les comptes `role=RIDER` et `active=true`, dans l'ordre croissant de `id`, sous la forme `{ items { id name }, nextCursor }`.
+- La pagination est keyset : `limit` vaut de 1 à 50, la requête lit `limit+1` éléments et `nextCursor` est l'ID du dernier élément renvoyé lorsqu'une page suivante existe. Un curseur vide ou de plus de 128 caractères, comme un `riderId` vide ou de plus de 128 caractères, est rejeté (`INVALID_INPUT`). Un filtre `riderId` inconnu renvoie une page vide.
+- `operationsRider(id: ID!)` est également **strictement ADMIN** et renvoie seulement `{ id name role restaurantId }` pour un rider actif. Un rider inactif, un compte non-`RIDER` ou un ID inconnu renvoie `null`; les champs privés (mot de passe, email, téléphone, statut d'activité, etc.) ne font pas partie du schéma de ces opérations.
+- Les deux opérations utilisent l'index réentrant `staff_riders_active_id` (`role, active, id`) ; l'exécution attendue est bornée à `limit+1` documents, sans `SORT` ni `COLLSCAN`.
+- Les sessions anonymes, client, restaurant et rider sont refusées (`UNAUTHENTICATED` ou `FORBIDDEN` selon le contexte). `availableRiders` reste volontairement inchangé pour compatibilité legacy.
 
 Comptes de démonstration : `admin@delifast.local / AdminDemo!2026`, `restaurant1@delifast.local / RestaurantDemo!2026`, `restaurant2@delifast.local / RestaurantDemo!2026`, `rider@delifast.local / RiderDemo!2026`.

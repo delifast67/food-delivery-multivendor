@@ -103,6 +103,20 @@ try {
   const restaurantAuditBytes = Buffer.byteLength(JSON.stringify(restaurantFixtures));
   assert.ok(restaurantAuditBytes > 2_000_000, `Fixture catalogue volume incorrect : ${restaurantAuditBytes}`);
   console.log(`Fixtures restaurants : ${restaurantAuditBytes} octets legacy, 125 profils synthétiques`);
+  // Rich rider fixtures expose any accidental unbounded/full-document catalogue read.
+  // No position data is created or queried; all identities stay in the disposable DB.
+  const riderFixtures = Array.from({ length: 125 }, (_, i) => ({
+    id: `z-rider-fixture-${String(i).padStart(3, '0')}`,
+    name: `Livreur synthétique ${String(i).padStart(3, '0')}`,
+    email: `rider-${i}@fixture.invalid`, passwordHash: 'fixture-non-authenticable',
+    role: 'RIDER', active: true, restaurantId: null, internalAudit: 'x'.repeat(20000),
+  }));
+  await db.collection('staff_users').insertMany([...riderFixtures,
+    { ...riderFixtures[0], id: 'z-rider-inactive', email: 'inactive@fixture.invalid', active: false },
+    { ...riderFixtures[0], id: 'z-rider-non-rider', email: 'non-rider@fixture.invalid', role: 'RESTAURANT' },
+  ]);
+  assert.ok(Buffer.byteLength(JSON.stringify(riderFixtures)) > 2_000_000);
+  console.log('Fixtures livreurs : 125 actifs synthétiques riches + témoins inactif/hors rôle, sans position');
   // Support tickets are inserted as test documents, never through a production provider.
   const now = new Date().toISOString();
   await db.collection('support_tickets').insertMany(['admin-ticket-a', 'admin-ticket-b', ...Array.from({length: 20}, (_, i) => `page-ticket-${i}`)].map((id, i) => ({ id, idempotencyKey: `fixture-${id}`, fingerprint: `fixture-${id}`, customerId: null, creatorId: i ? 'staff-rider' : 'staff-rest-1', creatorRole: i ? 'RIDER' : 'RESTAURANT', restaurantId: i ? null : 'rest-koudougou', scopeTenant: i ? '' : 'rest-koudougou', subject: `Recette support ${i + 1}`, description: 'Ticket fixture admin uniquement', status: 'OPEN', version: 0, createdAt: new Date(Date.parse(now) + i).toISOString(), updatedAt: now, history: [{ status: 'OPEN', at: now, actorRole: i ? 'RIDER' : 'RESTAURANT', note: '' }] })));

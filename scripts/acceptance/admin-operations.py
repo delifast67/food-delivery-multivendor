@@ -51,7 +51,35 @@ with sync_playwright() as p:
     context.route('**/*', guard)
     page = context.new_page()
     page.on('pageerror', lambda error: errors.append(str(error)))
+    rider_reads, rider_details, all_queries = [], [], []
+    def track_riders(route):
+        body = json.loads(route.request.post_data or '{}')
+        query = body.get('query', '')
+        all_queries.append(query)
+        if 'operationsRiderSummaries(' in query:
+            response = route.fetch()
+            payload = response.json()
+            assert not payload.get('errors'), payload
+            result = payload['data']['operationsRiderSummaries']
+            assert len(result['items']) <= 20
+            assert all(set(item) == {'id', 'name'} for item in result['items'])
+            assert len(response.body()) < 10000
+            rider_reads.append((body, result))
+            route.fulfill(response=response)
+        elif 'operationsRider(id:' in query:
+            response = route.fetch()
+            payload = response.json()
+            assert not payload.get('errors'), payload
+            result = payload['data']['operationsRider']
+            assert result is None or set(result) == {'id', 'name', 'role', 'restaurantId'}
+            rider_details.append((body, result))
+            route.fulfill(response=response)
+        else:
+            route.fallback()
+    page.route('**/api/delifast/graphql', track_riders)
     login(page)
+    assert not rider_reads and not rider_details, 'Aucun catalogue livreur avant le besoin d’affectation'
+
     admin = page.evaluate("sessionStorage.getItem('delifast-local-session')")
     assert admin
     ids = fixtures['orders']
@@ -189,6 +217,72 @@ with sync_playwright() as p:
     expect(detail.get_by_text('ACCEPTED ·', exact=False)).to_be_visible()
     expect(detail.get_by_role('button', name='Passer à PREPARING', exact=True)).to_be_enabled()
     checked('mutation CONFIRMED acceptée réponse perdue : commande sortie de liste, détail indépendant relu et action réautorisée')
+    # Rider catalogue is loaded only in an assignable order, independently of the
+    # restaurant/order cursors. 125 rich fixtures plus the seed span seven pages.
+    picker = detail.locator('.df-rider-picker')
+    rider_select = picker.get_by_role('combobox', name='Livreur', exact=True)
+    expect(rider_select).to_be_enabled()
+    expect(rider_select.locator('option')).to_have_count(21)
+    assert not rider_details, 'Les résumés ne déclenchent pas de détail automatique'
+    def rider_ids():
+        return rider_select.locator('option').evaluate_all('(nodes) => nodes.map(n => n.value).filter(Boolean)')
+    seen_riders = set(rider_ids())
+    assert len(seen_riders) == 20
+    for number in range(2, 8):
+        with page.expect_response(lambda response: 'operationsRiderSummaries(' in (response.request.post_data or '')):
+            picker.get_by_role('button', name='Suivante', exact=True).click()
+        expect(rider_select).to_be_enabled()
+        expect(picker.get_by_text(f'Page {number} ·', exact=False)).to_be_visible()
+        expect(rider_select.locator('option')).to_have_count(7 if number == 7 else 21)
+        current = set(rider_ids())
+        assert seen_riders.isdisjoint(current)
+        seen_riders.update(current)
+    assert len(seen_riders) == 126
+    assert 'z-rider-inactive' not in seen_riders and 'z-rider-non-rider' not in seen_riders
+    expect(picker.get_by_role('button', name='Suivante', exact=True)).to_be_disabled()
+    expect(order_pagination.get_by_text('Page 1', exact=True)).to_be_visible()
+    expect(catalog.get_by_text('Page 1', exact=True)).to_be_visible()
+    checked('livreurs : 126 actifs sur sept pages indépendantes, 20 résumés minimaux maximum, sans doublon ni lecture de détail automatique')
+    exact_rider = picker.get_by_label('ID livreur exact', exact=True)
+    before = len(rider_reads)
+    exact_rider.fill('z-rider-fixture-124')
+    assert len(rider_reads) == before, 'Pas de recherche livreur à chaque frappe'
+    picker.get_by_role('button', name='Rechercher', exact=True).click()
+    expect(rider_select).to_be_enabled()
+    expect(rider_select.locator('option')).to_have_count(2)
+    assert rider_ids() == ['z-rider-fixture-124']
+    assert rider_reads[-1][0]['variables']['riderId'] == 'z-rider-fixture-124'
+    expect(detail.get_by_role('button', name='Affecter ce livreur', exact=True)).to_be_disabled()
+    with page.expect_response(lambda response: 'operationsRider(id:' in (response.request.post_data or '')):
+        rider_select.select_option('z-rider-fixture-124')
+    rider_detail = picker.locator('[aria-label="Détail du livreur"]')
+    expect(rider_detail).to_contain_text('ID z-rider-fixture-124 · RIDER')
+    expect(detail.get_by_role('button', name='Affecter ce livreur', exact=True)).to_be_enabled()
+    page.set_viewport_size({'width':390,'height':844})
+    picker.scroll_into_view_if_needed()
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    capture(page, 'admin-riders-390.png')
+    page.set_viewport_size({'width':1280,'height':900})
+    # Clear must revoke the old verified selection; an inactive exact ID is empty.
+    picker.get_by_role('button', name='Effacer', exact=True).click()
+    expect(rider_select.locator('option')).to_have_count(21)
+    expect(rider_detail).to_have_count(0)
+    expect(detail.get_by_role('button', name='Affecter ce livreur', exact=True)).to_be_disabled()
+    exact_rider.fill('z-rider-inactive')
+    picker.get_by_role('button', name='Rechercher', exact=True).click()
+    expect(rider_select).to_be_enabled()
+    expect(rider_select.locator('option')).to_have_count(1)
+    exact_rider.fill('z-rider-fixture-124')
+    picker.get_by_role('button', name='Rechercher', exact=True).click()
+    expect(rider_select.locator('option')).to_have_count(2)
+    rider_select.select_option('z-rider-fixture-124')
+    expect(rider_detail).to_contain_text('ID z-rider-fixture-124 · RIDER')
+    detail.get_by_role('button', name='Affecter ce livreur', exact=True).click()
+    expect(page.locator('.df-banner[role="status"]')).to_contain_text('Livreur affecté')
+    assigned = success(page, 'query($id:ID!){operationsOrder(id:$id){id riderId status}}', {'id':ids[0]}, admin)['operationsOrder']
+    assert assigned['riderId'] == 'z-rider-fixture-124' and assigned['status'] == 'ACCEPTED'
+    capture(page, 'admin-rider-assigned.png')
+    checked('livreur ID exact hors page 1, détail ciblé vérifié, reset/ID inactif et affectation synthétique via UI ; 390px sans débordement')
     # A second lost write leaves the detail blocked. A page refresh may succeed,
     # but a failed independent detail read must not clear that safety lock.
     lost_preparing = {'count': 0}
@@ -476,6 +570,7 @@ with sync_playwright() as p:
     checked('petit écran 390px sans débordement global et purge à la déconnexion')
     assert not external, external
     assert not errors, errors
+    assert all('availableRiders' not in query for query in all_queries), 'Aucun chargement legacy non borné dans cet admin'
     checked('aucune requête externe ni erreur JavaScript')
     Path(result_path).write_text(json.dumps({'checks':checks,'count':len(checks),'screenshots':[str(x) for x in out.glob('*.png')]}, ensure_ascii=False, indent=2)+'\n')
     browser.close()

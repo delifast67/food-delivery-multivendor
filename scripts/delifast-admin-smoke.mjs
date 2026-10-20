@@ -334,6 +334,66 @@ try {
     assert.ok(explain.executionStats.totalDocsExamined <= 21);
   }
   ok('catalogue restaurants : 128 profils sur pages de 20, filtre ID exact, résumé minimal, détail ciblé, droits ADMIN et plans indexés sans tri bloquant');
+  // Catalogue livreurs : documents riches jetables, jamais des positions ni des comptes réels.
+  const riderFixtures = Array.from({ length: 125 }, (_, i) => ({
+    id: `z-admin-rider-${String(i).padStart(3, '0')}`, name: `Livreur synthétique ${i}`,
+    email: `rider-${i}@fixture.invalid`, passwordHash: 'fixture-non-authenticable',
+    role: 'RIDER', active: true, restaurantId: null, internalAudit: 'x'.repeat(20000),
+  }));
+  await db.collection('staff_users').insertMany([...riderFixtures,
+    { ...riderFixtures[0], id: 'z-admin-inactive', email: 'inactive@fixture.invalid', active: false },
+    { ...riderFixtures[0], id: 'z-admin-non-rider', email: 'non-rider@fixture.invalid', role: 'RESTAURANT' },
+  ]);
+  const riderSummaryQuery = 'query($limit:Int,$after:ID,$id:ID){operationsRiderSummaries(limit:$limit,after:$after,riderId:$id){items{id name} nextCursor}}';
+  const riderDetailQuery = 'query($id:ID!){operationsRider(id:$id){id name role restaurantId}}';
+  const riderIds = [];
+  let riderAfter;
+  do {
+    const page = (await gql(riderSummaryQuery, { limit: 20, ...(riderAfter ? { after: riderAfter } : {}) }, admin.token)).operationsRiderSummaries;
+    assert.ok(page.items.length <= 20);
+    assert.ok(page.items.every(row => Object.keys(row).sort().join(',') === 'id,name'));
+    assert.ok(Buffer.byteLength(JSON.stringify(page)) < 10000);
+    riderIds.push(...page.items.map(row => row.id));
+    riderAfter = page.nextCursor;
+  } while (riderAfter);
+  assert.equal(new Set(riderIds).size, riderIds.length);
+  assert.equal(riderIds.length, 126);
+  assert.ok(!riderIds.includes('z-admin-inactive') && !riderIds.includes('z-admin-non-rider'));
+  const exactRider = (await gql(riderSummaryQuery, { id: 'z-admin-rider-124' }, admin.token)).operationsRiderSummaries;
+  assert.deepEqual(exactRider.items, [{ id: 'z-admin-rider-124', name: 'Livreur synthétique 124' }]);
+  assert.equal(exactRider.nextCursor, null);
+  const riderDetail = (await gql(riderDetailQuery, { id: 'z-admin-rider-124' }, admin.token)).operationsRider;
+  assert.deepEqual(riderDetail, { ...exactRider.items[0], role: 'RIDER', restaurantId: null });
+  for (const id of ['z-admin-inactive', 'z-admin-non-rider', 'inconnu-fictif']) {
+    assert.deepEqual((await gql(riderSummaryQuery, { id }, admin.token)).operationsRiderSummaries.items, []);
+    assert.equal((await gql(riderDetailQuery, { id }, admin.token)).operationsRider, null);
+  }
+  for (const [token, code] of [[undefined, 'UNAUTHENTICATED'], [restaurant.token, 'FORBIDDEN'], [rider.token, 'FORBIDDEN']]) {
+    await rejected(riderSummaryQuery, {}, token, code);
+    await rejected(riderDetailQuery, { id: 'z-admin-rider-124' }, token, code);
+  }
+  for (const variables of [{ limit: 0 }, { limit: 51 }, { after: '' }, { id: ' ' }])
+    await rejected(riderSummaryQuery, variables, admin.token, 'INVALID_INPUT');
+  for (const query of ['{operationsRiderSummaries{items{id role}}}', '{operationsRider(id:"z-admin-rider-124"){id email passwordHash internalAudit}}']) {
+    const response = await raw(query, {}, admin.token);
+    assert.ok(response.errors?.length && !response.data);
+  }
+  const maxRiders = (await gql(riderSummaryQuery, { limit: 50 }, admin.token)).operationsRiderSummaries;
+  assert.equal(maxRiders.items.length, 50);
+  assert.equal(maxRiders.nextCursor, maxRiders.items.at(-1).id);
+  for (const extra of [{}, { id: { $gt: 'z-admin-rider-050' } }, { id: 'z-admin-rider-124' }]) {
+    const explain = await db.collection('staff_users').find({ role: 'RIDER', active: true, ...extra })
+      .project({ _id: 0, id: 1, name: 1 }).sort({ id: 1 }).limit(21).explain('executionStats');
+    const plan = JSON.stringify(explain.queryPlanner.winningPlan);
+    assert.match(plan, /IXSCAN/); assert.doesNotMatch(plan, /COLLSCAN|"stage":"SORT"/);
+    assert.ok(explain.executionStats.totalDocsExamined <= 21);
+  }
+  const assignment = await paidFixture();
+  await client.transition(assignment.id, 'ACCEPTED', 'CONFIRMED');
+  await client.assignRider(assignment.id, riderDetail.id, 'ACCEPTED');
+  assert.equal((await client.operationsOrder(assignment.id)).riderId, riderDetail.id);
+  await assert.rejects(client.assignRider(assignment.id, 'z-admin-inactive', 'ACCEPTED'), e => e.code === 'RIDER_NOT_FOUND');
+  ok('catalogue livreurs : 126 actifs, pages 20 et borne 50, ID hors page, projection minimale, détail ciblé, droits et index sans tri bloquant ; affectation fictive hors première page');
   await client.logout();
   assert.equal(client.hasSession, false);
   for (const session of [admin, restaurant, other, rider]) await gql('mutation{staffLogout}', {}, session.token);

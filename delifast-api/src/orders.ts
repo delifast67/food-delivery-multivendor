@@ -307,6 +307,54 @@ export async function availableRiders(db: Db, user: Staff) {
     .toArray();
 }
 
+export type RiderSummaryPage = {
+  items: Array<{ id: string; name: string }>;
+  nextCursor: string | null;
+};
+
+function riderId(value: unknown, field: string) {
+  if (typeof value !== "string" || !value.trim() || value.trim().length > 128)
+    fail("INVALID_INPUT", `${field} invalide`);
+  return value.trim();
+}
+
+const activeRiderScope = { role: "RIDER", active: true };
+
+export async function operationsRiderSummaries(
+  db: Db,
+  user: Staff,
+  limitRaw: unknown = 20,
+  afterRaw?: unknown,
+  riderIdRaw?: unknown,
+): Promise<RiderSummaryPage> {
+  if (user.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants");
+  const limit = limitRaw == null ? 20 : limitRaw;
+  if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 50)
+    fail("INVALID_INPUT", "La limite doit être comprise entre 1 et 50");
+  const after = afterRaw == null ? null : riderId(afterRaw, "after");
+  const riderIdFilter = riderIdRaw == null ? null : riderId(riderIdRaw, "riderId");
+  const filter: any = { ...activeRiderScope };
+  if (riderIdFilter != null) filter.id = after == null ? riderIdFilter : { $eq: riderIdFilter, $gt: after };
+  else if (after != null) filter.id = { $gt: after };
+  const rows = await db.collection<any>("staff_users")
+    .find(filter, { projection: { _id: 0, id: 1, name: 1 } })
+    .sort({ id: 1 })
+    .hint("staff_riders_active_id")
+    .limit((limit as number) + 1)
+    .toArray();
+  const items = rows.slice(0, limit as number).map((row: any) => ({ id: row.id, name: row.name }));
+  return { items, nextCursor: rows.length > (limit as number) ? items[items.length - 1].id : null };
+}
+
+export async function operationsRider(db: Db, user: Staff, idRaw: unknown) {
+  if (user.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants");
+  const id = riderId(idRaw, "id");
+  return db.collection<any>("staff_users").findOne(
+    { ...activeRiderScope, id },
+    { projection: { _id: 0, id: 1, name: 1, role: 1, restaurantId: 1 } },
+  );
+}
+
 function allowed(role: string, from: string, to: string) {
   if (to === "CANCELLED")
     return (
