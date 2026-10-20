@@ -30,6 +30,7 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
   let inFlight = null
   let restorePromise = null
   let pollTimer = null
+  let trackingRequest = 0
   let restaurantRequest = 0
   let discoveryRequest = 0
   let authEpoch = 0
@@ -269,13 +270,15 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
       return exclusive(() => sendAttempt(attempt))
     },
     async track(id, accessToken) {
+      const request = ++trackingRequest
       try {
         const order = await api.order(id, accessToken)
+        if (request !== trackingRequest) return null
         if (!order) throw new Error('Commande introuvable ou accès au suivi refusé')
         set({ order: clone(order), lastOrder: { id, accessToken }, error: null })
         return clone(order)
       } catch (error) {
-        set({ error: errorView(error) })
+        if (request === trackingRequest) set({ error: errorView(error) })
         throw error
       }
     },
@@ -401,6 +404,7 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
       })
     },
     stopPolling() {
+      ++trackingRequest
       if (pollTimer) clearInterval(pollTimer)
       pollTimer = null
     }

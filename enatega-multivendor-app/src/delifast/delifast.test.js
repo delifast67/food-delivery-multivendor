@@ -308,3 +308,39 @@ test('une ancienne découverte ne rétablit pas un point ou une liste périmés'
   assert.deepEqual(controller.getState().deliveryPoint,{latitude:3,longitude:4})
   assert.deepEqual(controller.getState().restaurants,[{id:'current'}])
 })
+test('une réponse de suivi périmée ne remplace pas la commande actuellement suivie', async () => {
+  const old=deferred(), current=deferred()
+  const {controller}=setup({order:(id)=>id==='old'?old.promise:current.promise})
+  const stale=controller.track('old','old-access-token')
+  const active=controller.track('current','current-access-token')
+  current.resolve({id:'current',status:'DELIVERING'})
+  await active
+  old.resolve({id:'old',status:'CANCELLED'})
+  assert.equal(await stale, null)
+  assert.equal(controller.getState().order.id,'current')
+  assert.equal(controller.getState().lastOrder.id,'current')
+})
+
+test('une erreur de suivi tardive ne remplace pas le succès courant', async () => {
+  const old = deferred()
+  const { controller } = setup({ order: id => id === 'old' ? old.promise : Promise.resolve({ id, status: 'DELIVERED' }) })
+  const stale = controller.track('old', 'old-token')
+  const rejected = assert.rejects(stale, /Ancienne panne/)
+  await controller.track('current', 'current-token')
+  old.reject(new Error('Ancienne panne'))
+  await rejected
+  assert.equal(controller.getState().order.id, 'current')
+  assert.equal(controller.getState().error, null)
+})
+
+test('arrêter le suivi invalide une lecture encore en vol', async () => {
+  const pending = deferred()
+  const { controller } = setup({ order: id => id === 'pending' ? pending.promise : Promise.resolve({ id, status: 'READY' }) })
+  await controller.track('current', 'current-token')
+  const stale = controller.track('pending', 'pending-token')
+  controller.stopPolling()
+  pending.resolve({ id: 'pending', status: 'DELIVERED' })
+  assert.equal(await stale, null)
+  assert.equal(controller.getState().order.id, 'current')
+  assert.equal(controller.getState().lastOrder.id, 'current')
+})

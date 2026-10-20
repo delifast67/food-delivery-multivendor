@@ -177,3 +177,102 @@ test('les codes zone inconnue et conflit sont transmis sans rejeu', async () => 
   assert.match(page, /Écriture acceptée mais actualisation impossible/);
   assert.match(page, /\[snapshot\]/);
  });
+
+// Exercise the actual page handlers with a minimal hook host, not a DOM renderer.
+// This catches wiring omissions that the HTTP client and source-pattern tests miss.
+async function pageHarness(client) {
+  const { createRequire } = await import('node:module');
+  const { runInNewContext } = await import('node:vm');
+  const require = createRequire(import.meta.url);
+  const React = require('react');
+  const states = [];
+  let cursor = 0;
+  const hooks = {
+    useState(initial) {
+      const index = cursor++;
+      if (!(index in states)) states[index] = typeof initial === 'function' ? initial() : initial;
+      return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }];
+    },
+    useRef(initial) {
+      const index = cursor++;
+      if (!(index in states)) states[index] = { current: initial };
+      return states[index];
+    },
+    useMemo: fn => fn(),
+    useEffect() {},
+  };
+  const page = fs.readFileSync(new URL('../app/delifast/page.tsx', import.meta.url), 'utf8');
+  const compiledPage = ts.transpileModule(page, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+  const module = { exports: {} };
+  const { DelifastError } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+  runInNewContext(compiledPage, {
+    module, exports: module.exports,
+    process: { env: { NEXT_PUBLIC_DELIFAST_LOCAL_MODE: 'true' } },
+    require(name) {
+      if (name === 'react') return hooks;
+      if (name === '@/lib/delifast/client') return { DelifastClient: class { constructor() { return client; } }, DelifastError };
+      if (name.endsWith('.css')) return {};
+      if (name === '@/lib/delifast/zone-parsing') return { parsePolygonText, parseHoursText };
+      return require(name);
+    },
+  });
+  const render = () => { cursor = 0; return module.exports.default(); };
+  const find = (node, predicate) => {
+    if (!node || typeof node !== 'object') return null;
+    if (predicate(node)) return node;
+    return React.Children.toArray(node.props?.children).map(child => find(child, predicate)).find(Boolean) ?? null;
+  };
+  const text = node => {
+    if (typeof node === 'string' || typeof node === 'number') return String(node);
+    return React.Children.toArray(node?.props?.children).map(text).join(' ');
+  };
+  return { render, find, text, states, settle: () => new Promise(resolve => setImmediate(resolve)) };
+}
+
+test('la connexion admin charge réellement le tableau de bord sans rechargement de page', async () => {
+  const calls = [];
+  const harness = await pageHarness({
+    async login() { calls.push('login'); return admin; },
+    async snapshot() { calls.push('snapshot'); return { me: admin, orders: [], restaurants: [], riders: [] }; },
+  });
+  const form = harness.find(harness.render(), node => node.type === 'form');
+  form.props.onSubmit({ preventDefault() {} });
+  await harness.settle();
+  assert.deepEqual(calls, ['login', 'snapshot']);
+  const screen = harness.render();
+  assert.equal(harness.find(screen, node => node.type === 'form'), null);
+  assert.match(harness.text(screen), /Opérations/);
+  assert.match(harness.text(screen), /Session ouverte/);
+});
+
+test('la connexion ne prétend pas ouvrir le tableau de bord si sa lecture échoue', async () => {
+  const harness = await pageHarness({
+    async login() { return admin; },
+    async snapshot() { throw new Error('Hors ligne'); },
+  });
+  harness.find(harness.render(), node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  await harness.settle();
+  const screen = harness.render();
+  assert.ok(harness.find(screen, node => node.type === 'form'));
+  assert.match(harness.text(screen), /chargement du tableau de bord impossible/);
+  assert.doesNotMatch(harness.text(screen), /Session ouverte/);
+});
+
+test('une écriture et une relecture échouées ne sont pas annoncées comme état serveur relu', async () => {
+  let unavailable = false;
+  const harness = await pageHarness({
+    async login() { return admin; },
+    async snapshot() {
+      if (unavailable) throw new Error('Hors ligne');
+      return { me: admin, orders: [], restaurants: [], riders: [] };
+    },
+  });
+  harness.find(harness.render(), node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  await harness.settle();
+  const panel = harness.find(harness.render(), node => typeof node.props?.run === 'function');
+  unavailable = true;
+  await panel.props.run(async () => { throw new Error('Réponse perdue'); }, 'Enregistré');
+  const screen = harness.render();
+  assert.match(harness.text(screen), /Actualisation impossible ; résultat incertain/);
+  assert.doesNotMatch(harness.text(screen), /État serveur relu/);
+});

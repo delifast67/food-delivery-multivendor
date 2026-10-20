@@ -1,10 +1,10 @@
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
-  waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Catalogue from "./Catalogue";
@@ -97,6 +97,47 @@ function fill(name = "Poulet", description = "Poulet braisé", price = "2500") {
 }
 
 describe("Catalogue", () => {
+  it("ignore une réponse de catalogue arrivée après un changement de contexte", async () => {
+    let resolveOld: (value: Restaurant[]) => void = () => undefined;
+    restaurants.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveOld = resolve)),
+    );
+    const { rerender } = render(
+      <Catalogue token={token} user={restaurantUser} />,
+    );
+    rerender(
+      <Catalogue
+        token={token}
+        user={{ ...restaurantUser, restaurantId: "r2" }}
+      />,
+    );
+    await screen.findByText("Chez A");
+    await act(async () => {
+      resolveOld([
+        makeRestaurant({
+          name: "Ancien catalogue",
+          menu: [{ ...item, name: "Plat périmé" }],
+        }),
+      ]);
+    });
+    expect(screen.queryByText("Plat périmé")).not.toBeInTheDocument();
+    expect(screen.getByText("Chez A")).toBeInTheDocument();
+    expect(restaurants).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignore une erreur tardive de l’ancienne session catalogue", async () => {
+    let rejectOld: (reason: Error) => void = () => undefined;
+    restaurants.mockImplementationOnce(
+      () => new Promise((_resolve, reject) => (rejectOld = reject)),
+    );
+    const { rerender } = render(<Catalogue token={token} user={restaurantUser} />);
+    rerender(<Catalogue token="new-session" user={restaurantUser} />);
+    await screen.findByText("Chez A");
+    await act(async () => { rejectOld(new Error("Ancienne session indisponible")); });
+    expect(screen.queryByText(/Ancienne session indisponible/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Fermer le restaurant" })).toBeEnabled();
+  });
+
   it("crée un plat en soumettant tous les champs", async () => {
     await renderCatalogue();
     fill();

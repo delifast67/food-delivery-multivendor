@@ -104,15 +104,16 @@ export default function DelifastPage() {
       return { ok: true, actionCompleted: true, refreshed: true };
     } catch (e) {
       const text = e instanceof DelifastError ? `${e.code}: ${e.message}` : e instanceof Error ? e.message : 'Action refusée';
+      let refreshed = false;
       if (reconcile) {
         try {
-          await refresh();
+          refreshed = await refresh();
         } catch {
           /* retain original action error */
         }
       }
       setError(
-        `${text}${reconcile ? ' — État serveur relu ; vérifiez avant de réessayer.' : ''}`
+        `${text}${reconcile ? refreshed ? ' — État serveur relu ; vérifiez avant de réessayer.' : ' — Actualisation impossible ; résultat incertain. Relisez avant de réessayer.' : ''}`
       );
       return { ok: false, actionCompleted: false, refreshed: false };
     } finally {
@@ -149,6 +150,9 @@ export default function DelifastPage() {
                 async () => {
                   await client.login(email, password);
                   setPassword('');
+                  if (!await refresh()) {
+                    throw new Error('Connexion vérifiée, mais chargement du tableau de bord impossible. Réessayez la connexion.');
+                  }
                 },
                 'Session ouverte',
                 false

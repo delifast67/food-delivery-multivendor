@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   delifastApi,
   formatXof,
@@ -38,28 +38,36 @@ export default function Catalogue({ token, user }: Props) {
     [busy, setBusy] = useState(""),
     [error, setError] = useState(""),
     [notice, setNotice] = useState("");
+  const loadVersion = useRef(0);
   const role = user.role.toLowerCase(),
     isAdmin = role === "admin";
   const load = useCallback(
     async (clear = true) => {
+      const request = ++loadVersion.current;
+      const isCurrent = () => request === loadVersion.current;
       setBusy("load");
       if (clear) setError("");
       try {
         const values = await delifastApi.operationsRestaurants(token);
+        if (!isCurrent()) return false;
         setRestaurants(values);
         setSelectedId((c) => c || user.restaurantId || values[0]?.id || "");
         return true;
       } catch (e) {
+        if (!isCurrent()) return false;
         setError(errorText(e));
         return false;
       } finally {
-        setBusy("");
+        if (isCurrent()) setBusy("");
       }
     },
     [token, user.restaurantId],
   );
   useEffect(() => {
     void load();
+    return () => {
+      loadVersion.current += 1;
+    };
   }, [load]);
   const restaurant = useMemo(
     () => restaurants.find((r) => r.id === selectedId) || restaurants[0],
@@ -517,7 +525,7 @@ function OptionEditor({
     setGroups(groups.map((g, i) => (i === index ? { ...g, ...value } : g)));
   return (
     <fieldset className="df-option-editor">
-      <legend>Groupes d'options / modificateurs</legend>
+      <legend>Groupes d&apos;options / modificateurs</legend>
       <p className="df-muted">
         Montants fictifs en XOF. Minimum 1 pour un choix obligatoire ; maximum 1
         pour une variante unique.
@@ -627,7 +635,7 @@ function OptionEditor({
                   })
                 }
               >
-                Supprimer l'option
+                Supprimer l&apos;option
               </button>
             </fieldset>
           ))}
@@ -686,7 +694,7 @@ function OptionEditor({
           ])
         }
       >
-        Ajouter un groupe d'options
+        Ajouter un groupe d&apos;options
       </button>
     </fieldset>
   );
