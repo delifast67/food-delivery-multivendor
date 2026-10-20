@@ -162,6 +162,7 @@ with sync_playwright() as p:
     expect(ticket.get_by_role('button', name='Passer à RESOLVED', exact=True)).to_be_visible()
     accepted = success(page, 'query($id:ID!){staffSupportTicket(id:$id){status version history{note}}}', {'id':'admin-ticket-b'}, fixtures['riderToken'])['staffSupportTicket']
     assert accepted['status']=='IN_PROGRESS' and accepted['version']==1 and len(accepted['history'])==2
+    expect(support.get_by_role('row').filter(has=page.get_by_role('button', name='Recette support 2', exact=True)).get_by_text('IN_PROGRESS', exact=True)).to_be_visible()
     checked('réponse Support perdue : un seul événement, verrouillage puis relecture explicite')
     page.set_viewport_size({'width':390,'height':844})
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'débordement horizontal global'

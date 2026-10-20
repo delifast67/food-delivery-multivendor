@@ -104,6 +104,7 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
         return;
       }
       setDetail(result);
+      setTickets(current => current.map(ticket => ticket.id === result.id ? result : ticket));
     } catch (e) {
       if (!mounted.current || request !== requestId.current) return;
       if (!unauthorized(e)) setError(errorText(e));
