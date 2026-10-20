@@ -21,7 +21,7 @@ import {
 } from "./orders.js";
 import { authenticate, login, logout, requireRole } from "./auth.js";
 import { authenticateCustomer } from "./customer-auth.js";
-import { requestOtp, resendOtp, verifyOtp, customerLogout, listAddresses, createAddress, updateAddress, deleteAddress, requireCustomer } from "./customer-auth.js";
+import { requestOtp, resendOtp, verifyOtp, customerLogout, listAddresses, createAddress, updateAddress, deleteAddress, requireCustomer, updateCustomerProfile } from "./customer-auth.js";
 import { createSupportTicket, createStaffSupportTicket, customerSupportTickets, customerSupportTicket, staffSupportTickets, staffSupportTicket, operationsSupportTickets, operationsSupportTicket, transitionSupportTicket } from "./support.js";
 import {
   publicRestaurants,
@@ -92,6 +92,7 @@ const knownCodes = new Set([
   "ADDRESS_NOT_FOUND",
   "DELIVERY_POINT_REQUIRED",
   "SUPPORT_TICKET_NOT_FOUND",
+  "CUSTOMER_PROFILE_REQUIRED",
 ]);
 function rateLimit() {
   const buckets = new Map<string, { start: number; count: number }>();
@@ -176,12 +177,13 @@ const resolvers: any = {
   Mutation: {
     createDeliveryZone: (_: any, { restaurantId, input }: any, ctx: any) => createDeliveryZone(getDb(), requireRole(ctx, ["ADMIN"]), restaurantId, input),
     updateDeliveryZone: (_: any, { id, expectedVersion, input }: any, ctx: any) => updateDeliveryZone(getDb(), requireRole(ctx, ["ADMIN"]), id, expectedVersion, input),
-    placeOrder: (_: any, { input }: any) =>
+    placeOrder: (_: any, { input }: any, ctx: any) =>
       placeOrder(
         getDb(),
         normalizeCart(input),
         normalizeAddress(input.deliveryAddress),
         input.idempotencyKey,
+        ctx.customer?.id,
       ),
     startPayment: (_: any, { input }: any, ctx: any) =>
       ctx.payments.start(input),
@@ -296,6 +298,7 @@ const resolvers: any = {
     requestCustomerOtp: (_: any, { phone }: any, ctx: any) => requestOtp(getDb(), ctx.otpProvider, phone, ctx.peerIp),
     resendCustomerOtp: (_: any, { challengeId }: any, ctx: any) => resendOtp(getDb(), ctx.otpProvider, challengeId, ctx.peerIp),
     verifyCustomerOtp: (_: any, { challengeId, code }: any, ctx: any) => verifyOtp(getDb(), ctx.otpProvider, challengeId, code),
+    updateCustomerProfile: (_: any, { input }: any, ctx: any) => updateCustomerProfile(getDb(), ctx, input),
     customerLogout: (_: any, _a: any, ctx: any) => customerLogout(getDb(), ctx),
     createCustomerAddress: (_: any, { input }: any, ctx: any) => createAddress(getDb(), ctx, input),
     updateCustomerAddress: (_: any, { id, input }: any, ctx: any) => updateAddress(getDb(), ctx, id, input),

@@ -135,6 +135,7 @@ jobs:
       - name: Produire les bundles JS Android et iOS sans publication
         run: |
           npm run build --prefix delifast-api
+          node scripts/delifast-profile-smoke.mjs
           node scripts/delifast-mobile-support-smoke.mjs
           npm run export:delifast --prefix enatega-multivendor-app
 

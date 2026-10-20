@@ -53,6 +53,7 @@ export function cinetPayProvider(client: CinetPayClient, store: CinetPayStore): 
     capabilities: {
       channels: ["ORANGE_MONEY_BF", "MOOV_MONEY_BF"], redirect: true,
       mobileValidation: false, notification: true, statusQuery: true, refund: false,
+      requiredCustomerProfile: ["firstName", "lastName", "email"],
     },
     createPayment: async (input) => {
       try {

@@ -141,6 +141,24 @@ export class PaymentService {
     if (!gateway.capabilities.redirect || !gateway.capabilities.statusQuery ||
       !gateway.capabilities.channels.includes(input.channel))
       fail("PAYMENT_NOT_ALLOWED", "Parcours ou moyen de paiement non disponible");
+    const requiredProfile = gateway.capabilities.requiredCustomerProfile ?? [];
+    if (requiredProfile.length) {
+      // owned() intentionally returns the public order projection. Resolve the
+      // private owner separately only after the order capability was checked.
+      const owner = await this.db.collection<any>("orders").findOne(
+        { id: order.id }, { projection: { _id: 0, customerId: 1 } },
+      );
+      const customerId = typeof owner?.customerId === "string" ? owner.customerId : "";
+      const profile = customerId
+        ? await this.db.collection<any>("customers").findOne(
+            { id: customerId },
+            { projection: { _id: 0, firstName: 1, lastName: 1, email: 1 } },
+          )
+        : null;
+      if (!profile || requiredProfile.some((field) =>
+        typeof profile[field] !== "string" || !profile[field].trim()))
+        fail("CUSTOMER_PROFILE_REQUIRED", "Veuillez remplir votre profil client avant de payer");
+    }
     if (order.status !== "PAYMENT_PENDING" || order.paymentStatus !== "PENDING")
       fail("PAYMENT_NOT_ALLOWED", "La commande ne peut pas être payée");
     const amount = order.checkout?.total;

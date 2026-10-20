@@ -44,6 +44,7 @@ type Mutation {
   requestCustomerOtp(phone: String!): CustomerOtpChallenge!
   resendCustomerOtp(challengeId: ID!): CustomerOtpChallenge!
   verifyCustomerOtp(challengeId: ID!, code: String!): CustomerSession!
+  updateCustomerProfile(input: CustomerProfileInput!): Customer!
   customerLogout: Boolean!
   createCustomerAddress(input: DeliveryAddressInput!): CustomerAddress!
   updateCustomerAddress(id: ID!, input: DeliveryAddressInput!): CustomerAddress!
@@ -53,7 +54,7 @@ type Mutation {
   transitionSupportTicket(id: ID!, expectedVersion: Int!, status: SupportStatus!, note: String!): SupportTicket!
 }
 type Point { latitude: Float!, longitude: Float! }
-type Customer { id: ID!, phone: String! }
+type Customer { id: ID!, phone: String!, firstName: String, lastName: String, email: String }
 type CustomerSession { token: String!, customer: Customer! }
 type CustomerOtpChallenge { challengeId: ID!, expiresIn: Int!, retryAfter: Int! }
 type CustomerAddress { id: ID!, recipientName: String!, phone: String!, city: String!, neighborhood: String!, landmark: String!, instructions: String!, point: Point! }
@@ -62,6 +63,7 @@ input CreateSupportTicketInput { subject: String!, description: String!, idempot
 type SupportEvent { status: SupportStatus!, at: String!, actorRole: String!, note: String! }
 type SupportTicket { id: ID!, customerId: ID, creatorId: ID!, creatorRole: String!, restaurantId: ID, subject: String!, description: String!, status: SupportStatus!, version: Int!, createdAt: String!, updatedAt: String!, history: [SupportEvent!]! }
 input DeliveryPointInput { latitude: Float!, longitude: Float! }
+input CustomerProfileInput { firstName: String, lastName: String, email: String }
 input RestaurantProfileInput { name: String!, description: String!, open: Boolean!, deliveryZoneIds: [ID!]! }
 input RestaurantHoursInput { day: Int!, startMinute: Int!, endMinute: Int! }
 type RestaurantHours { day: Int!, startMinute: Int!, endMinute: Int! }

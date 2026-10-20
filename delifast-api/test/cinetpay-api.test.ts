@@ -51,10 +51,10 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await (await import("../src/db.js")).closeDb(); await mongo?.stop(); });
 beforeEach(async () => {
-  for (const name of ["orders", "cinetpay_attempts", "payment_customer_profiles"]) await db.collection(name).deleteMany({});
-  await db.collection<any>("payment_customer_profiles").insertOne({ _id: orderId, email: "synthetic@example.invalid", firstName: "Client", lastName: "Synthétique" });
+  for (const name of ["orders", "cinetpay_attempts", "customers"]) await db.collection(name).deleteMany({});
+  await db.collection<any>("customers").insertOne({ id: "customer-cinetpay-http", email: "synthetic@example.invalid", firstName: "Client", lastName: "Synthétique", privateMarker: "must-not-leak" });
   await db.collection("orders").insertOne({
-    id: orderId, accessTokenHash: createHash("sha256").update(access).digest("hex"),
+    id: orderId, customerId: "customer-cinetpay-http", accessTokenHash: createHash("sha256").update(access).digest("hex"),
     status: "PAYMENT_PENDING", paymentStatus: "PENDING", checkout: { total: 2500, currency: "XOF" }, history: [],
   });
   getCount = 0; status = "PENDING"; unavailable = false; storeUnavailable = false;

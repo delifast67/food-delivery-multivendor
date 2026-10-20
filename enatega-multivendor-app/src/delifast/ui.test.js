@@ -161,6 +161,32 @@ test('compte mobile : le délai de renvoi vient du challenge et changer de tél�
   await unmount(tree)
 })
 
+test('profil UI enregistre les champs optionnels et purge le brouillon au logout', async () => {
+  const sent = []
+  const storage = memory()
+  await storage.setItem('delifast-customer-token', 'fixture-profile-session')
+  const tree = await mount(api({
+    setCustomerToken: () => {},
+    customerMe: async () => ({ id: 'profile-customer', phone: '+22670000000', firstName: 'Awa', lastName: 'K.', email: 'awa@example.test' }),
+    customerAddresses: async () => [],
+    updateCustomerProfile: async input => { sent.push(input); return { id: 'profile-customer', phone: '+22670000000', ...input } },
+    customerLogout: async () => true
+  }), storage)
+  await press(tree, 'Compte', 'TouchableOpacity')
+  const fields = tree.root.findAllByType('TextInput')
+  await renderer.act(async () => {
+    fields.find(node => node.props.placeholder === 'Prénom').props.onChangeText('Awa')
+    fields.find(node => node.props.placeholder === 'Nom').props.onChangeText('K.')
+    fields.find(node => node.props.placeholder === 'Email (optionnel)').props.onChangeText('')
+  })
+  await press(tree, 'Enregistrer le profil')
+  assert.deepEqual(sent[0], { firstName: 'Awa', lastName: 'K.', email: null })
+  await press(tree, 'Se déconnecter')
+  assert.match(treeText(tree), /Connexion par téléphone/)
+  assert.equal(tree.root.findAllByType('TextInput').length, 1)
+  await unmount(tree)
+})
+
 // Sessions injectées exclusivement dans le test : aucune réception SMS réelle.
 test('la révocation efface le brouillon du carnet avant une nouvelle identité', async () => {
   const storage = memory()

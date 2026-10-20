@@ -221,7 +221,13 @@ describe("CustomerAccount deadlines and session isolation", () => {
     expiresIn: 60,
     retryAfter: 30,
   };
-  const customer = { id: "customer-local-test", phone: "+22670123456" };
+  const customer = {
+    id: "customer-local-test",
+    phone: "+22670123456",
+    firstName: "Client",
+    lastName: "Fictif",
+    email: "client@example.com",
+  };
   const address = {
     id: "private-address",
     recipientName: "Client fictif",
@@ -400,6 +406,114 @@ describe("CustomerAccount deadlines and session isolation", () => {
       screen.getByRole("button", { name: "Mon compte" }),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Nom")).toHaveValue("Autre client fictif");
+  });
+
+  it("reads and saves the private profile with normalized email and nullable clearing", async () => {
+    await signIn();
+    const update = vi.spyOn(delifastApi, "updateCustomerProfile").mockResolvedValue({
+      ...customer,
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: "ada@example.com",
+    });
+    expect(screen.getByLabelText("Prénom")).toHaveValue("Client");
+    expect(screen.getByLabelText("Nom de famille")).toHaveValue("Fictif");
+    expect(screen.getByLabelText("E-mail (optionnel)")).toHaveValue(
+      "client@example.com",
+    );
+    fireEvent.change(screen.getByLabelText("Prénom"), {
+      target: { value: " Ada " },
+    });
+    fireEvent.change(screen.getByLabelText("Nom de famille"), {
+      target: { value: " Lovelace " },
+    });
+    fireEvent.change(screen.getByLabelText("E-mail (optionnel)"), {
+      target: { value: " ADA@Example.COM " },
+    });
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Enregistrer le profil" })),
+    );
+    expect(update).toHaveBeenCalledWith("private-test-token", {
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: "ada@example.com",
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Profil enregistré.");
+
+    fireEvent.change(screen.getByLabelText("E-mail (optionnel)"), {
+      target: { value: "   " },
+    });
+    update.mockResolvedValue({ ...customer, email: null });
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Enregistrer le profil" })),
+    );
+    expect(update).toHaveBeenLastCalledWith("private-test-token", {
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: null,
+    });
+  });
+
+  it("blocks invalid profile email without calling the API", async () => {
+    await signIn();
+    const update = vi.spyOn(delifastApi, "updateCustomerProfile");
+    fireEvent.change(screen.getByLabelText("E-mail (optionnel)"), {
+      target: { value: "not-an-email" },
+    });
+    fireEvent.submit(screen.getByRole("form", { name: "Profil client" }));
+    expect(update).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("adresse e-mail valide");
+  });
+
+  it("keeps private account data visible after a profile server error", async () => {
+    await signIn();
+    vi.spyOn(delifastApi, "updateCustomerProfile").mockRejectedValue(
+      new DelifastApiError("Profil refusé", "validation", 400),
+    );
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Enregistrer le profil" })),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("Profil refusé");
+    expect(screen.getByRole("button", { name: "Mon compte" })).toBeInTheDocument();
+    expect(screen.getByText(address.recipientName)).toBeInTheDocument();
+  });
+
+  it("clears the private profile when its session is revoked", async () => {
+    await signIn();
+    vi.spyOn(delifastApi, "updateCustomerProfile").mockRejectedValue(revoked());
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Enregistrer le profil" })),
+    );
+    expect(screen.getByLabelText("Téléphone")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Prénom")).not.toBeInTheDocument();
+    expect(screen.queryByText(address.recipientName)).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Connexion requise");
+  });
+
+  it("ignores a profile response that arrives after logout", async () => {
+    await signIn();
+    let resolve!: (value: typeof customer) => void;
+    vi.spyOn(delifastApi, "updateCustomerProfile").mockImplementation(
+      () => new Promise((done) => (resolve = done)),
+    );
+    fireEvent.change(screen.getByLabelText("Prénom"), {
+      target: { value: "Late response" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enregistrer le profil" }));
+    vi.spyOn(delifastApi, "customerLogout").mockResolvedValue(true);
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Se déconnecter" })),
+    );
+    await act(async () => resolve({ ...customer, firstName: "Should not render" }));
+    expect(screen.getByLabelText("Téléphone")).toBeInTheDocument();
+    expect(screen.queryByText("Should not render")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Prénom")).not.toBeInTheDocument();
+  });
+
+  it("does not persist private profile data in browser storage", async () => {
+    await signIn();
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
   });
 
   it("discards the edit form when its address is deleted", async () => {

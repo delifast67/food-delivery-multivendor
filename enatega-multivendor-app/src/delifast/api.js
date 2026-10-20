@@ -20,7 +20,7 @@ const checkout = 'currency subtotal deliveryFee serviceFee tax discount total it
 const deliveryFields = 'delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo }'
 const paymentSessionFields = 'orderId phase channel mode checkoutUrl providerStatus paymentStatus'
 const orderFields = `id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions point { latitude longitude } } history { status at actorRole } checkout { ${checkout} ${deliveryFields} }`
-const customerFields = 'id phone'
+const customerFields = 'id phone firstName lastName email'
 const sessionFields = `token customer { ${customerFields} }`
 const challengeFields = 'challengeId expiresIn retryAfter'
 const addressFields = 'id recipientName phone city neighborhood landmark instructions point { latitude longitude }'
@@ -45,6 +45,7 @@ const documents = {
   refreshPayment: `mutation MobileRefreshPayment($orderId: ID!, $accessToken: String!) { refreshPayment(orderId: $orderId, accessToken: $accessToken) { ${paymentSessionFields} } }`,
   order: `query MobileOrder($id: ID!, $accessToken: String!) { order(id: $id, accessToken: $accessToken) { ${orderFields} } }`,
   customerMe: `query CustomerMe { customerMe { ${customerFields} } }`,
+  updateCustomerProfile: `mutation UpdateCustomerProfile($input: CustomerProfileInput!) { updateCustomerProfile(input: $input) { ${customerFields} } }`,
   customerAddresses: `query CustomerAddresses { customerAddresses { ${addressFields} } }`,
   requestCustomerOtp: `mutation RequestCustomerOtp($phone: String!) { requestCustomerOtp(phone: $phone) { ${challengeFields} } }`,
   resendCustomerOtp: `mutation ResendCustomerOtp($challengeId: ID!) { resendCustomerOtp(challengeId: $challengeId) { ${challengeFields} } }`,
@@ -135,6 +136,7 @@ function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetc
     order: (id, accessToken) => field('order', { id, accessToken }),
     setCustomerToken(token) { customerToken = token || null },
     customerMe: () => field('customerMe', {}, true),
+    updateCustomerProfile: input => field('updateCustomerProfile', { input: { firstName: input?.firstName, lastName: input?.lastName, email: input?.email } }, true),
     customerAddresses: () => field('customerAddresses', {}, true),
     requestCustomerOtp: phone => field('requestCustomerOtp', { phone }).then(otpChallenge),
     resendCustomerOtp: challengeId => field('resendCustomerOtp', { challengeId }).then(otpChallenge),

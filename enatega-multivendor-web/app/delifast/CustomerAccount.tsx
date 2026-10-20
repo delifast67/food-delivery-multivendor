@@ -58,6 +58,11 @@ export default function CustomerAccount({
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
   const [phone, setPhone] = useState("");
+  const [profile, setProfile] = useState({
+    firstName: "",
+    lastName: "",
+    email: "",
+  });
   const [code, setCode] = useState("");
   const [challengeId, setChallengeId] = useState("");
   const [expiresIn, setExpiresIn] = useState(0);
@@ -99,6 +104,7 @@ export default function CustomerAccount({
     setToken("");
     setCustomer(null);
     setAddresses([]);
+    setProfile({ firstName: "", lastName: "", email: "" });
     setDraft(freshAddress());
     setEditing(null);
     setSupportOpen(false);
@@ -119,6 +125,11 @@ export default function CustomerAccount({
       const list = await delifastApi.customerAddresses(activeToken);
       if (!current(version)) return;
       setCustomer(me);
+      setProfile({
+        firstName: me.firstName ?? "",
+        lastName: me.lastName ?? "",
+        email: me.email ?? "",
+      });
       setAddresses(list);
     } catch (e) {
       accountError(e, version);
@@ -226,6 +237,11 @@ export default function CustomerAccount({
       memoryToken = session.token;
       setToken(session.token);
       setCustomer(session.customer);
+      setProfile({
+        firstName: session.customer.firstName ?? "",
+        lastName: session.customer.lastName ?? "",
+        email: session.customer.email ?? "",
+      });
       setChallengeId("");
       await load(session.token, version);
     } catch (e) {
@@ -263,6 +279,45 @@ export default function CustomerAccount({
   };
   const update = (key: keyof DeliveryAddress, value: string | DeliveryPoint) =>
     setDraft((value_) => ({ ...value_, [key]: value }));
+  const saveProfile = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const firstName = profile.firstName.trim();
+    const lastName = profile.lastName.trim();
+    const email = profile.email.trim().toLowerCase();
+    if (
+      !token ||
+      (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email !== "")
+    ) {
+      setError("Saisissez une adresse e-mail valide ou laissez le champ vide.");
+      return;
+    }
+    if (firstName.length > 255 || lastName.length > 255) {
+      setError("Les prénoms et noms sont limités à 255 caractères.");
+      return;
+    }
+    if (!begin("profile")) return;
+    const version = epoch.current;
+    setError("");
+    try {
+      const saved = await delifastApi.updateCustomerProfile(token, {
+        firstName: firstName || null,
+        lastName: lastName || null,
+        email: email || null,
+      });
+      if (!current(version)) return;
+      setCustomer(saved);
+      setProfile({
+        firstName: saved.firstName ?? "",
+        lastName: saved.lastName ?? "",
+        email: saved.email ?? "",
+      });
+      setNotice("Profil enregistré.");
+    } catch (e) {
+      accountError(e, version);
+    } finally {
+      finish("profile");
+    }
+  };
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!token || !draft.point || !PHONE.test(draft.phone)) {
@@ -420,6 +475,50 @@ export default function CustomerAccount({
             </>
           ) : (
             <>
+              <p className="df-muted">
+                Vos données de profil sont privées et utilisées uniquement si un
+                prestataire les exige pour traiter la commande.
+              </p>
+              <form
+                className="df-form"
+                onSubmit={saveProfile}
+                aria-label="Profil client"
+              >
+                <h3>Profil client</h3>
+                <label htmlFor="customer-first-name">Prénom</label>
+                <input
+                  id="customer-first-name"
+                  maxLength={255}
+                  value={profile.firstName}
+                  onChange={(e) =>
+                    setProfile((v) => ({ ...v, firstName: e.target.value }))
+                  }
+                />
+                <label htmlFor="customer-last-name">Nom de famille</label>
+                <input
+                  id="customer-last-name"
+                  maxLength={255}
+                  value={profile.lastName}
+                  onChange={(e) =>
+                    setProfile((v) => ({ ...v, lastName: e.target.value }))
+                  }
+                />
+                <label htmlFor="customer-email">E-mail (optionnel)</label>
+                <input
+                  id="customer-email"
+                  type="email"
+                  maxLength={255}
+                  value={profile.email}
+                  onChange={(e) =>
+                    setProfile((v) => ({ ...v, email: e.target.value }))
+                  }
+                />
+                <button className="df-primary" disabled={busy === "profile"}>
+                  {busy === "profile"
+                    ? "Enregistrement…"
+                    : "Enregistrer le profil"}
+                </button>
+              </form>
               <button
                 className="df-secondary"
                 aria-expanded={supportOpen}

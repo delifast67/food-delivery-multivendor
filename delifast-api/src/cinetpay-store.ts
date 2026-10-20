@@ -27,11 +27,15 @@ export function mongoCinetPayStore(db: () => Db): CinetPayStore {
   const collection = () => db().collection<any>("cinetpay_attempts");
   return {
     customer: async (orderId) => {
-      // No invented email/name and no public profile-writing route. This is an explicit
-      // server-owned enrichment boundary; current phone-only clients cannot populate it.
-      const profile = await db().collection<any>("payment_customer_profiles").findOne({ _id: orderId });
+      const order = await db().collection<any>("orders").findOne({ id: orderId }, { projection: { customerId: 1 } });
+      if (!order?.customerId) return undefined;
+      const profile = await db().collection<any>("customers").findOne(
+        { id: order.customerId },
+        { projection: { _id: 0, email: 1, firstName: 1, lastName: 1 } },
+      );
       if (!profile) return undefined;
-      return { email: profile.email, firstName: profile.firstName, lastName: profile.lastName, phone: profile.phone };
+      // Hosted redirect requires name/email, not the OTP login phone.
+      return { email: profile.email, firstName: profile.firstName, lastName: profile.lastName };
     },
     reserve: async (value) => {
       try {

@@ -56,7 +56,23 @@ export type Restaurant = {
 };
 
 export type DeliveryPoint = { latitude: number; longitude: number };
-export type DeliveryZone = { id: string; restaurantId: string; name: string; shape: "CIRCLE" | "POLYGON"; center?: DeliveryPoint | null; radiusMeters?: number | null; polygon?: DeliveryPoint[] | null; enabled: boolean; feeXof: number; minimumOrderXof: number; estimatedMinutes: number; priority: number; demo: boolean; hours: { day: number; startMinute: number; endMinute: number }[]; version: number };
+export type DeliveryZone = {
+  id: string;
+  restaurantId: string;
+  name: string;
+  shape: "CIRCLE" | "POLYGON";
+  center?: DeliveryPoint | null;
+  radiusMeters?: number | null;
+  polygon?: DeliveryPoint[] | null;
+  enabled: boolean;
+  feeXof: number;
+  minimumOrderXof: number;
+  estimatedMinutes: number;
+  priority: number;
+  demo: boolean;
+  hours: { day: number; startMinute: number; endMinute: number }[];
+  version: number;
+};
 export type OptionSelection = { groupId: string; optionIds: string[] };
 export type CartLine = {
   menuItemId: string;
@@ -107,7 +123,15 @@ export type Checkout = {
   discount: number;
   total: number;
   items: CheckoutItem[];
-  delivery?: { zoneId: string; zoneName: string; zoneVersion: number; deliveryFee: number; minimumOrderXof: number; estimatedMinutes: number; demo: boolean } | null;
+  delivery?: {
+    zoneId: string;
+    zoneName: string;
+    zoneVersion: number;
+    deliveryFee: number;
+    minimumOrderXof: number;
+    estimatedMinutes: number;
+    demo: boolean;
+  } | null;
 };
 export type Order = {
   id: string;
@@ -124,7 +148,15 @@ export type Order = {
 };
 export type OrderEvent = { status: string; at: string; actorRole: string };
 export type PaymentChannel = "ORANGE_MONEY_BF" | "MOOV_MONEY_BF";
-export type PaymentSession = { orderId: string; phase: string; channel: PaymentChannel; mode: string; checkoutUrl?: string | null; providerStatus?: string | null; paymentStatus: string };
+export type PaymentSession = {
+  orderId: string;
+  phase: string;
+  channel: PaymentChannel;
+  mode: string;
+  checkoutUrl?: string | null;
+  providerStatus?: string | null;
+  paymentStatus: string;
+};
 export type StaffUser = {
   id: string;
   name: string;
@@ -132,18 +164,53 @@ export type StaffUser = {
   restaurantId?: string | null;
 };
 export type StaffSession = { token: string; user: StaffUser };
-export type Customer = { id: string; phone: string };
+export type Customer = {
+  id: string;
+  phone: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+};
+export type CustomerProfileInput = {
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+};
 export type CustomerSession = { token: string; customer: Customer };
-export type CustomerOtpChallenge = { challengeId: string; expiresIn: number; retryAfter: number };
+export type CustomerOtpChallenge = {
+  challengeId: string;
+  expiresIn: number;
+  retryAfter: number;
+};
 export type SupportStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED";
 export type SupportTicket = {
-  id: string; customerId: string | null; subject: string; description: string;
-  creatorId?: string; creatorRole?: string; restaurantId?: string | null;
-  status: SupportStatus; version: number; createdAt: string; updatedAt: string;
-  history: { status: SupportStatus; at: string; actorRole: string; note: string }[];
+  id: string;
+  customerId: string | null;
+  subject: string;
+  description: string;
+  creatorId?: string;
+  creatorRole?: string;
+  restaurantId?: string | null;
+  status: SupportStatus;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  history: {
+    status: SupportStatus;
+    at: string;
+    actorRole: string;
+    note: string;
+  }[];
 };
-export type SupportTicketInput = { subject: string; description: string; idempotencyKey: string };
-export type CustomerAddress = DeliveryAddress & { id: string; point: DeliveryPoint };
+export type SupportTicketInput = {
+  subject: string;
+  description: string;
+  idempotencyKey: string;
+};
+export type CustomerAddress = DeliveryAddress & {
+  id: string;
+  point: DeliveryPoint;
+};
 export function deliveryAddressInput(input: DeliveryAddress): DeliveryAddress {
   return {
     recipientName: input.recipientName,
@@ -152,7 +219,23 @@ export function deliveryAddressInput(input: DeliveryAddress): DeliveryAddress {
     neighborhood: input.neighborhood,
     landmark: input.landmark,
     instructions: input.instructions,
-    ...(input.point ? { point: { latitude: input.point.latitude, longitude: input.point.longitude } } : {}),
+    ...(input.point
+      ? {
+          point: {
+            latitude: input.point.latitude,
+            longitude: input.point.longitude,
+          },
+        }
+      : {}),
+  };
+}
+export function customerProfileInput(
+  input: CustomerProfileInput,
+): CustomerProfileInput {
+  return {
+    firstName: input.firstName ?? null,
+    lastName: input.lastName ?? null,
+    email: input.email ?? null,
   };
 }
 export type MenuItemInput = {
@@ -191,7 +274,7 @@ const SET_RESTAURANT_OPEN = `mutation SetRestaurantOpen($id: ID!, $expectedVersi
 const AVAILABLE_RIDERS = `query AvailableRiders { availableRiders { id name role restaurantId } }`;
 const ME = `query Me { me { id name role restaurantId } }`;
 const STAFF_LOGOUT = `mutation StaffLogout { staffLogout }`;
-const CUSTOMER_FIELDS = `id phone`;
+const CUSTOMER_FIELDS = `id phone firstName lastName email`;
 const CUSTOMER_ADDRESS_FIELDS = `id recipientName phone city neighborhood landmark instructions point { latitude longitude }`;
 const CUSTOMER_ME = `query CustomerMe { customerMe { ${CUSTOMER_FIELDS} } }`;
 const CUSTOMER_ADDRESSES = `query CustomerAddresses { customerAddresses { ${CUSTOMER_ADDRESS_FIELDS} } }`;
@@ -199,6 +282,7 @@ const REQUEST_CUSTOMER_OTP = `mutation RequestCustomerOtp($phone: String!) { req
 const RESEND_CUSTOMER_OTP = `mutation ResendCustomerOtp($challengeId: ID!) { resendCustomerOtp(challengeId: $challengeId) { challengeId expiresIn retryAfter } }`;
 const VERIFY_CUSTOMER_OTP = `mutation VerifyCustomerOtp($challengeId: ID!, $code: String!) { verifyCustomerOtp(challengeId: $challengeId, code: $code) { token customer { ${CUSTOMER_FIELDS} } } }`;
 const CUSTOMER_LOGOUT = `mutation CustomerLogout { customerLogout }`;
+const UPDATE_CUSTOMER_PROFILE = `mutation UpdateCustomerProfile($input: CustomerProfileInput!) { updateCustomerProfile(input: $input) { ${CUSTOMER_FIELDS} } }`;
 const CREATE_CUSTOMER_ADDRESS = `mutation CreateCustomerAddress($input: DeliveryAddressInput!) { createCustomerAddress(input: $input) { ${CUSTOMER_ADDRESS_FIELDS} } }`;
 const UPDATE_CUSTOMER_ADDRESS = `mutation UpdateCustomerAddress($id: ID!, $input: DeliveryAddressInput!) { updateCustomerAddress(id: $id, input: $input) { ${CUSTOMER_ADDRESS_FIELDS} } }`;
 const DELETE_CUSTOMER_ADDRESS = `mutation DeleteCustomerAddress($id: ID!) { deleteCustomerAddress(id: $id) }`;
@@ -237,7 +321,10 @@ function validCustomerSession(value: unknown): CustomerSession {
     typeof session.customer.id !== "string" ||
     typeof session.customer.phone !== "string"
   )
-    throw new DelifastApiError("Réponse de connexion backend incomplète", "unavailable");
+    throw new DelifastApiError(
+      "Réponse de connexion backend incomplète",
+      "unavailable",
+    );
   return session;
 }
 
@@ -305,6 +392,7 @@ async function request<T>(
       "INVALID_PHONE",
       "INVALID_ADDRESS",
       "INVALID_IDEMPOTENCY_KEY",
+      "CUSTOMER_PROFILE_REQUIRED",
       "INVALID_OPTIONS",
       "CATEGORY_NOT_FOUND",
     ]);
@@ -332,22 +420,48 @@ async function request<T>(
 
 export const delifastApi = {
   customerSupportTickets: (token: string, limit = 20, offset = 0) =>
-    request<{ customerSupportTickets: SupportTicket[] }>(CUSTOMER_SUPPORT, { limit, offset }, token).then((d) => d.customerSupportTickets),
+    request<{ customerSupportTickets: SupportTicket[] }>(
+      CUSTOMER_SUPPORT,
+      { limit, offset },
+      token,
+    ).then((d) => d.customerSupportTickets),
   operationsSupportTickets: (token: string, limit = 20, offset = 0) =>
-    request<{ operationsSupportTickets: SupportTicket[] }>(OPERATIONS_SUPPORT, { limit, offset }, token).then((d) => d.operationsSupportTickets),
+    request<{ operationsSupportTickets: SupportTicket[] }>(
+      OPERATIONS_SUPPORT,
+      { limit, offset },
+      token,
+    ).then((d) => d.operationsSupportTickets),
   createSupportTicket: (token: string, input: SupportTicketInput) =>
-    request<{ createSupportTicket: SupportTicket }>(CREATE_SUPPORT, { input }, token).then((d) => d.createSupportTicket),
-  transitionSupportTicket: (token: string, id: string, expectedVersion: number, status: SupportStatus, note: string) =>
-    request<{ transitionSupportTicket: SupportTicket }>(TRANSITION_SUPPORT, { id, expectedVersion, status, note }, token).then((d) => d.transitionSupportTicket),
+    request<{ createSupportTicket: SupportTicket }>(
+      CREATE_SUPPORT,
+      { input },
+      token,
+    ).then((d) => d.createSupportTicket),
+  transitionSupportTicket: (
+    token: string,
+    id: string,
+    expectedVersion: number,
+    status: SupportStatus,
+    note: string,
+  ) =>
+    request<{ transitionSupportTicket: SupportTicket }>(
+      TRANSITION_SUPPORT,
+      { id, expectedVersion, status, note },
+      token,
+    ).then((d) => d.transitionSupportTicket),
   restaurants: (point?: DeliveryPoint) =>
-    request<{ restaurants: Restaurant[] }>(RESTAURANTS, { point: point ?? null }).then(
-      (data) => data.restaurants,
-    ),
+    request<{ restaurants: Restaurant[] }>(RESTAURANTS, {
+      point: point ?? null,
+    }).then((data) => data.restaurants),
   restaurant: (id: string) =>
     request<{ restaurant: Restaurant | null }>(RESTAURANT, { id }).then(
       (data) => data.restaurant,
     ),
-  checkout: (input: { restaurantId: string; items: CartLine[]; point?: DeliveryPoint }) =>
+  checkout: (input: {
+    restaurantId: string;
+    items: CartLine[];
+    point?: DeliveryPoint;
+  }) =>
     request<{ calculateCheckout: Checkout }>(CHECKOUT, { input }).then(
       (data) => data.calculateCheckout,
     ),
@@ -358,40 +472,95 @@ export const delifastApi = {
     deliveryAddress: DeliveryAddress;
   }) =>
     request<{ placeOrder: Order }>(PLACE_ORDER, {
-      input: { ...input, deliveryAddress: deliveryAddressInput(input.deliveryAddress) },
-    }).then(
-      (data) => data.placeOrder,
-    ),
+      input: {
+        ...input,
+        deliveryAddress: deliveryAddressInput(input.deliveryAddress),
+      },
+    }).then((data) => data.placeOrder),
   order: (id: string, accessToken: string) =>
     request<{ order: Order | null }>(ORDER, { id, accessToken }).then(
       (data) => data.order,
     ),
-  paymentSession: (orderId: string, accessToken: string) => request<{ paymentSession: PaymentSession | null }>(PAYMENT_SESSION, { orderId, accessToken }).then((data) => data.paymentSession),
-  startPayment: (input: { orderId: string; accessToken: string; idempotencyKey: string; channel: PaymentChannel }) => request<{ startPayment: PaymentSession | null }>(START_PAYMENT, { input }).then((data) => data.startPayment),
-  refreshPayment: (orderId: string, accessToken: string) => request<{ refreshPayment: PaymentSession | null }>(REFRESH_PAYMENT, { orderId, accessToken }).then((data) => data.refreshPayment),
+  paymentSession: (orderId: string, accessToken: string) =>
+    request<{ paymentSession: PaymentSession | null }>(PAYMENT_SESSION, {
+      orderId,
+      accessToken,
+    }).then((data) => data.paymentSession),
+  startPayment: (input: {
+    orderId: string;
+    accessToken: string;
+    idempotencyKey: string;
+    channel: PaymentChannel;
+  }) =>
+    request<{ startPayment: PaymentSession | null }>(START_PAYMENT, {
+      input,
+    }).then((data) => data.startPayment),
+  refreshPayment: (orderId: string, accessToken: string) =>
+    request<{ refreshPayment: PaymentSession | null }>(REFRESH_PAYMENT, {
+      orderId,
+      accessToken,
+    }).then((data) => data.refreshPayment),
   staffLogin: (email: string, password: string) =>
     request<{ staffLogin: StaffSession }>(STAFF_LOGIN, {
       email,
       password,
     }).then((data) => data.staffLogin),
   customerMe: (token: string) =>
-    request<{ customerMe: Customer | null }>(CUSTOMER_ME, undefined, token).then((data) => data.customerMe),
+    request<{ customerMe: Customer | null }>(
+      CUSTOMER_ME,
+      undefined,
+      token,
+    ).then((data) => data.customerMe),
+  updateCustomerProfile: (token: string, input: CustomerProfileInput) =>
+    request<{ updateCustomerProfile: Customer }>(
+      UPDATE_CUSTOMER_PROFILE,
+      { input: customerProfileInput(input) },
+      token,
+    ).then((data) => data.updateCustomerProfile),
   customerAddresses: (token: string) =>
-    request<{ customerAddresses: CustomerAddress[] }>(CUSTOMER_ADDRESSES, undefined, token).then((data) => data.customerAddresses),
+    request<{ customerAddresses: CustomerAddress[] }>(
+      CUSTOMER_ADDRESSES,
+      undefined,
+      token,
+    ).then((data) => data.customerAddresses),
   requestCustomerOtp: (phone: string) =>
-    request<{ requestCustomerOtp: CustomerOtpChallenge }>(REQUEST_CUSTOMER_OTP, { phone }).then((data) => validOtpChallenge(data.requestCustomerOtp)),
+    request<{ requestCustomerOtp: CustomerOtpChallenge }>(
+      REQUEST_CUSTOMER_OTP,
+      { phone },
+    ).then((data) => validOtpChallenge(data.requestCustomerOtp)),
   resendCustomerOtp: (challengeId: string) =>
-    request<{ resendCustomerOtp: CustomerOtpChallenge }>(RESEND_CUSTOMER_OTP, { challengeId }).then((data) => validOtpChallenge(data.resendCustomerOtp)),
+    request<{ resendCustomerOtp: CustomerOtpChallenge }>(RESEND_CUSTOMER_OTP, {
+      challengeId,
+    }).then((data) => validOtpChallenge(data.resendCustomerOtp)),
   verifyCustomerOtp: (challengeId: string, code: string) =>
-    request<{ verifyCustomerOtp: CustomerSession }>(VERIFY_CUSTOMER_OTP, { challengeId, code }).then((data) => validCustomerSession(data.verifyCustomerOtp)),
+    request<{ verifyCustomerOtp: CustomerSession }>(VERIFY_CUSTOMER_OTP, {
+      challengeId,
+      code,
+    }).then((data) => validCustomerSession(data.verifyCustomerOtp)),
   customerLogout: (token: string) =>
-    request<{ customerLogout: boolean }>(CUSTOMER_LOGOUT, undefined, token).then((data) => data.customerLogout),
+    request<{ customerLogout: boolean }>(
+      CUSTOMER_LOGOUT,
+      undefined,
+      token,
+    ).then((data) => data.customerLogout),
   createCustomerAddress: (token: string, input: DeliveryAddress) =>
-    request<{ createCustomerAddress: CustomerAddress }>(CREATE_CUSTOMER_ADDRESS, { input: deliveryAddressInput(input) }, token).then((data) => data.createCustomerAddress),
+    request<{ createCustomerAddress: CustomerAddress }>(
+      CREATE_CUSTOMER_ADDRESS,
+      { input: deliveryAddressInput(input) },
+      token,
+    ).then((data) => data.createCustomerAddress),
   updateCustomerAddress: (token: string, id: string, input: DeliveryAddress) =>
-    request<{ updateCustomerAddress: CustomerAddress }>(UPDATE_CUSTOMER_ADDRESS, { id, input: deliveryAddressInput(input) }, token).then((data) => data.updateCustomerAddress),
+    request<{ updateCustomerAddress: CustomerAddress }>(
+      UPDATE_CUSTOMER_ADDRESS,
+      { id, input: deliveryAddressInput(input) },
+      token,
+    ).then((data) => data.updateCustomerAddress),
   deleteCustomerAddress: (token: string, id: string) =>
-    request<{ deleteCustomerAddress: boolean }>(DELETE_CUSTOMER_ADDRESS, { id }, token).then((data) => data.deleteCustomerAddress),
+    request<{ deleteCustomerAddress: boolean }>(
+      DELETE_CUSTOMER_ADDRESS,
+      { id },
+      token,
+    ).then((data) => data.deleteCustomerAddress),
   me: (token: string) =>
     request<{ me: StaffUser | null }>(ME, undefined, token).then(
       (data) => data.me,

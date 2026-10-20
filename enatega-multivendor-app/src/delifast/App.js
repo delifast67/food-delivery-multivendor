@@ -75,6 +75,7 @@ function App({ api, storage }) {
   const [supportSubject, setSupportSubject] = useState('')
   const [supportDescription, setSupportDescription] = useState('')
   const [expandedTicket, setExpandedTicket] = useState(null)
+  const [profile, setProfile] = useState({ firstName: '', lastName: '', email: '' })
   const customerId = state?.customer?.id || null
   useEffect(() => {
     // A draft from a revoked account must not reappear in another account.
@@ -83,6 +84,7 @@ function App({ api, storage }) {
     setSupportSubject('')
     setSupportDescription('')
     setExpandedTicket(null)
+    setProfile(state?.customer ? { firstName: state.customer.firstName || '', lastName: state.customer.lastName || '', email: state.customer.email || '' } : { firstName: '', lastName: '', email: '' })
   }, [customerId, state?.customerSessionVersion])
   useEffect(() => {
     if (!challenge) return undefined
@@ -235,6 +237,11 @@ function App({ api, storage }) {
     const expired = !!challenge && !!expiresAt && otpNow >= expiresAt
     const cooldown = !!challenge && !!retryAt && otpNow < retryAt
     const addressBusy = state.authBusy || state.busy || !!pending
+    const profileBusy = state.authBusy || state.busy
+    const saveProfile = async() => {
+      setLocalError('')
+      try { await controller.updateCustomerProfile(profile) } catch (error) { setLocalError(errorText(error)) }
+    }
     const resetAddress = () => { setAccountAddress({ ...initialAddress }); setEditingAddressId(null) }
     const saveAddress = async() => {
       setLocalError('')
@@ -275,6 +282,10 @@ function App({ api, storage }) {
           <Button title='Changer de téléphone' disabled={state.authBusy} onPress={() => { setChallenge(null); setOtp('') }} />
         </>}
       </> : <>
+        <Text style={styles.sectionTitle}>Profil client</Text>
+        <Text style={styles.subtitle}>Ces données privées sont utilisées uniquement lorsqu’un paiement les exige. Elles restent en mémoire et ne sont pas enregistrées sur l’appareil.</Text>
+        {['firstName', 'lastName', 'email'].map(key => <TextInput key={key} style={styles.input} placeholder={key === 'firstName' ? 'Prénom' : key === 'lastName' ? 'Nom' : 'Email (optionnel)'} keyboardType={key === 'email' ? 'email-address' : 'default'} autoCapitalize={key === 'email' ? 'none' : 'words'} value={profile[key]} onChangeText={value => setProfile({ ...profile, [key]: value })} editable={!profileBusy} />)}
+        <Button title='Enregistrer le profil' disabled={profileBusy} onPress={saveProfile} />
         <Text style={styles.sectionTitle}>Téléphone : {customer.phone}</Text><Button title='Se déconnecter' disabled={state.authBusy} onPress={logout} />
         <Button title='Mes tickets de support' disabled={state.authBusy} onPress={() => { setLocalError(''); setScreen('support'); controller.loadSupportTickets().catch(() => {}) }} />
         <Text style={styles.sectionTitle}>Carnet d’adresses</Text>
@@ -577,7 +588,7 @@ function App({ api, storage }) {
   }
   const beginPayment = async(channel) => {
     setLocalError('')
-    try { await controller.startPayment(channel) } catch (error) { setLocalError(errorText(error)) }
+    try { await controller.startPayment(channel) } catch (error) { if (error?.code === 'CUSTOMER_PROFILE_REQUIRED') setScreen('account'); setLocalError(errorText(error)) }
   }
   const confirmPayment = async() => {
     setLocalError('')

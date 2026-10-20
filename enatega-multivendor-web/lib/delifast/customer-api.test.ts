@@ -55,6 +55,16 @@ describe("customer transport protocol", () => {
       true,
     ],
     [
+      "updateCustomerProfile",
+      () =>
+        delifastApi.updateCustomerProfile("private-token", {
+          firstName: "Ada",
+          lastName: null,
+          email: null,
+        }),
+      true,
+    ],
+    [
       "requestCustomerOtp",
       () => delifastApi.requestCustomerOtp(address.phone),
       false,
@@ -138,6 +148,34 @@ describe("customer transport protocol", () => {
     expect(input).not.toHaveProperty("_id");
     expect(input).not.toHaveProperty("createdAt");
     expect(input).not.toHaveProperty("version");
+  });
+
+  it("whitelists nullable CustomerProfileInput fields and requires authentication", async () => {
+    const fetchMock = stubSuccessfulFetch();
+    await delifastApi.updateCustomerProfile("private-token", {
+      firstName: "Ada",
+      lastName: null,
+      email: null,
+      id: "must-not-send",
+      phone: "+22600000000",
+    } as never);
+    const [, init] = fetchMock.mock.calls[0] as [
+      string,
+      NonNullable<Parameters<typeof fetch>[1]>,
+    ];
+    const body = JSON.parse(String(init.body)) as {
+      variables: { input: Record<string, unknown> };
+    };
+    expect(body.variables.input).toEqual({
+      firstName: "Ada",
+      lastName: null,
+      email: null,
+    });
+    expect(body.variables.input).not.toHaveProperty("id");
+    expect(body.variables.input).not.toHaveProperty("phone");
+    expect((init.headers as Record<string, string>).authorization).toBe(
+      "Bearer private-token",
+    );
   });
 
   it("propagates provider error code from GraphQL without generating or displaying an OTP", async () => {

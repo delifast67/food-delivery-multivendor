@@ -9,7 +9,7 @@ const { documents } = mobileRequire('./src/delifast/api.js');
 const schema = buildSchema(readFileSync(new URL('../delifast-api/schema/v1.graphql', import.meta.url), 'utf8'));
 const required = ['calculateCheckout', 'order', 'placeOrder', 'restaurant', 'restaurants',
   'requestCustomerOtp', 'resendCustomerOtp', 'verifyCustomerOtp', 'customerLogout',
-  'customerMe', 'customerAddresses', 'createCustomerAddress', 'updateCustomerAddress', 'deleteCustomerAddress',
+  'customerMe', 'updateCustomerProfile', 'customerAddresses', 'createCustomerAddress', 'updateCustomerAddress', 'deleteCustomerAddress',
   'customerSupportTickets', 'customerSupportTicket', 'createSupportTicket',
   'paymentSession', 'startPayment', 'refreshPayment'];
 assert.deepEqual(Object.keys(documents).sort(), required.sort());

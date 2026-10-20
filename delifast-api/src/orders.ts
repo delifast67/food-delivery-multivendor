@@ -39,8 +39,9 @@ function normalizeLegacyCheckout(checkout: any) {
   };
 }
 function customerView(order: any, token = "") {
+  const { customerId: _customerId, accessToken: _storedToken, accessTokenHash: _tokenHash, ...safeOrder } = order;
   return {
-    ...order,
+    ...safeOrder,
     checkout: normalizeLegacyCheckout(order.checkout),
     accessToken: token,
     history: initialHistory(order),
@@ -57,6 +58,7 @@ export async function placeOrder(
   cart: Cart,
   address: Address,
   idempotencyKey: unknown,
+  customerId?: string,
 ) {
   if (
     typeof idempotencyKey !== "string" ||
@@ -104,6 +106,8 @@ export async function placeOrder(
   const orders = db.collection<any>("orders");
   const old = await orders.findOne({ idempotencyKey });
   if (old) {
+    if (old.customerId && old.customerId !== customerId)
+      fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée par une autre session client");
     if (old.fingerprint !== fingerprint && !matchesLegacy(old))
       fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée avec un autre panier");
     return customerView(old, old.accessToken ?? "");
@@ -128,6 +132,7 @@ export async function placeOrder(
     history: [
       { status: "PAYMENT_PENDING", at: timestamp, actorRole: "SYSTEM" },
     ],
+    ...(customerId ? { customerId } : {}),
   };
   try {
     await orders.insertOne(order);
@@ -135,6 +140,8 @@ export async function placeOrder(
   } catch (error: any) {
     if (error?.code !== 11000) throw error;
     const concurrent = await orders.findOne({ idempotencyKey });
+    if (concurrent?.customerId && concurrent.customerId !== customerId)
+      fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée par une autre session client");
     if (concurrent?.fingerprint === fingerprint || matchesLegacy(concurrent))
       return customerView(concurrent, concurrent.accessToken ?? "");
     fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée avec un autre panier");

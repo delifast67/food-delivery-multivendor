@@ -12,7 +12,7 @@ const ACCESS_TOKEN = "synthetic-cinetpay-access-token-123";
 const amount = 2500;
 const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
 const order = (id = ORDER_ID, total = amount) => ({
-  id, accessTokenHash: sha256(ACCESS_TOKEN), status: "PAYMENT_PENDING", paymentStatus: "PENDING",
+  id, customerId: "customer-cinetpay-integration", accessTokenHash: sha256(ACCESS_TOKEN), status: "PAYMENT_PENDING", paymentStatus: "PENDING",
   checkout: { total, currency: "XOF" },
   history: [{ status: "PAYMENT_PENDING", at: "2026-01-01T00:00:00.000Z", actorRole: "SYSTEM" }],
 });
@@ -50,9 +50,9 @@ let mongo: MongoMemoryServer; let client: MongoClient; let db: Db;
 beforeAll(async () => { mongo = await MongoMemoryServer.create(); client = new MongoClient(mongo.getUri()); await client.connect(); db = client.db("cinetpay-integration-fixtures"); }, 60_000);
 afterAll(async () => { await client?.close(); await mongo?.stop(); });
 beforeEach(async () => {
-  await db.collection("orders").deleteMany({}); await db.collection<any>("payment_customer_profiles").deleteMany({}); await db.collection("cinetpay_attempts").deleteMany({});
+  await db.collection("orders").deleteMany({}); await db.collection<any>("customers").deleteMany({}); await db.collection("cinetpay_attempts").deleteMany({});
   await db.collection("orders").insertOne(order());
-  await db.collection<any>("payment_customer_profiles").insertOne({ _id: ORDER_ID, email: "fixture.customer@example.invalid", firstName: "Fixture", lastName: "Customer", phone: "+22670000000" });
+  await db.collection<any>("customers").insertOne({ id: "customer-cinetpay-integration", email: "fixture.customer@example.invalid", firstName: "Fixture", lastName: "Customer", phone: "+22670000000", privateMarker: "must-not-leak" });
 });
 function setup(mode: "test" | "live", opts: TransportOptions = {}) {
   const t = transport(mode, opts); const config = configFor(mode); if (opts.timeout) config.timeoutMs = 50; const client = new CinetPayClient(config, t.fetcher); const store = mongoCinetPayStore(() => db); const provider = cinetPayProvider(client, store); return { t, client, store, provider, service: new PaymentService(db, provider) };
@@ -64,13 +64,17 @@ describe("CinetPay integration — synthetic transport and durable Mongo ledger"
     const { service, t } = setup("test"); const session = await service.start(input());
     expect(session.checkoutUrl).toBe("https://secure.cinetpay.net/checkout/synthetic"); const paymentCalls = t.calls.filter(x => x.url.endsWith("/v1/payment")); expect(paymentCalls).toHaveLength(1);
     const payload = JSON.parse(String(paymentCalls[0].init?.body));
-    expect(payload).toMatchObject({ currency: "XOF", amount, lang: "fr", client_email: "fixture.customer@example.invalid", client_first_name: "Fixture", client_last_name: "Customer", client_phone_number: "+22670000000", channel: "PUSH", payment_method: "OM_BF", direct_pay: false });
+    expect(payload).toMatchObject({ currency: "XOF", amount, lang: "fr", client_email: "fixture.customer@example.invalid", client_first_name: "Fixture", client_last_name: "Customer", channel: "PUSH", payment_method: "OM_BF", direct_pay: false });
+    expect(payload).not.toHaveProperty("privateMarker"); expect(payload).not.toHaveProperty("customerId"); expect(payload).not.toHaveProperty("client_phone_number");
     expect(payload.merchant_transaction_id).toBe(cinetPayReference({ orderId: ORDER_ID, attemptId: (await db.collection("orders").findOne({ id: ORDER_ID }))!.paymentAttempt.id, amount, currency: "XOF", country: "BF" }, "test"));
     const ledger: any = await db.collection("cinetpay_attempts").findOne({ orderId: ORDER_ID }); expect(ledger.state).toBe("READY"); expect(ledger.amount).toBe(amount); expect(ledger.notifyToken).toBeUndefined(); expect(ledger.notifyTokenHash).toBe(sha256(t.notifyToken));
+    expect(ledger).not.toHaveProperty("email"); expect(ledger).not.toHaveProperty("firstName"); expect(ledger).not.toHaveProperty("lastName"); expect(ledger).not.toHaveProperty("phone"); expect(ledger).not.toHaveProperty("privateMarker");
   });
   it("réserve durablement avant POST et n'envoie rien sans profil client", async () => {
-    await db.collection<any>("payment_customer_profiles").deleteOne({ _id: ORDER_ID }); const { provider, t } = setup("test");
-    await expect(provider.createPayment({ orderId: ORDER_ID, attemptId: "attempt-missing-profile", amount, currency: "XOF", country: "BF", channel: "ORANGE_MONEY_BF" })).rejects.toThrow(); expect(t.calls).toHaveLength(0);
+    await db.collection<any>("customers").updateOne({ id: "customer-cinetpay-integration" }, { $set: { firstName: "" } }); const { service, t } = setup("test");
+    await expect(service.start(input("idem-incomplete-profile"))).rejects.toMatchObject({ extensions: { code: "CUSTOMER_PROFILE_REQUIRED" } });
+    expect(t.calls).toHaveLength(0); expect(await db.collection("cinetpay_attempts").countDocuments({})).toBe(0);
+    expect((await db.collection<any>("orders").findOne({ id: ORDER_ID }))?.paymentAttempt).toBeUndefined();
   });
   it("notification authentifiée est seulement un hint puis déclenche GET; digest seul est stocké", async () => {
     const { service, t } = setup("live"); await service.start(input()); const ledger: any = await db.collection("cinetpay_attempts").findOne({ orderId: ORDER_ID });

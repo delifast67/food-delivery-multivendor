@@ -3,6 +3,7 @@ export type PaymentChannel = "ORANGE_MONEY_BF" | "MOOV_MONEY_BF";
 export type ProviderStatus =
   | "pending" | "completed" | "failed" | "canceled" | "authorized" | "expired";
 export type PaymentMode = "test" | "live";
+export type CustomerProfileField = "firstName" | "lastName" | "email";
 export interface PaymentContext {
   orderId: string;
   attemptId: string;
@@ -25,6 +26,8 @@ export interface PaymentCapabilities {
   readonly notification: boolean;
   readonly statusQuery: boolean;
   readonly refund: false | "full" | "full_and_partial";
+  /** Optional provider contract; fields are read from the server customer allowlist only. */
+  readonly requiredCustomerProfile?: readonly CustomerProfileField[];
 }
 export interface PaymentProvider {
   /** Stable server identifier, never inferred from credentials or a callback. */

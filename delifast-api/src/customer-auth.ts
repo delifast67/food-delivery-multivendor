@@ -122,17 +122,60 @@ async function reserveSend(db: Db, phone: string, ip: string) {
   await reserveBucket(db, "phone", phone, 3_600_000, 10);
   await reservePhone(db, phone);
 }
+export type CustomerProfile = { firstName: string | null; lastName: string | null; email: string | null };
 export type CustomerContext = {
-  customer?: { id: string; phone: string };
+  customer?: { id: string; phone: string } & CustomerProfile;
   customerSessionId?: string;
 };
-export function requireCustomer(ctx: CustomerContext): {
-  id: string;
-  phone: string;
-} {
+export function requireCustomer(ctx: CustomerContext): { id: string; phone: string } & CustomerProfile {
   if (!ctx.customer) bad("UNAUTHENTICATED", "Authentification requise");
   return ctx.customer!;
 }
+function cleanProfileText(value: unknown, field: string): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value !== "string") bad("INVALID_INPUT", `Le champ ${field} est invalide`);
+  const raw = value.normalize("NFC");
+  if (/[\u0000-\u001f\u007f<>]/u.test(raw))
+    bad("INVALID_INPUT", `Le champ ${field} est invalide`);
+  const normalized = raw.trim().replace(/\s+/gu, " ");
+  if (!normalized) return null;
+  if (normalized.length < 2 || normalized.length > 255)
+    bad("INVALID_INPUT", `Le champ ${field} est invalide`);
+  return normalized;
+}
+function cleanEmail(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value !== "string") bad("INVALID_INPUT", "L’adresse email est invalide");
+  const raw = value.normalize("NFC").trim();
+  if (raw.length > 254 || /[\u0000-\u0020\u007f<>]/u.test(raw) || (raw.match(/@/g) ?? []).length !== 1)
+    bad("INVALID_INPUT", "L’adresse email est invalide");
+  const at = raw.lastIndexOf("@");
+  const local = raw.slice(0, at), domain = raw.slice(at + 1).toLowerCase();
+  if (!local || local.length > 64 || local.startsWith(".") || local.endsWith(".") || local.includes("..") ||
+      !/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/u.test(local) || domain.length < 3 || domain.length > 253 ||
+      !domain.includes(".") || domain.startsWith(".") || domain.endsWith(".") || domain.includes("..") ||
+      domain.split(".").some((label) => !label || label.length > 63 || label.startsWith("-") || label.endsWith("-") || !/^[a-z0-9-]+$/u.test(label)))
+    bad("INVALID_INPUT", "L’adresse email est invalide");
+  return `${local}@${domain}`;
+}
+export function customerProfileView(c: any): CustomerProfile {
+  return { firstName: c?.firstName ?? null, lastName: c?.lastName ?? null, email: c?.email ?? null };
+}
+export async function updateCustomerProfile(db: Db, ctx: CustomerContext, input: any) {
+  const c = requireCustomer(ctx);
+  const $set: Record<string, string | null> = {};
+  if (Object.hasOwn(input, "firstName")) $set.firstName = cleanProfileText(input.firstName, "prénom");
+  if (Object.hasOwn(input, "lastName")) $set.lastName = cleanProfileText(input.lastName, "nom");
+  if (Object.hasOwn(input, "email")) $set.email = cleanEmail(input.email);
+  const result = await db.collection<any>("customers").findOneAndUpdate(
+    { id: c.id }, { $set: { ...$set, updatedAt: new Date() } }, { returnDocument: "after", projection: { _id: 0, id: 1, phone: 1, firstName: 1, lastName: 1, email: 1 } },
+  );
+  if (!result) bad("UNAUTHENTICATED", "Authentification requise");
+  const view = { id: result.id, phone: result.phone, ...customerProfileView(result) };
+  ctx.customer = view;
+  return view;
+}
+
 export async function requestOtp(
   db: Db,
   provider: SmsProvider,
@@ -360,7 +403,7 @@ export async function verifyOtp(
     createdAt: new Date(),
     expiresAt: new Date(Date.now() + 30 * 24 * 3_600_000),
   });
-  return { token, customer: { id: customer.id, phone: customer.phone } };
+  return { token, customer: { id: customer.id, phone: customer.phone, ...customerProfileView(customer) } };
 }
 export async function authenticateCustomer(
   db: Db,
@@ -378,7 +421,7 @@ export async function authenticateCustomer(
   if (!s) return {};
   const c = await db.collection<any>("customers").findOne({ id: s.customerId });
   return c
-    ? { customer: { id: c.id, phone: c.phone }, customerSessionId: s.id }
+    ? { customer: { id: c.id, phone: c.phone, ...customerProfileView(c) }, customerSessionId: s.id }
     : {};
 }
 export async function customerLogout(db: Db, ctx: CustomerContext) {

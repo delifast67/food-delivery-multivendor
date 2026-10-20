@@ -54,6 +54,26 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
   let supportInFlight = null
   let otpChallenge = null
   const ADDRESS_FIELDS = ['recipientName', 'phone', 'city', 'neighborhood', 'landmark', 'instructions', 'point']
+  const PROFILE_FIELDS = ['firstName', 'lastName', 'email']
+  const serializeProfile = input => {
+    const value = input && typeof input === 'object' ? input : {}
+    const payload = {}
+    for (const key of PROFILE_FIELDS) {
+      if (value[key] === undefined) continue
+      if (value[key] === null) { payload[key] = null; continue }
+      if (typeof value[key] !== 'string') throw new Error(`${key === 'email' ? 'Email' : key === 'firstName' ? 'Prénom' : 'Nom'} invalide`)
+      const normalized = value[key].trim()
+      // An empty text field is the UI representation of clearing a nullable field.
+      payload[key] = normalized || null
+    }
+    for (const key of ['firstName', 'lastName']) {
+      if (payload[key] !== undefined && payload[key] !== null && (payload[key].length < 2 || payload[key].length > 255)) {
+        throw new Error(`${key === 'firstName' ? 'Prénom' : 'Nom'} invalide (2 à 255 caractères)`)
+      }
+    }
+    if (payload.email !== undefined && payload.email !== null && (payload.email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email))) throw new Error('Adresse email invalide (254 caractères maximum)')
+    return payload
+  }
   const serializeAddress = (input) => {
     const value = input && typeof input === 'object' ? input : {}
     return Object.fromEntries(ADDRESS_FIELDS.filter(key => value[key] !== undefined).map(key => [key, key === 'point' && value[key] ? { latitude: value[key].latitude, longitude: value[key].longitude } : value[key]]))
@@ -637,6 +657,22 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       try { if (storage.removeItem) { try { await storage.removeItem(CUSTOMER_TOKEN_KEY) } finally { await purgeSupportAttempt() } } } finally { await revoked }
       if (failure) throw failure
       return true
+    },
+    async updateCustomerProfile(input) {
+      if (!state.customer || !api.updateCustomerProfile) throw new Error('Connexion client requise')
+      const epoch = authEpoch; const payload = serializeProfile(input)
+      return authExclusive(async() => {
+        try {
+          const value = await api.updateCustomerProfile(payload)
+          if (epoch !== authEpoch) throw new Error('Connexion annulée')
+          if (!value || typeof value.id !== 'string' || value.id !== state.customer.id) throw new Error('Réponse profil incomplète')
+          set({ customer: clone(value) })
+          return clone(value)
+        } catch (error) {
+          if (epoch === authEpoch && error?.kind === 'auth') await clearCustomerSession()
+          throw error
+        }
+      })
     },
     async createCustomerAddress(input) {
       if (!state.customer || !api.createCustomerAddress) throw new Error('Connexion client requise')

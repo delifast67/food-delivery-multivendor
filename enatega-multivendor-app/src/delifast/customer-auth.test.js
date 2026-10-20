@@ -275,3 +275,47 @@ test('un refus obsolète du carnet après logout ne purge pas une seconde fois l
   assert.equal(removals, 2)
   assert.equal(controller.getState().customer, null)
 })
+
+test('profil client whiteliste les trois champs et conserve omission/effacement', async () => {
+  const sent = []
+  const api = createClient({ fetchImpl: async (url, init) => {
+    const body = JSON.parse(init.body); sent.push(body)
+    return response({ updateCustomerProfile: { id: 'c', phone: '+22670000000', firstName: '', lastName: null, email: null } })
+  } })
+  api.setCustomerToken('profile-token')
+  await api.updateCustomerProfile({ firstName: '', lastName: undefined, email: null, ignored: 'drop' })
+  assert.deepEqual(sent[0].variables.input, { firstName: '', email: null })
+  assert.match(sent[0].query, /CustomerProfileInput/)
+})
+
+test('édition profil valide, ne persiste aucun profil et une réponse stale ne change pas la session', async () => {
+  const store = storage({ [CUSTOMER_TOKEN_KEY]: 'profile-token' }); const wait = deferred(); let sent
+  const controller = createController({ storage: store, api: {
+    setCustomerToken: () => {}, customerMe: async () => ({ id: 'c', phone: '+22670000000', firstName: null, lastName: null, email: null }), customerAddresses: async () => [],
+    updateCustomerProfile: async input => { sent = input; return wait.promise }
+  } })
+  await controller.restoreCustomer()
+  const saving = controller.updateCustomerProfile({ firstName: ' Awa ', lastName: 'K.', email: '' }); await tick()
+  assert.deepEqual(sent, { firstName: 'Awa', lastName: 'K.', email: null })
+  await controller.logoutCustomer(); wait.resolve({ id: 'c', phone: '+22670000000', firstName: 'Awa', lastName: 'K.', email: '' }); await assert.rejects(saving, /Connexion annulée/)
+  assert.equal(controller.getState().customer, null)
+  assert.equal(store.db['delifast-customer-profile'], undefined)
+  const invalid = createController({ storage: storage(), api: { updateCustomerProfile: async () => { throw new Error('must not call') } } })
+  await assert.rejects(invalid.updateCustomerProfile({ email: 'not-an-email' }), /Connexion client requise/)
+})
+
+test('profil accepte null et bornes 2..255/254, mais refuse les types et dépassements', async () => {
+  const sent = []
+  const controller = createController({ storage: storage({ [CUSTOMER_TOKEN_KEY]: 'profile-token' }), api: {
+    setCustomerToken: () => {}, customerMe: async () => ({ id: 'c', phone: '+22670000000' }), customerAddresses: async () => [], updateCustomerProfile: async value => { sent.push(value); return { id: 'c' } }
+  } })
+  await controller.restoreCustomer()
+  await assert.rejects(controller.updateCustomerProfile({ firstName: 1 }), /Prénom invalide/)
+  await assert.rejects(controller.updateCustomerProfile({ firstName: 'x' }), /2 à 255/)
+  await assert.rejects(controller.updateCustomerProfile({ lastName: 'x'.repeat(256) }), /2 à 255/)
+  await assert.rejects(controller.updateCustomerProfile({ email: 'a'.repeat(250) + '@x.com' }), /254/)
+  await controller.updateCustomerProfile({ firstName: ' Aw ', lastName: 'N'.repeat(255), email: '' })
+  assert.deepEqual(sent[0], { firstName: 'Aw', lastName: 'N'.repeat(255), email: null })
+  await controller.updateCustomerProfile({ firstName: null, lastName: null, email: null })
+  assert.deepEqual(sent[1], { firstName: null, lastName: null, email: null })
+})
