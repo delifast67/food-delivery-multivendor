@@ -98,7 +98,7 @@ test('parcours rendu menu, panier, adresse et suivi sans fuite de jeton', async 
   }
   await press(tree, 'Envoyer la commande')
   assert.match(treeText(tree), /order-test/)
-  assert.match(treeText(tree), /PAYMENT_PENDING/)
+  assert.match(treeText(tree), /En attente de paiement/)
   assert.doesNotMatch(treeText(tree), /never-show-this-token/)
   await unmount(tree)
 })
@@ -195,6 +195,8 @@ test('profil UI enregistre les champs optionnels et purge le brouillon au logout
     customerLogout: async () => true
   }), storage)
   await press(tree, 'Compte', 'TouchableOpacity')
+  assert.match(treeText(tree), /Profil client/)
+  await press(tree, 'Profil client')
   const fields = tree.root.findAllByType('TextInput')
   await renderer.act(async () => {
     fields.find(node => node.props.placeholder === 'Prénom').props.onChangeText('Awa')
@@ -202,9 +204,11 @@ test('profil UI enregistre les champs optionnels et purge le brouillon au logout
     fields.find(node => node.props.placeholder === 'Email (optionnel)').props.onChangeText('')
   })
   await press(tree, 'Enregistrer le profil')
+  await press(tree, 'Retour au compte')
   assert.deepEqual(sent[0], { firstName: 'Awa', lastName: 'K.', email: null })
   await press(tree, 'Se déconnecter')
   assert.match(treeText(tree), /Connexion par téléphone/)
+  assert.doesNotMatch(treeText(tree), /Awa|K\.|awa@example.test|fixture-profile-session/)
   assert.equal(tree.root.findAllByType('TextInput').length, 1)
   await unmount(tree)
 })
@@ -223,19 +227,107 @@ test('la révocation efface le brouillon du carnet avant une nouvelle identité'
     verifyCustomerOtp: async () => ({ token: 'fixture-new-session', customer: { id: 'fixture-second-customer', phone: '+22671111111' } })
   }), storage)
   await press(tree, 'Compte', 'TouchableOpacity')
+  await press(tree, 'Carnet d’adresses')
   await press(tree, 'Modifier')
-  assert.equal(tree.root.findAllByType('TextInput').find(node => node.props.placeholder === 'recipientName').props.value, address.recipientName)
-  await renderer.act(async () => { tree.root.findAllByType('TextInput').find(node => node.props.placeholder === 'instructions').props.onChangeText('Ancien brouillon privé fictif') })
+  assert.equal(tree.root.findAllByType('TextInput').find(node => node.props.placeholder === 'Nom du destinataire').props.value, address.recipientName)
+  await renderer.act(async () => { tree.root.findAllByType('TextInput').find(node => node.props.placeholder === 'Instructions de livraison').props.onChangeText('Ancien brouillon privé fictif') })
   await press(tree, 'Enregistrer les modifications')
   assert.match(treeText(tree), /Connexion par téléphone/)
   await renderer.act(async () => { tree.root.findByType('TextInput').props.onChangeText('+22671111111') })
   await press(tree, 'Demander un code')
   await renderer.act(async () => { tree.root.findAllByType('TextInput').find(node => node.props.placeholder === 'Code de vérification').props.onChangeText('123456') })
   await press(tree, 'Valider le code')
-  assert.match(treeText(tree), /Téléphone :.*22671111111/)
-  assert.match(treeText(tree), /Ajouter une adresse/)
-  assert.equal(tree.root.findAllByType('TextInput').find(node => node.props.placeholder === 'recipientName').props.value, '')
-  assert.equal(tree.root.findAllByType('TextInput').find(node => node.props.placeholder === 'instructions').props.value, '')
+  assert.match(treeText(tree), /Téléphone :.*•• •• 11/)
+  await press(tree, 'Carnet d’adresses')
+  await press(tree, 'Ajouter une adresse')
+  assert.equal(tree.root.findByProps({ accessibilityLabel: 'Nom du destinataire' }).props.value, '')
+  assert.equal(tree.root.findByProps({ accessibilityLabel: 'Instructions de livraison' }).props.value, '')
+  await unmount(tree)
+})
+
+
+test('compte : profil invalide reste éditable et ne déclenche aucun appel API', async () => {
+  let calls = 0
+  const tree = await supportMount({
+    updateCustomerProfile: async () => { calls++; throw new Error('Ne doit pas être appelé') }
+  })
+  await press(tree, 'Compte', 'TouchableOpacity')
+  await press(tree, 'Profil client')
+  await renderer.act(async () => { tree.root.findByProps({ accessibilityLabel: 'Email (optionnel)' }).props.onChangeText('email-invalide') })
+  await press(tree, 'Enregistrer le profil')
+  assert.equal(calls, 0)
+  assert.match(treeText(tree), /Adresse email invalide/)
+  assert.equal(tree.root.findByProps({ accessibilityLabel: 'Email (optionnel)' }).props.value, 'email-invalide')
+  await unmount(tree)
+})
+
+test('compte : retour Android remonte profil puis compte puis accueil', async () => {
+  native.Platform.OS = 'android'
+  const tree = await supportMount()
+  try {
+    await selectTab(tree, 'Compte')
+    await press(tree, 'Profil client')
+    assert.match(treeText(tree), /Vos informations/)
+    assert.equal(await hardwareBack(), true)
+    assert.match(treeText(tree), /Profil client/)
+    assert.equal(await hardwareBack(), true)
+    assert.match(treeText(tree), /Restaurant fictif/)
+    assert.equal(await hardwareBack(), false)
+    assert.match(treeText(tree), /Restaurant fictif/)
+  } finally { await unmount(tree); native.Platform.OS = 'ios' }
+})
+
+test('carnet : ajout, modification et coordonnées décimales signées éditables', async () => {
+  const sent = []
+  const saved = { ...address, id: 'editable-address', recipientName: 'Destinataire fixture' }
+  const tree = await supportMount({
+    customerAddresses: async () => [saved],
+    updateCustomerAddress: async (id, value) => { sent.push([id, value]); return { ...value, id } },
+    createCustomerAddress: async value => { sent.push(['new', value]); return { ...value, id: 'new-address' } }
+  })
+  await press(tree, 'Compte', 'TouchableOpacity')
+  await press(tree, 'Carnet d’adresses')
+  await press(tree, 'Modifier')
+  await renderer.act(async () => { tree.root.findByProps({ accessibilityLabel: 'Latitude' }).props.onChangeText('-12,3456') })
+  await renderer.act(async () => { tree.root.findByProps({ accessibilityLabel: 'Longitude' }).props.onChangeText('+1.2345') })
+  assert.equal(tree.root.findByProps({ accessibilityLabel: 'Latitude' }).props.value, '-12.3456')
+  assert.equal(tree.root.findByProps({ accessibilityLabel: 'Longitude' }).props.value, '+1.2345')
+  await press(tree, 'Enregistrer les modifications')
+  assert.equal(sent.length, 1)
+  assert.deepEqual(sent[0][0], 'editable-address')
+  assert.equal(sent[0][1].point.latitude, -12.3456)
+  assert.equal(sent[0][1].point.longitude, 1.2345)
+  await unmount(tree)
+})
+
+test('carnet : coordonnées non numériques refusées sans appel API', async () => {
+  let calls = 0
+  const tree = await supportMount({ customerAddresses: async () => [{ ...address, id: 'point-test' }], updateCustomerAddress: async () => { calls++; throw new Error('Ne doit pas être appelé') } })
+  await press(tree, 'Compte', 'TouchableOpacity')
+  await press(tree, 'Carnet d’adresses')
+  await press(tree, 'Modifier')
+  await renderer.act(async () => { tree.root.findByProps({ accessibilityLabel: 'Latitude' }).props.onChangeText('abc') })
+  await press(tree, 'Enregistrer les modifications')
+  assert.equal(calls, 0)
+  assert.match(treeText(tree), /Point de livraison invalide/)
+  await unmount(tree)
+})
+
+test('carnet : annulation puis confirmation de suppression', async () => {
+  let deleted = 0
+  const saved = { ...address, id: 'delete-address', recipientName: 'Adresse privée fixture' }
+  const tree = await supportMount({ customerAddresses: async () => [saved], deleteCustomerAddress: async () => { deleted++; return true } })
+  await press(tree, 'Compte', 'TouchableOpacity')
+  await press(tree, 'Carnet d’adresses')
+  await press(tree, 'Supprimer')
+  assert.match(treeText(tree), /Supprimer cette adresse du carnet/)
+  await press(tree, 'Conserver l’adresse')
+  assert.equal(deleted, 0)
+  assert.doesNotMatch(treeText(tree), /Confirmer la suppression/)
+  await press(tree, 'Supprimer')
+  await press(tree, 'Confirmer la suppression')
+  assert.equal(deleted, 1)
+  assert.match(treeText(tree), /Adresse supprimée/)
   await unmount(tree)
 })
 
@@ -441,7 +533,7 @@ test('navigation basse : dernière commande restaurée suivie sans exposer son j
   assert.match(treeText(tree), /order-test/)
   assert.doesNotMatch(treeText(tree), /never-show-this-token/)
   await press(tree, 'Actualiser le suivi')
-  assert.match(treeText(tree), /PAYMENT_PENDING/)
+  assert.match(treeText(tree), /En attente de paiement/)
   assert.doesNotMatch(treeText(tree), /never-show-this-token/)
   await unmount(tree)
 })
@@ -760,5 +852,54 @@ test('menu et panier possèdent des conteneurs distincts pour ne pas hériter du
   const cartElement = React.Children.toArray(cart.parent.props.children).find(element => element.type === 'ScrollView')
   assert.match(cartElement.key, /cart/)
   assert.notEqual(menuElement.key, cartElement.key)
+  await unmount(tree)
+})
+
+
+test('suivi : reçu serveur, options et montants sans exposer le jeton', async () => {
+  const storage = memory()
+  await storage.setItem('delifast-last-order', JSON.stringify({ id: order.id, accessToken: order.accessToken }))
+  const receipt = { ...order, deliveryAddress: address, checkout: { ...checkout, items: [{ ...checkout.items[0], selectedOptions: [{ name: 'Option reçue du serveur' }] }] } }
+  const tree = await mount(api({ order: async () => receipt }), storage)
+  await selectTab(tree, 'Commandes')
+  assert.doesNotMatch(treeText(tree), /En attente de paiement/)
+  await press(tree, 'Actualiser le suivi')
+  assert.match(treeText(tree), /Historique serveur/)
+  assert.match(treeText(tree), /Récapitulatif/)
+  assert.match(treeText(tree), /Option reçue du serveur/)
+  assert.match(treeText(tree), /Nom test|Ville libre/)
+  assert.doesNotMatch(treeText(tree), /never-show-this-token/)
+  await unmount(tree)
+})
+
+test('suivi : absence de statut et de total ne fabrique ni PENDING ni zéro', async () => {
+  const storage = memory()
+  await storage.setItem('delifast-last-order', JSON.stringify({ id: order.id, accessToken: order.accessToken }))
+  const tree = await mount(api({ order: async () => ({ id: order.id, checkout: { items: [] }, history: [] }) }), storage)
+  await selectTab(tree, 'Commandes')
+  await press(tree, 'Actualiser le suivi')
+  assert.match(treeText(tree), /Statut serveur indisponible/)
+  assert.match(treeText(tree), /Aucun événement fourni par le serveur/)
+  assert.doesNotMatch(treeText(tree), /En attente de paiement|PENDING|0 XOF/)
+  await unmount(tree)
+})
+
+test('carnet : ajouter transmet uniquement l’adresse validée et normalisée', async () => {
+  const sent = []
+  const tree = await supportMount({ createCustomerAddress: async input => { sent.push(input); return { ...input, id: 'normalized-address' } } })
+  await selectTab(tree, 'Compte')
+  await press(tree, 'Carnet d’adresses')
+  await press(tree, 'Ajouter une adresse')
+  for (const [label, value] of [['Nom du destinataire', ' Nom test '], ['Téléphone (+226)', '+226 70 00 00 00'], ['Ville', ' Ville libre '], ['Quartier', ' Quartier '], ['Repère', ' Repère '], ['Latitude', '12,3714'], ['Longitude', '-1,5197']]) {
+    await renderer.act(async () => { tree.root.findByProps({ accessibilityLabel: label }).props.onChangeText(value) })
+  }
+  await press(tree, 'Ajouter cette adresse')
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].recipientName, 'Nom test')
+  assert.equal(sent[0].phone, '+22670000000')
+  assert.equal(sent[0].city, 'Ville libre')
+  assert.deepEqual(sent[0].point, { latitude: 12.3714, longitude: -1.5197 })
+  assert.match(treeText(tree), /Adresse enregistrée/)
+  assert.equal(tree.root.findAllByType('TextInput').length, 0)
   await unmount(tree)
 })

@@ -7,6 +7,8 @@ import { createClient } from './api'
 import { createController } from './controller'
 import { createSecureStorage } from './secure-storage'
 import { useFonts } from 'expo-font'
+import { validateAddress } from './model'
+import { orderStatusLabel, paymentStatusLabel } from './order-presentation'
 import { BRAND, tokens, Icon, SearchField, Chip, EmptyState, RestaurantMark, SettingRow } from './NativePatterns'
 import { filterRestaurants, menuSections, filterMenuSections } from './discovery'
 
@@ -107,12 +109,18 @@ function App({ api, storage }) {
   const [supportSubject, setSupportSubject] = useState('')
   const [supportDescription, setSupportDescription] = useState('')
   const [expandedTicket, setExpandedTicket] = useState(null)
+  const [accountPage, setAccountPage] = useState('overview')
+  const [deleteAddressId, setDeleteAddressId] = useState(null)
+  const [savedNotice, setSavedNotice] = useState('')
   const [profile, setProfile] = useState({ firstName: '', lastName: '', email: '' })
   const customerId = state?.customer?.id || null
   useEffect(() => {
     // A draft from a revoked account must not reappear in another account.
     setAccountAddress({ ...initialAddress, point: { ...initialAddress.point } })
     setEditingAddressId(null)
+    setDeleteAddressId(null)
+    setAccountPage('overview')
+    setSavedNotice('')
     setSupportSubject('')
     setSupportDescription('')
     setExpandedTicket(null)
@@ -128,6 +136,7 @@ function App({ api, storage }) {
     if (!BackHandler || typeof BackHandler.addEventListener !== 'function') return undefined
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       if (selected) { setSelected(null); return true }
+      if (screen === 'account' && accountPage !== 'overview') { setAccountPage(accountPage === 'addressForm' ? 'addresses' : 'overview'); setLocalError(''); setSavedNotice(''); setDeleteAddressId(null); return true }
       const target = {
         support: 'account', tracking: 'orders', menu: 'restaurants',
         cart: state?.restaurant ? 'menu' : 'restaurants', address: 'cart',
@@ -137,7 +146,7 @@ function App({ api, storage }) {
       return false
     })
     return () => subscription && subscription.remove()
-  }, [screen, selected, state?.restaurant])
+  }, [screen, selected, accountPage, state?.restaurant])
 
   useEffect(() => {
     if (screen !== 'tracking' || !state?.order || !controller.loadPaymentSession) return undefined
@@ -170,7 +179,7 @@ function App({ api, storage }) {
   const restaurant = state.restaurant
   const pending = state.pending
   const lastOrder = state.lastOrder
-  const navigate = target => { setSelected(null); setLocalError(''); setScreen(target) }
+  const navigate = target => { setSelected(null); setLocalError(''); setSavedNotice(''); setDeleteAddressId(null); if (target === 'account') setAccountPage('overview'); setScreen(target) }
 
   const openRestaurant = async(item) => {
     if (item.open === false) return
@@ -219,7 +228,7 @@ function App({ api, storage }) {
         <View style={styles.discoveryHeader}>
           <View style={styles.locationIcon}><Icon name='location-outline' color={tokens.colors.accentForeground} /></View>
           <View style={styles.flex}><Text style={styles.eyebrow}>Delifast · LIVRAISON</Text><Text style={styles.deliveryLocation}>{address.city || 'Votre point de livraison'}</Text><Text style={styles.caption}>{address.neighborhood || 'À préciser avant de commander'}</Text></View>
-          <TouchableOpacity accessibilityRole='button' accessibilityLabel='Compte' style={styles.avatarButton} onPress={() => setScreen('account')}><Icon name='person-outline' /></TouchableOpacity>
+          <TouchableOpacity accessibilityRole='button' accessibilityLabel='Compte' style={styles.avatarButton} onPress={() => navigate('account')}><Icon name='person-outline' /></TouchableOpacity>
         </View>
         <FlatList style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}
           data={visibleRestaurants} keyExtractor={(item) => String(item.id)} initialNumToRender={6} windowSize={7}
@@ -278,13 +287,23 @@ function App({ api, storage }) {
   }
 
   if (screen === 'orders') {
+    const currentOrder = state.order?.id === lastOrder?.id ? state.order : null
     return <SafeAreaView style={styles.safe}>
       <Header title='Commandes' onBack={() => setScreen('restaurants')} />
-      <ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
-        <Text style={styles.subtitle}>Suivi local de la dernière commande et des tentatives en attente. Aucun historique serveur complet n’est affiché ici.</Text>
-        {pending && <View style={styles.notice}><Text style={styles.noticeTitle}>Commande à reprendre</Text><Text>Une tentative est enregistrée sur cet appareil.</Text><AppButton title='Réessayer' onPress={async () => { try { await controller.retryPending(); setScreen('tracking') } catch (e) { setLocalError(errorText(e)) } }} disabled={state.busy || !state.restored} /></View>}
-        {lastOrder ? <View style={styles.card}><View style={styles.orderIcon}><Icon name='receipt-outline' color={tokens.colors.accentForeground} /></View><Text style={styles.cardTitle}>Dernière commande</Text><Text>Référence : {lastOrder.id}</Text>{(state.order && state.order.id === lastOrder.id) ? <Text style={styles.muted}>{state.order.status || 'Statut serveur indisponible'} · {state.order.paymentStatus || 'Statut de paiement indisponible'}</Text> : <Text style={styles.muted}>Actualisez pour consulter le statut serveur.</Text>}<AppButton title='Actualiser le suivi' onPress={trackLast} disabled={state.busy} /></View> : <><EmptyState icon='receipt-outline' title='Aucune commande restaurée.' description='Votre dernière commande enregistrée sur cet appareil apparaîtra ici.' /><AppButton title='Découvrir les restaurants' onPress={() => setScreen('restaurants')} /></>}
-        {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
+      <ScrollView key='orders' style={styles.flex} contentContainerStyle={styles.content}>
+        <Text style={styles.title}>Vos commandes</Text>
+        <Text style={styles.muted}>Retrouvez le suivi enregistré sur cet appareil.</Text>
+        {pending && <View style={[styles.notice, { marginTop: 20 }]}><Text style={styles.noticeTitle}>Commande à reprendre</Text><Text style={styles.muted}>Le résultat de cette tentative doit être confirmé. Reprenez-la pour éviter un doublon.</Text><AppButton title='Réessayer' onPress={async () => { setLocalError(''); try { await controller.retryPending(); setScreen('tracking') } catch (e) { setLocalError(errorText(e)) } }} disabled={state.busy || !state.restored} /></View>}
+        {lastOrder ? <>
+          <Text style={styles.sectionTitle}>Dernière commande sur cet appareil</Text>
+          <View style={styles.orderCard}>
+            <View style={styles.identityRow}><View style={styles.orderIcon}><Icon name='receipt-outline' color={tokens.colors.accentForeground} /></View><View style={styles.flex}><Text style={styles.eyebrow}>RÉFÉRENCE</Text><Text selectable style={styles.reference}>{lastOrder.id}</Text></View></View>
+            {currentOrder ? <><Text style={styles.orderStatus}>{orderStatusLabel(currentOrder.status)}</Text>{currentOrder.paymentStatus && <Text style={styles.muted}>Paiement : {paymentStatusLabel(currentOrder.paymentStatus)}</Text>}{currentOrder.checkout?.total != null && <Text style={styles.total}>{money(currentOrder.checkout.total)}</Text>}</> : <Text style={styles.muted}>Actualisez pour consulter le statut serveur.</Text>}
+            <AppButton title={state.busy ? 'Actualisation…' : 'Actualiser le suivi'} onPress={trackLast} disabled={state.busy} />
+          </View>
+        </> : !pending && <><EmptyState icon='receipt-outline' title='Pas encore de commande ici' description='Votre dernière commande enregistrée sur cet appareil apparaîtra ici.' /><AppButton title='Découvrir les restaurants' onPress={() => setScreen('restaurants')} /></>}
+        <View style={styles.privacyNote}><Icon name='phone-portrait-outline' size={18} color={BRAND.muted} /><Text style={styles.privacyText}>Aucun historique serveur complet n’est affiché ici. Seule la dernière référence locale est disponible.</Text></View>
+        {(state.error || localError) && <Text accessibilityRole='alert' style={styles.error}>{errorText(state.error) || localError}</Text>}
       </ScrollView>
       <BottomTabs current={screen} onNavigate={navigate} cartCount={cartCount} />
     </SafeAreaView>
@@ -300,15 +319,18 @@ function App({ api, storage }) {
     const profileBusy = state.authBusy || state.busy
     const saveProfile = async() => {
       setLocalError('')
-      try { await controller.updateCustomerProfile(profile) } catch (error) { setLocalError(errorText(error)) }
+      try { await controller.updateCustomerProfile(profile); setSavedNotice('Profil enregistré.') } catch (error) { setLocalError(errorText(error)) }
     }
     const resetAddress = () => { setAccountAddress({ ...initialAddress }); setEditingAddressId(null) }
     const saveAddress = async() => {
       setLocalError('')
       try {
-        if (editingAddressId) await controller.updateCustomerAddress(editingAddressId, accountAddress)
-        else await controller.createCustomerAddress(accountAddress)
-        resetAddress()
+        const payload = { ...accountAddress, point: { latitude: Number(String(accountAddress.point.latitude).trim() || NaN), longitude: Number(String(accountAddress.point.longitude).trim() || NaN) } }
+        const checked = validateAddress(payload, { requirePoint: true })
+        if (!checked.ok) throw new Error(checked.message)
+        if (editingAddressId) await controller.updateCustomerAddress(editingAddressId, checked.address)
+        else await controller.createCustomerAddress(checked.address)
+        resetAddress(); setAccountPage('addresses'); setSavedNotice('Adresse enregistrée.')
       } catch (error) { setLocalError(errorText(error)) }
     }
     const chooseAddress = async(item) => {
@@ -323,37 +345,58 @@ function App({ api, storage }) {
         setScreen('cart')
       } catch (error) { setLocalError(errorText(error)) }
     }
-    const editAddress = (item) => { if (addressBusy) return; setEditingAddressId(item.id); setAccountAddress({ ...initialAddress, ...item, point: { ...item.point } }) }
-    const removeAddress = async(id) => { if (addressBusy) return; setLocalError(''); try { await controller.deleteCustomerAddress(id) } catch (error) { setLocalError(errorText(error)) } }
+    const editAddress = (item) => { if (addressBusy) return; setAccountPage('addressForm'); setSavedNotice(''); setEditingAddressId(item.id); setAccountAddress({ ...initialAddress, ...item, point: { ...item.point } }) }
+    const removeAddress = async(id) => { if (addressBusy) return; setLocalError(''); try { if (await controller.deleteCustomerAddress(id)) { setDeleteAddressId(null); setSavedNotice('Adresse supprimée.') } else setLocalError('Suppression non confirmée par le serveur.') } catch (error) { setLocalError(errorText(error)) } }
     const requestOtp = async() => { setLocalError(''); setOtp(''); try { const value = await controller.requestCustomerOtp(loginPhone); const receivedAt = Date.now(); setChallenge({ ...value, receivedAt, expiresAt: receivedAt + Number(value.expiresIn || 0) * 1000, retryAt: receivedAt + Number(value.retryAfter || 0) * 1000 }) } catch (error) { setLocalError(errorText(error)) } }
     const verifyOtp = async() => { setLocalError(''); const submitted = otp; setOtp(''); try { await controller.verifyCustomerOtp(challenge.challengeId, submitted); setChallenge(null) } catch (error) { setLocalError(errorText(error)) } }
     const resendOtp = async() => { if (cooldown) return; setLocalError(''); try { const value = expired ? await controller.requestCustomerOtp(loginPhone) : await controller.resendCustomerOtp(challenge.challengeId); const receivedAt = Date.now(); setChallenge({ ...value, receivedAt, expiresAt: receivedAt + Number(value.expiresIn || 0) * 1000, retryAt: receivedAt + Number(value.retryAfter || 0) * 1000 }) } catch (error) { setLocalError(errorText(error)) } }
     const logout = async() => { setLocalError(''); setChallenge(null); setOtp(''); setLoginPhone(''); resetAddress(); try { await controller.logoutCustomer() } catch (error) { setLocalError(errorText(error)) } }
-    return <SafeAreaView style={styles.safe}><Header title='Compte client' onBack={() => setScreen('restaurants')} /><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}><ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
-      {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
-      <View style={styles.accountHero}><View style={styles.profileAvatar}><Icon name='person-outline' size={36} color={tokens.colors.accentForeground} /></View><Text style={styles.accountName}>{customer ? [customer.firstName, customer.lastName].filter(Boolean).join(' ') || 'Mon compte' : 'Bienvenue sur Delifast'}</Text><Text style={styles.caption}>{customer ? 'Profil et adresses privées' : 'Retrouvez votre profil et vos adresses'}</Text></View>
+    const openAccountPage = page => { setLocalError(''); setSavedNotice(''); setDeleteAddressId(null); setAccountPage(page) }
+    const backAccount = () => { if (!customer || accountPage === 'overview') setScreen('restaurants'); else openAccountPage(accountPage === 'addressForm' ? 'addresses' : 'overview') }
+    const pageTitle = !customer || accountPage === 'overview' ? 'Compte client' : ({ profile: 'Profil client', addresses: 'Carnet d’adresses', addressForm: editingAddressId ? 'Modifier l’adresse' : 'Ajouter une adresse' })[accountPage]
+    return <SafeAreaView style={styles.safe}><Header title={pageTitle} onBack={backAccount} /><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}><ScrollView key={`account-${customer ? accountPage : 'login'}`} style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
+      {(state.error || localError) && <Text accessibilityRole='alert' style={styles.error}>{errorText(state.error) || localError}</Text>}
+      {!!savedNotice && <Text accessibilityRole='status' accessibilityLiveRegion='polite' style={styles.notice}>{savedNotice}</Text>}
       {!customer ? <>
-        <Text style={styles.sectionTitle}>Connexion par téléphone</Text><Text style={styles.subtitle}>Format E.164 obligatoire : +226 suivi de 8 chiffres. Aucun code n’est affiché ou conservé par l’application.</Text>
+        <View style={styles.accountHero}><View style={styles.profileAvatar}><Icon name='person-outline' size={36} color={tokens.colors.accentForeground} /></View><Text style={styles.accountName}>Bienvenue sur Delifast</Text><Text style={styles.muted}>Votre profil et vos adresses, au même endroit.</Text></View>
+        <Text style={styles.sectionTitle}>Connexion par téléphone</Text><Text style={styles.subtitle}>Utilisez votre numéro +226 suivi de 8 chiffres. Aucun code n’est affiché ou conservé par l’application.</Text>
         <Text style={styles.label}>Numéro de téléphone</Text><TextInput accessibilityLabel='Numéro de téléphone' textContentType='telephoneNumber' autoComplete='tel' style={styles.input} placeholder='+22670000000' value={loginPhone} onChangeText={setLoginPhone} keyboardType='phone-pad' editable={!state.authBusy && !challenge} />
-        {!challenge ? <AppButton title='Demander un code' disabled={state.authBusy} onPress={requestOtp} /> : <>
+        {!challenge ? <AppButton title={state.authBusy ? 'Demande en cours…' : 'Demander un code'} disabled={state.authBusy} onPress={requestOtp} /> : <>
           <Text style={styles.muted}>{expired ? 'Code expiré. Demandez un nouveau code.' : `Code valable encore ${Math.max(0, Math.ceil((expiresAt - otpNow) / 1000))} s.`}</Text>
-          <TextInput accessibilityLabel='Code de vérification' textContentType='oneTimeCode' autoComplete='one-time-code' style={styles.input} placeholder='Code de vérification' value={otp} onChangeText={setOtp} keyboardType='number-pad' editable={!state.authBusy && !expired} secureTextEntry />
+          <Text style={styles.label}>Code de vérification</Text><TextInput accessibilityLabel='Code de vérification' textContentType='oneTimeCode' autoComplete='one-time-code' style={styles.input} placeholder='Code de vérification' value={otp} onChangeText={setOtp} keyboardType='number-pad' editable={!state.authBusy && !expired} secureTextEntry />
           <AppButton title='Valider le code' disabled={state.authBusy || expired || !otp} onPress={verifyOtp} />
-          <AppButton title={cooldown ? `Renvoyer dans ${Math.ceil((retryAt - otpNow) / 1000)} s` : expired ? 'Recommencer' : 'Renvoyer le code'} disabled={state.authBusy || cooldown} onPress={resendOtp} />
-          <AppButton title='Changer de téléphone' disabled={state.authBusy} onPress={() => { setChallenge(null); setOtp('') }} />
+          <AppButton variant='secondary' title={cooldown ? `Renvoyer dans ${Math.ceil((retryAt - otpNow) / 1000)} s` : expired ? 'Recommencer' : 'Renvoyer le code'} disabled={state.authBusy || cooldown} onPress={resendOtp} />
+          <AppButton variant='secondary' title='Changer de téléphone' disabled={state.authBusy} onPress={() => { setChallenge(null); setOtp('') }} />
         </>}
-      </> : <>
-        <Text style={styles.sectionTitle}>Profil client</Text>
-        <Text style={styles.subtitle}>Ces données privées sont utilisées uniquement lorsqu’un paiement les exige. Elles restent en mémoire et ne sont pas enregistrées sur l’appareil.</Text>
-        {['firstName', 'lastName', 'email'].map(key => <TextInput key={key} style={styles.input} placeholder={key === 'firstName' ? 'Prénom' : key === 'lastName' ? 'Nom' : 'Email (optionnel)'} keyboardType={key === 'email' ? 'email-address' : 'default'} autoCapitalize={key === 'email' ? 'none' : 'words'} value={profile[key]} onChangeText={value => setProfile({ ...profile, [key]: value })} editable={!profileBusy} />)}
-        <AppButton title='Enregistrer le profil' disabled={profileBusy} onPress={saveProfile} />
-        <Text style={styles.sectionTitle}>Téléphone : {customer.phone}</Text><AppButton title='Se déconnecter' disabled={state.authBusy} onPress={logout} />
+        <View style={styles.privacyNote}><Icon name='lock-closed-outline' size={18} color={BRAND.muted} /><Text style={styles.privacyText}>Vos informations restent privées. La connexion nécessite un code à usage unique.</Text></View>
+      </> : accountPage === 'overview' ? <>
+        <View style={styles.accountIdentity}><View style={styles.profileAvatar}><Icon name='person-outline' size={32} color={tokens.colors.accentForeground} /></View><View style={styles.flex}><Text style={styles.accountName}>{[customer.firstName, customer.lastName].filter(Boolean).join(' ') || 'Mon compte'}</Text><Text style={styles.muted}>Téléphone : {customer.phone ? `${customer.phone.slice(0, 4)} •• •• ${customer.phone.slice(-2)}` : 'Non renseigné'}</Text></View></View>
+        <Text style={styles.eyebrow}>VOS INFORMATIONS</Text>
+        <SettingRow icon='person-outline' title='Profil client' description='Prénom, nom et email' disabled={state.authBusy} onPress={() => { setProfile({ firstName: customer.firstName || '', lastName: customer.lastName || '', email: customer.email || '' }); openAccountPage('profile') }} />
+        <SettingRow icon='location-outline' title='Carnet d’adresses' description={`${state.addresses.length} adresse${state.addresses.length !== 1 ? 's' : ''} enregistrée${state.addresses.length !== 1 ? 's' : ''}`} disabled={state.authBusy} onPress={() => openAccountPage('addresses')} />
         <SettingRow icon='chatbubble-ellipses-outline' title='Mes tickets de support' description='Consulter et créer une demande' disabled={state.authBusy} onPress={() => { setLocalError(''); setScreen('support'); controller.loadSupportTickets().catch(() => {}) }} />
-        <View style={styles.sectionHeading}><Icon name='location-outline' /><Text style={styles.sectionTitle}>Carnet d’adresses</Text></View>
-        {(state.addresses || []).map(item => <View style={styles.card} key={item.id}><Text style={styles.cardTitle}>{item.recipientName}</Text><Text>{item.city} · {item.neighborhood}</Text><AppButton title='Utiliser pour la livraison' disabled={addressBusy || !state.restored} onPress={() => chooseAddress(item)} /><AppButton title='Modifier' disabled={addressBusy} onPress={() => editAddress(item)} /><AppButton title='Supprimer' disabled={addressBusy} onPress={() => removeAddress(item.id)} /></View>)}
-        <Text style={styles.sectionTitle}>{editingAddressId ? 'Modifier l’adresse' : 'Ajouter une adresse'}</Text>
-        {['recipientName', 'phone', 'city', 'neighborhood', 'landmark', 'instructions'].map(key => <TextInput key={key} style={styles.input} placeholder={key} value={accountAddress[key] || ''} onChangeText={value => setAccountAddress({ ...accountAddress, [key]: value })} editable={!addressBusy} />)}
-        <TextInput style={styles.input} placeholder='Latitude' keyboardType='numeric' editable={!addressBusy} value={String(accountAddress.point.latitude)} onChangeText={value => setAccountAddress({ ...accountAddress, point: { ...accountAddress.point, latitude: Number(value.replace(',', '.')) } })} /><TextInput style={styles.input} placeholder='Longitude' keyboardType='numeric' editable={!addressBusy} value={String(accountAddress.point.longitude)} onChangeText={value => setAccountAddress({ ...accountAddress, point: { ...accountAddress.point, longitude: Number(value.replace(',', '.')) } })} /><AppButton title={editingAddressId ? 'Enregistrer les modifications' : 'Ajouter cette adresse'} disabled={addressBusy} onPress={saveAddress} />{editingAddressId && <AppButton title='Annuler la modification' disabled={addressBusy} onPress={resetAddress} />}
+        <View style={styles.privacyNote}><Icon name='shield-checkmark-outline' size={18} color={BRAND.muted} /><Text style={styles.privacyText}>Profil et adresses privés. Vos brouillons sont effacés à la déconnexion.</Text></View>
+        <AppButton variant='secondary' title='Se déconnecter' disabled={state.authBusy} onPress={logout} />
+      </> : accountPage === 'profile' ? <>
+        <Text style={styles.title}>Vos informations</Text><Text style={styles.muted}>Champs facultatifs. Prénom et nom : 2 à 255 caractères si renseignés. Email : format valide.</Text>
+        <Text style={[styles.label, { marginTop: 20 }]}>Téléphone de connexion</Text><Text style={styles.subtitle}>{customer.phone || 'Non renseigné'} · non modifiable ici</Text>
+        {['firstName', 'lastName', 'email'].map(key => { const label = key === 'firstName' ? 'Prénom' : key === 'lastName' ? 'Nom' : 'Email (optionnel)'; return <View key={key}><Text style={styles.label}>{label}</Text><TextInput accessibilityLabel={label} style={styles.input} placeholder={label} keyboardType={key === 'email' ? 'email-address' : 'default'} autoCapitalize={key === 'email' ? 'none' : 'words'} autoCorrect={false} value={profile[key]} onChangeText={value => { setSavedNotice(''); setProfile({ ...profile, [key]: value }) }} editable={!profileBusy} /></View> })}
+        <AppButton title='Enregistrer le profil' disabled={profileBusy} onPress={saveProfile} />
+        <AppButton title='Retour au compte' variant='secondary' onPress={() => openAccountPage('overview')} />
+      </> : accountPage === 'addresses' ? <>
+        <Text style={styles.title}>Vos adresses</Text><Text style={styles.muted}>Choisissez un point de livraison ou gérez votre carnet privé.</Text>
+        {!state.addresses.length && <EmptyState icon='location-outline' title='Aucune adresse enregistrée' description='Ajoutez une adresse pour la retrouver lors de votre prochaine commande.' />}
+        {state.addresses.map(item => <View style={[styles.orderCard, { marginTop: 16 }]} key={item.id}><View style={styles.identityRow}><Icon name='location-outline' color={tokens.colors.accentForeground} /><View style={styles.flex}><Text style={styles.cardTitle}>{item.recipientName}</Text><Text style={styles.muted}>{[item.city, item.neighborhood].filter(Boolean).join(' · ')}</Text>{!!item.landmark && <Text style={styles.caption}>{item.landmark}</Text>}</View></View>
+          <AppButton title='Utiliser pour la livraison' disabled={addressBusy || !state.restored} onPress={() => chooseAddress(item)} />
+          {deleteAddressId === item.id ? <><Text style={styles.warning}>Supprimer cette adresse du carnet ? Cette action est définitive.</Text><AppButton title='Confirmer la suppression' disabled={addressBusy} color='#a33' variant='secondary' onPress={() => removeAddress(item.id)} /><AppButton title='Conserver l’adresse' variant='secondary' disabled={addressBusy} onPress={() => setDeleteAddressId(null)} /></> : <View style={styles.addressActions}><View style={styles.flex}><AppButton title='Modifier' variant='secondary' disabled={addressBusy} onPress={() => editAddress(item)} /></View><View style={styles.flex}><AppButton title='Supprimer' variant='secondary' color='#a33' disabled={addressBusy} onPress={() => setDeleteAddressId(item.id)} /></View></View>}
+        </View>)}
+        <AppButton title='Ajouter une adresse' disabled={addressBusy} onPress={() => { resetAddress(); openAccountPage('addressForm') }} />
+      </> : <>
+        <Text style={styles.title}>{editingAddressId ? 'Modifier l’adresse' : 'Nouvelle adresse'}</Text><Text style={styles.muted}>Renseignez un point de livraison précis. Aucun emplacement n’est détecté automatiquement.</Text>
+        <View style={{ marginTop: 20 }}>{[['recipientName', 'Nom du destinataire'], ['phone', 'Téléphone (+226)'], ['city', 'Ville'], ['neighborhood', 'Quartier'], ['landmark', 'Repère'], ['instructions', 'Instructions de livraison']].map(([key, label]) => <View key={key}><Text style={styles.label}>{label}</Text><TextInput accessibilityLabel={label} style={styles.input} placeholder={label} value={accountAddress[key] || ''} onChangeText={value => setAccountAddress({ ...accountAddress, [key]: value })} keyboardType={key === 'phone' ? 'phone-pad' : 'default'} multiline={key === 'instructions'} editable={!addressBusy} /></View>)}</View>
+        <Text style={styles.label}>Point de livraison</Text><Text style={styles.subtitle}>Coordonnées à vérifier — point d’exemple prérempli, sans carte ni géolocalisation.</Text>
+        {['latitude', 'longitude'].map(key => <View key={key}><Text style={styles.label}>{key === 'latitude' ? 'Latitude' : 'Longitude'}</Text><TextInput accessibilityLabel={key === 'latitude' ? 'Latitude' : 'Longitude'} style={styles.input} placeholder={key === 'latitude' ? 'Latitude' : 'Longitude'} keyboardType='numbers-and-punctuation' editable={!addressBusy} value={String(accountAddress.point[key])} onChangeText={value => setAccountAddress({ ...accountAddress, point: { ...accountAddress.point, [key]: value.replace(',', '.') } })} /></View>)}
+        <AppButton title={editingAddressId ? 'Enregistrer les modifications' : 'Ajouter cette adresse'} disabled={addressBusy} onPress={saveAddress} /><AppButton title={editingAddressId ? 'Annuler la modification' : 'Annuler'} variant='secondary' disabled={addressBusy} onPress={() => { resetAddress(); openAccountPage('addresses') }} />
       </>}
     </ScrollView></KeyboardAvoidingView><BottomTabs current={screen} onNavigate={navigate} cartCount={cartCount} /></SafeAreaView>
   }
@@ -643,7 +686,7 @@ function App({ api, storage }) {
   }
   const beginPayment = async(channel) => {
     setLocalError('')
-    try { await controller.startPayment(channel) } catch (error) { if (error?.code === 'CUSTOMER_PROFILE_REQUIRED') setScreen('account'); setLocalError(errorText(error)) }
+    try { await controller.startPayment(channel) } catch (error) { if (error?.code === 'CUSTOMER_PROFILE_REQUIRED') { setAccountPage('profile'); setScreen('account') }; setLocalError(errorText(error)) }
   }
   const confirmPayment = async() => {
     setLocalError('')
@@ -660,16 +703,21 @@ function App({ api, storage }) {
           </TouchableOpacity>
         }
       />
-      <ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
+      <ScrollView key='tracking' style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
         {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
         {order
           ? (
           <>
-            <Text style={styles.sectionTitle}>Référence : {order.id}</Text>
+            <Text style={styles.eyebrow}>RÉFÉRENCE DE COMMANDE</Text><Text selectable style={styles.reference}>{order.id}</Text>
             <Text style={styles.cardTitle}>
-              {order.status || 'En attente'} — {order.paymentStatus || 'PENDING'}
+              {orderStatusLabel(order.status)}{order.paymentStatus ? ` · ${paymentStatusLabel(order.paymentStatus)}` : ''}
             </Text>
-            {order.checkout && <Text style={styles.total}>Total serveur : {money(order.checkout.total)}</Text>}
+            {order.checkout?.total != null && <Text style={styles.total}>Total serveur : {money(order.checkout.total)}</Text>}
+            <Text style={styles.sectionTitle}>Historique serveur</Text>
+            {!(order.history || []).length && <Text style={styles.muted}>Aucun événement fourni par le serveur.</Text>}
+            {(order.history || []).map((entry, index) => <View style={styles.timelineEntry} key={`${entry.at}-${index}`}><View style={styles.timelineDot} /><View style={styles.flex}><Text style={styles.label}>{orderStatusLabel(entry.status)}</Text>{!!entry.at && <Text style={styles.caption}>{entry.at}</Text>}</View></View>)}
+            {order.deliveryAddress && <View style={styles.orderCard}><Text style={styles.sectionTitle}>Livraison</Text><Text style={styles.cardTitle}>{order.deliveryAddress.recipientName}</Text><Text style={styles.muted}>{[order.deliveryAddress.city, order.deliveryAddress.neighborhood, order.deliveryAddress.landmark].filter(Boolean).join(' · ')}</Text>{!!order.deliveryAddress.instructions && <Text style={styles.muted}>{order.deliveryAddress.instructions}</Text>}</View>}
+            {order.checkout && <View style={styles.orderCard}><Text style={styles.sectionTitle}>Récapitulatif</Text>{(order.checkout.items || []).map((item, index) => <View style={styles.receiptLine} key={`${item.menuItemId}-${index}`}><View style={styles.flex}><Text style={styles.cardTitle}>{item.quantity} × {item.name || 'Article'}</Text>{!!item.selectedOptions?.length && <Text style={styles.caption}>{item.selectedOptions.map(option => option.name).filter(Boolean).join(', ')}</Text>}</View>{item.total != null && <Text style={styles.summaryValue}>{money(item.total)}</Text>}</View>)}{[['Sous-total', order.checkout.subtotal], ['Livraison', order.checkout.deliveryFee], ['Service', order.checkout.serviceFee], ['Taxes', order.checkout.tax], ['Réduction', order.checkout.discount]].filter(([, amount]) => amount != null).map(([label, amount]) => <View style={styles.receiptLine} key={label}><Text style={styles.muted}>{label}</Text><Text style={styles.summaryValue}>{money(amount)}</Text></View>)}{order.checkout.total != null && <Text style={styles.total}>Total serveur : {money(order.checkout.total)}</Text>}</View>}
             <View style={styles.card}>
               <Text style={styles.sectionTitle}>Paiement Delifast</Text>
               <Text>État serveur : {paymentPaid ? 'Confirmé par le serveur' : paymentLabels[payment?.status] || 'Vérification en cours'}</Text>
@@ -682,12 +730,6 @@ function App({ api, storage }) {
               {!paymentPaid && <AppButton title='Vérifier le statut serveur' onPress={confirmPayment} disabled={state.paymentBusy} />}
               {paymentPaid && <Text style={styles.total}>Paiement confirmé par le serveur.</Text>}
             </View>
-            <Text style={styles.sectionTitle}>Historique</Text>
-            {(order.history || []).map((entry, index) => (
-              <Text style={styles.history} key={`${entry.at}-${index}`}>
-                {entry.status} — {entry.at} {entry.actorRole ? `(${entry.actorRole})` : ''}
-              </Text>
-            ))}
             <Text style={styles.muted}>Le jeton de suivi est conservé de façon sécurisée et n’est pas affiché.</Text>
           </>
             )
@@ -795,9 +837,20 @@ const styles = StyleSheet.create({
   cartRestaurant: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingBottom: 16 },
   summaryValue: { fontSize: 14, color: tokens.colors.textPrimary, fontFamily: 'MuseoSans500' },
   totalDivider: { borderTopWidth: 1, borderTopColor: BRAND.border, paddingTop: 12, marginTop: 6 },
-  accountHero: { alignItems: 'center', paddingVertical: 18, marginBottom: 12 },
+  accountHero: { alignItems: 'center', paddingVertical: 10, marginBottom: 4 },
   profileAvatar: { width: 80, height: 80, borderRadius: 40, backgroundColor: tokens.colors.accentSubtle, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
   accountName: { fontFamily: 'MuseoSans700', fontSize: 23, color: tokens.colors.textPrimary, marginBottom: 5 },
+  identityRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 },
+  accountIdentity: { flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 24 },
+  orderCard: { backgroundColor: '#fff', borderWidth: 1, borderColor: BRAND.border, borderRadius: tokens.radii.xl, padding: 16, marginBottom: 16 },
+  orderStatus: { fontSize: 18, fontFamily: 'MuseoSans700', color: tokens.colors.accentForeground, marginBottom: 4 },
+  reference: { fontSize: 14, lineHeight: 21, fontFamily: 'MuseoSans700', color: tokens.colors.textPrimary, marginVertical: 6, flexShrink: 1 },
+  privacyNote: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginVertical: 20, paddingHorizontal: 4 },
+  privacyText: { flex: 1, color: BRAND.muted, fontSize: 12, lineHeight: 18 },
+  addressActions: { flexDirection: 'row', gap: 12 },
+  timelineEntry: { flexDirection: 'row', gap: 14, paddingVertical: 12, paddingHorizontal: 8, borderLeftWidth: 2, borderLeftColor: BRAND.border, marginLeft: 8 },
+  timelineDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: tokens.colors.accentForeground, marginLeft: -14, marginTop: 3 },
+  receiptLine: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, alignItems: 'center', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: BRAND.border },
   orderIcon: { width: 44, height: 44, borderRadius: 12, backgroundColor: tokens.colors.accentSubtle, alignItems: 'center', justifyContent: 'center', marginBottom: 12 }
 })
 
