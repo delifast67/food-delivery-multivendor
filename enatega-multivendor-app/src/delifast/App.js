@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import * as SecureStore from 'expo-secure-store'
 import * as Crypto from 'expo-crypto'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { ActivityIndicator, AppState, BackHandler, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { createClient } from './api'
 import { createController } from './controller'
 import { createSecureStorage } from './secure-storage'
+import { createCatalogueCache } from './catalogue-cache'
 import { useFonts } from 'expo-font'
 import { validateAddress } from './model'
 import { orderStatusLabel, paymentStatusLabel } from './order-presentation'
@@ -116,10 +118,15 @@ function OrderSnapshot({ order, onClose }) {
   )
 }
 
-function App({ api, storage }) {
+function CatalogueBanner() {
+  return <Text accessibilityRole='alert' style={styles.warning}>Catalogue hors ligne ou non actualisé · données potentiellement périmées. Lecture seule : prix et disponibilités à revérifier en ligne.</Text>
+}
+
+function App({ api, storage, catalogueCache }) {
   const resolvedStorage = useMemo(() => storage || createSecureStorage(SecureStore), [storage])
+  const resolvedCatalogueCache = useMemo(() => catalogueCache || (!api ? createCatalogueCache({ storage: AsyncStorage, namespace: endpoint }) : null), [catalogueCache, api])
   const [state, setState] = useState(null)
-  const controller = useMemo(() => createController({ api: api || createClient({ endpoint }), storage: resolvedStorage, random: Crypto.randomUUID, fingerprintSession: token => Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, token), onChange: setState }), [api, resolvedStorage])
+  const controller = useMemo(() => createController({ api: api || createClient({ endpoint }), storage: resolvedStorage, catalogueCache: resolvedCatalogueCache, random: Crypto.randomUUID, fingerprintSession: token => Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, token), onChange: setState }), [api, resolvedStorage, resolvedCatalogueCache])
   const [screen, setScreen] = useState('restaurants')
   const [search, setSearch] = useState('')
   const [openOnly, setOpenOnly] = useState(false)
@@ -212,12 +219,14 @@ function App({ api, storage }) {
   const cart = state.cart || { items: [] }
   const cartCount = cart.items.reduce((sum, item) => sum + (item.quantity || 0), 0)
   const restaurant = state.restaurant
+  const discoveryStale = !!state.discoveryStale
+  const catalogueReadOnly = !!state.catalogueReadOnly
   const pending = state.pending
   const lastOrder = state.lastOrder
   const navigate = target => { setSelected(null); setLocalError(''); setSavedNotice(''); setDeleteAddressId(null); if (target === 'account') setAccountPage('overview'); setScreen(target) }
 
   const openRestaurant = async(item) => {
-    if (item.open === false) return
+    if (item.open === false && !discoveryStale) return
     setLocalError('')
     try {
       const opened = await controller.selectRestaurant(item.id)
@@ -271,8 +280,10 @@ function App({ api, storage }) {
           data={visibleRestaurants} keyExtractor={(item) => String(item.id)} initialNumToRender={6} windowSize={7}
           ListHeaderComponent={<>
           <Text style={styles.title}>Qu’est-ce qui vous{`\n`}fait envie ?</Text>
+          {discoveryStale && <Text accessibilityRole='alert' style={styles.warning}>Hors ligne · restaurants déjà consultés. La livraison, les horaires et les disponibilités ne sont pas vérifiés.</Text>}
+          {discoveryStale ? <Text style={styles.caption}>La recherche et les filtres nécessitent une connexion.</Text> : <>
           <SearchField value={search} onChangeText={value => { setSearch(value); refreshDiscovery(value) }} />
-          <View style={styles.chipRow}><Chip label='Tous' selected={!openOnly} onPress={() => { setOpenOnly(false); refreshDiscovery(search, false) }} /><Chip label='Ouverts' selected={openOnly} onPress={() => { setOpenOnly(true); refreshDiscovery(search, true) }} /></View>
+          <View style={styles.chipRow}><Chip label='Tous' selected={!openOnly} onPress={() => { setOpenOnly(false); refreshDiscovery(search, false) }} /><Chip label='Ouverts' selected={openOnly} onPress={() => { setOpenOnly(true); refreshDiscovery(search, true) }} /></View></>}
           <View style={styles.demoNotice}><Icon name='information-circle-outline' size={17} color='#765b18' /><Text style={styles.demoText}>Démonstration locale · aucun paiement réel ni paiement à la livraison.</Text></View>
           {state.loading && <ActivityIndicator color='#1f6f5b' style={styles.loader} />}
           {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
@@ -305,13 +316,13 @@ function App({ api, storage }) {
           <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Restaurants</Text><Text style={styles.caption}>{visibleRestaurants.length} chargé{visibleRestaurants.length !== 1 ? 's' : ''}</Text></View>
           </>}
             renderItem={({ item }) => (
-              <TouchableOpacity accessibilityRole='button' accessibilityLabel={item.name} style={[styles.restaurantRow, item.open === false && styles.cardClosed]} disabled={item.open === false || state.busy || !!pending || !state.restored} onPress={() => beginNewRestaurant(item)}>
+              <TouchableOpacity accessibilityRole='button' accessibilityLabel={item.name} style={[styles.restaurantRow, item.open === false && styles.cardClosed]} disabled={(item.open === false && !discoveryStale) || state.busy || !!pending || !state.restored} onPress={() => beginNewRestaurant(item)}>
                 <RestaurantMark name={item.name} />
                 <View style={styles.flex}><Text style={styles.cardTitle}>{item.name}</Text>{item.description ? <Text numberOfLines={2} style={styles.muted}>{item.description}</Text> : null}<View style={styles.restaurantMeta}><View style={[styles.statusDot, item.open === false && styles.statusDotClosed]} /><Text style={[styles.statusPill, item.open === false ? styles.closed : styles.open]}>{item.open === false ? 'Fermé' : 'Ouvert'}</Text><Text style={styles.caption}>Voir le menu</Text></View>{item.open === false && <Text style={styles.caption}>Ce restaurant n’accepte pas de commandes.</Text>}</View>
                 <Icon name='chevron-forward' size={18} color={BRAND.muted} />
               </TouchableOpacity>
             )}
-            ListFooterComponent={<>{state.error && <AppButton title='Réessayer les restaurants' disabled={state.loading} onPress={() => controller.loadRestaurants(state.deliveryPoint, { search, openOnly, more: !!state.restaurantsNextCursor }).catch(() => {})} />}{state.restaurantsNextCursor && <AppButton title='Charger plus de restaurants' disabled={state.loading} onPress={() => controller.loadRestaurants(state.deliveryPoint, { search, openOnly, more: true }).catch(() => {})} />}</>}
+            ListFooterComponent={<>{discoveryStale && <AppButton title='Actualiser les restaurants' disabled={state.loading} onPress={() => controller.loadRestaurants(state.deliveryPoint, { search, openOnly }).catch(() => {})} />}{state.error && <AppButton title='Réessayer les restaurants' disabled={state.loading} onPress={() => controller.loadRestaurants(state.deliveryPoint, { search, openOnly, more: !!state.restaurantsNextCursor }).catch(() => {})} />}{state.restaurantsNextCursor && !discoveryStale && <AppButton title='Charger plus de restaurants' disabled={state.loading} onPress={() => controller.loadRestaurants(state.deliveryPoint, { search, openOnly, more: true }).catch(() => {})} />}</>}
             ListEmptyComponent={!state.loading && !state.error ? <EmptyState icon='search-outline' title={state.restaurantsNextCursor ? 'Aucun restaurant sur cette page' : search || openOnly ? 'Aucun résultat' : 'Aucun restaurant disponible.'} description={state.restaurantsNextCursor ? 'Chargez la suite pour continuer dans votre zone.' : search || openOnly ? 'Essayez un autre nom ou retirez le filtre.' : 'Les restaurants disponibles apparaîtront ici.'} /> : null}
           />
           {lastOrder && (
@@ -528,6 +539,8 @@ function App({ api, storage }) {
               {!!restaurant?.description && <Text style={styles.heroDescription}>{restaurant.description}</Text>}
               <View style={styles.restaurantMeta}><View style={[styles.statusDot, restaurant?.open === false && styles.statusDotClosed]} /><Text style={restaurant?.open === false ? styles.closed : styles.open}>{restaurant?.open === false ? 'Fermé' : 'Ouvert'}</Text><Text style={styles.caption}>{sections.reduce((n, section) => n + section.items.length, 0)} plats chargés</Text></View>
             </View>
+            {catalogueReadOnly && <CatalogueBanner />}
+            {catalogueReadOnly && <AppButton title='Actualiser le catalogue' disabled={state.menuLoading} onPress={() => controller.refreshCatalogue && controller.refreshCatalogue().catch(error => setLocalError(errorText(error)))} />}
             {state.menuLoading && <ActivityIndicator accessibilityLabel='Chargement du menu' color='#1f6f5b' />}
             {(state.menuError || localError) && <Text accessibilityRole='alert' style={styles.error}>{errorText(state.menuError) || localError}</Text>}
             {state.categoryError && <><Text accessibilityRole='alert' style={styles.error}>{errorText(state.categoryError)}</Text><AppButton title='Réessayer les catégories' disabled={state.categoryLoading} onPress={() => controller.loadMoreCategories().catch(() => {})} /></>}
@@ -543,6 +556,7 @@ function App({ api, storage }) {
             <View style={styles.sheetOverlay}><TouchableOpacity style={styles.sheetDismiss} accessibilityRole='button' accessibilityLabel='Fermer la personnalisation' onPress={() => setSelected(null)} />
             {selected && <SafeAreaView edges={['bottom']} style={styles.modalCard} accessibilityViewIsModal><View style={styles.sheetHandle} /><ScrollView keyboardShouldPersistTaps='handled' contentContainerStyle={styles.sheetContent}>
               {(state.error || localError) && <Text accessibilityRole='alert' style={styles.error}>{errorText(state.error) || localError}</Text>}
+              {catalogueReadOnly && <CatalogueBanner />}
               <Text style={styles.sectionTitle}>{selected.item.name}</Text>
               <Text style={styles.muted}>Prix de base : {money(selected.item.priceXof)}</Text>
               {(selected.item.optionGroups || []).map((group) => (
@@ -556,9 +570,9 @@ function App({ api, storage }) {
                       return (
                         <TouchableOpacity
                           key={option.id}
-                          accessibilityRole='checkbox' accessibilityLabel={option.name} accessibilityState={{ checked, disabled: option.available === false || state.busy || !!pending || !state.restored }}
+                          accessibilityRole='checkbox' accessibilityLabel={option.name} accessibilityState={{ checked, disabled: option.available === false || catalogueReadOnly || state.busy || !!pending || !state.restored }}
                           style={[styles.optionRow, checked && styles.optionSelected, option.available === false && styles.cardClosed]}
-                          disabled={option.available === false || state.busy || !!pending || !state.restored}
+                          disabled={option.available === false || catalogueReadOnly || state.busy || !!pending || !state.restored}
                           onPress={() => {
                             const current = selected.selections[group.id] || []
                             const next = checked ? current.filter((id) => id !== option.id) : current.length < (group.maxSelections || 99) ? current.concat(option.id) : current
@@ -584,7 +598,7 @@ function App({ api, storage }) {
                     setLocalError(errorText(e))
                   }
                 }}
-                disabled={state.busy || !!pending || !state.restored}
+                disabled={catalogueReadOnly || state.busy || !!pending || !state.restored}
               />
               <AppButton title='Annuler' variant='secondary' onPress={() => setSelected(null)} />
             </ScrollView></SafeAreaView>}
@@ -602,6 +616,7 @@ function App({ api, storage }) {
         <Header title='Votre panier' onBack={() => setScreen(restaurant ? 'menu' : 'restaurants')} />
         <ScrollView key='cart' style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
           {!!cart.items.length && <View style={styles.cartRestaurant}><Icon name='restaurant-outline' /><Text style={styles.cardTitle}>{restaurant?.name || 'Votre sélection'}</Text></View>}
+          {catalogueReadOnly && <CatalogueBanner />}
           <Text style={styles.subtitle}>Estimation du menu uniquement. Les frais affichés ci-dessous viennent du serveur.</Text>
           {cart.items.length === 0
             ? (
@@ -630,7 +645,7 @@ function App({ api, storage }) {
                           setLocalError(errorText(e))
                         }
                       }}
-                      disabled={state.busy || !!pending || !state.restored}
+                      disabled={catalogueReadOnly || state.busy || !!pending || !state.restored}
                     />
                     <Text style={styles.quantityText}>{item.quantity}</Text>
                     <AppButton
@@ -642,7 +657,7 @@ function App({ api, storage }) {
                           setLocalError(errorText(e))
                         }
                       }}
-                      disabled={state.busy || !!pending || !state.restored}
+                      disabled={catalogueReadOnly || state.busy || !!pending || !state.restored}
                     />
                   </View>
                 </View>
@@ -658,7 +673,7 @@ function App({ api, storage }) {
           {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
           {cart.items.length > 0 && (
             <>
-              <AppButton variant='secondary' title='Actualiser le total' onPress={async() => { setLocalError(''); try { await controller.refreshQuote() } catch (e) { setLocalError(errorText(e)) } }} disabled={state.busy || !!pending || !state.restored} />
+              <AppButton variant='secondary' title='Actualiser le total' onPress={async() => { setLocalError(''); try { await controller.refreshQuote() } catch (e) { setLocalError(errorText(e)) } }} disabled={catalogueReadOnly || state.busy || !!pending || !state.restored} />
               <AppButton
                 title='Vider le panier pour changer de restaurant' variant='secondary'
                 color='#a33'
@@ -675,7 +690,7 @@ function App({ api, storage }) {
             </>
           )}
         </ScrollView>
-        {cart.items.length > 0 && <View style={styles.checkoutDock}><Text style={styles.checkoutDockTotal}>{state.quote ? `Total serveur : ${money(state.quote.total)}` : 'Calcul serveur requis'}</Text><AppButton title='Livrer à cette adresse' onPress={() => setScreen('address')} disabled={state.busy || !!pending || !state.restored || !state.quote} /></View>}
+        {cart.items.length > 0 && <View style={styles.checkoutDock}><Text style={styles.checkoutDockTotal}>{state.quote ? `Total serveur : ${money(state.quote.total)}` : 'Calcul serveur requis'}</Text><AppButton title='Livrer à cette adresse' onPress={() => setScreen('address')} disabled={catalogueReadOnly || state.busy || !!pending || !state.restored || !state.quote} /></View>}
         <BottomTabs current={screen} onNavigate={navigate} cartCount={cartCount} />
       </SafeAreaView>
     )
@@ -687,10 +702,11 @@ function App({ api, storage }) {
         <Header title='Adresse de livraison' onBack={() => setScreen('cart')} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
           <ScrollView style={styles.flex} keyboardShouldPersistTaps='handled' keyboardDismissMode='on-drag' contentContainerStyle={styles.content}>
+            {catalogueReadOnly && <CatalogueBanner />}
             <Text style={styles.subtitle}>Point de livraison — exemple fictif 12.3714, -1.5197. Les restaurants et frais sont filtrés et calculés par le serveur.</Text>
             <TextInput editable={!state.busy && !pending} style={styles.input} placeholder='Latitude (ex. 12.3714)' value={String(address.point.latitude)} keyboardType='numeric' onChangeText={(value) => setAddress({ ...address, point: { ...address.point, latitude: Number(value.replace(',', '.')) } })} />
             <TextInput editable={!state.busy && !pending} style={styles.input} placeholder='Longitude (ex. -1.5197)' value={String(address.point.longitude)} keyboardType='numeric' onChangeText={(value) => setAddress({ ...address, point: { ...address.point, longitude: Number(value.replace(',', '.')) } })} />
-            <AppButton title='Recharger les restaurants pour ce point' onPress={async() => { setLocalError(''); try { await controller.setDeliveryPoint(address.point) } catch (e) { setLocalError(errorText(e)) } }} disabled={state.busy || !!pending || !state.restored} />
+            <AppButton title='Recharger les restaurants pour ce point' onPress={async() => { setLocalError(''); try { await controller.setDeliveryPoint(address.point) } catch (e) { setLocalError(errorText(e)) } }} disabled={catalogueReadOnly || state.busy || !!pending || !state.restored} />
             {[
               ['recipientName', 'Nom du destinataire'],
               ['phone', 'Téléphone (+226)'],
@@ -703,7 +719,7 @@ function App({ api, storage }) {
             ))}
             {(state.error || localError) && <Text style={styles.error}>{errorText(state.error) || localError}</Text>}
             <Text style={styles.warning}>Démonstration locale : aucun paiement réel ni paiement à la livraison n’est disponible.</Text>
-            {state.quote && <Text style={styles.total}>Total serveur : {money(state.quote.total)}</Text>}{state.quote?.delivery && <Text style={styles.muted}>Zone : {state.quote.delivery.zoneName} · Livraison : {money(state.quote.delivery.deliveryFee)} · environ {state.quote.delivery.estimatedMinutes} min</Text>}<AppButton title={state.busy ? 'Envoi en cours…' : 'Envoyer la commande'} onPress={submit} disabled={state.busy || !!pending || !state.restored || !cart.items.length || !state.quote} />
+            {state.quote && <Text style={styles.total}>Total serveur : {money(state.quote.total)}</Text>}{state.quote?.delivery && <Text style={styles.muted}>Zone : {state.quote.delivery.zoneName} · Livraison : {money(state.quote.delivery.deliveryFee)} · environ {state.quote.delivery.estimatedMinutes} min</Text>}<AppButton title={state.busy ? 'Envoi en cours…' : 'Envoyer la commande'} onPress={submit} disabled={catalogueReadOnly || state.busy || !!pending || !state.restored || !cart.items.length || !state.quote} />
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>

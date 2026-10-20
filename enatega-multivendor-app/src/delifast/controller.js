@@ -9,9 +9,12 @@ const clone = (value) => (value == null ? value : JSON.parse(JSON.stringify(valu
 const errorView = (error) => ({ message: error?.message || String(error), kind: error?.kind || 'unknown', code: error?.code })
 const validQuote = (quote) => quote && quote.currency === 'XOF' && Number.isSafeInteger(quote.total) && quote.total >= 0 && Array.isArray(quote.items)
 const validReference = (ref) => ref && typeof ref.id === 'string' && ref.id.length > 0 && typeof ref.accessToken === 'string' && ref.accessToken.length >= 16
+const validPageCursor = cursor => cursor == null || (typeof cursor === 'string' && cursor.length > 0 && cursor.length <= 512)
 
-function createController({ api, storage = {}, random, fingerprintSession, onChange = () => {}, pollMs = 8000 }) {
+function createController({ api, storage = {}, catalogueCache = null, random, fingerprintSession, onChange = () => {}, pollMs = 8000 }) {
   let state = {
+    discoveryStale: false, profileStale: false, menuStale: false, categoryStale: false, catalogueReadOnly: false,
+    catalogueSavedAt: null,
     restaurants: [],
     restaurantsNextCursor: null,
     discoverySearch: '',
@@ -134,7 +137,34 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
   }
   const set = (patch) => {
     state = { ...state, ...patch }
+    state.catalogueReadOnly = !!(state.profileStale || state.menuStale || state.categoryStale)
     onChange(clone(state))
+  }
+  function catalogueWritable() {
+    if (state.catalogueReadOnly) throw new Error('Catalogue hors ligne ou périmé : actualisez le catalogue en ligne avant de commander')
+  }
+  // Only availability failures may use a public snapshot. Validation/auth errors
+  // (removed restaurant, invalid cursor/category) must never resurrect old data.
+  async function cataloguePage(kind, args, current) {
+    try {
+      const data = await api[kind](...args)
+      if (data && (kind === 'restaurantProfile' ? data.id !== args[0] : !validPageCursor(data.nextCursor))) throw new Error('Réponse catalogue incompatible')
+      if (current() && catalogueCache) {
+        if (!data) { try { await catalogueCache.clear() } catch {} }
+        else { try { await catalogueCache.write(kind, args, data) } catch {} }
+      }
+      return { data, stale: false, savedAt: null }
+    } catch (error) {
+      if (current() && catalogueCache && ['validation', 'auth'].includes(error?.kind)) {
+        try { await catalogueCache.clear() } catch {}
+      }
+      if (current() && (error?.kind === 'unavailable' || error?.status >= 500) && catalogueCache) {
+        let entry = null
+        try { entry = await catalogueCache.read(kind, args) } catch {}
+        if (entry && current()) return { ...entry, stale: true }
+      }
+      throw error
+    }
   }
   function writable() {
     if (!state.restored) throw new Error('Restauration locale requise avant de modifier la commande')
@@ -190,6 +220,7 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
   }
   async function refreshQuote() {
     writable()
+    catalogueWritable()
     const version = state.quoteVersion + 1
     const cart = clone(state.cart)
     set({ quote: null, quoteVersion: version, error: null })
@@ -467,12 +498,24 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       try {
         const page = await api.publicRestaurantPage(clone(checked.point), normalizedSearch, !!openOnly, 20, reset ? null : state.restaurantsNextCursor)
         if (request !== discoveryRequest) return null
-        if (!page || !Array.isArray(page.items)) throw new Error('Réponse restaurants paginée incomplète')
+        if (!page || !Array.isArray(page.items) || !validPageCursor(page.nextCursor)) throw new Error('Réponse restaurants paginée incomplète')
         const seen = new Set(); const merged = [...(reset ? [] : state.restaurants), ...page.items].filter(row => row && typeof row.id === 'string' && !seen.has(row.id) && seen.add(row.id))
-        set({ restaurants: clone(merged), restaurantsNextCursor: page.nextCursor || null, loading: false, deliveryPoint: clone(checked.point), error: null })
+        set({ discoveryStale: false, restaurants: clone(merged), restaurantsNextCursor: page.nextCursor || null, loading: false, deliveryPoint: clone(checked.point), error: null })
         return clone(merged)
       } catch (error) {
         if (request !== discoveryRequest) return null
+        // Discovery uses a precise delivery point: never persist its request or
+        // results. Offline entry is only the bounded set of visited public profiles.
+        let saved = []
+        if ((error?.kind === 'unavailable' || error?.status >= 500) && catalogueCache) {
+          try { saved = await catalogueCache.listProfiles() } catch {}
+        }
+        if (request !== discoveryRequest) return null
+        if (saved.length) {
+          const rows = saved.map(entry => entry.data)
+          set({ restaurants: rows, restaurantsNextCursor: null, discoveryStale: true, loading: false, error: errorView(error), quote: null, quoteVersion: state.quoteVersion + 1, profileStale: true })
+          return clone(rows)
+        }
         set({ loading: false, error: errorView(error) })
         throw error
       }
@@ -491,12 +534,20 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       const request = ++restaurantRequest
       ++menuRequest
       ++categoryRequest
-      const restaurant = await api.restaurantProfile(id)
+      set({ profileStale: true, menuStale: true, categoryStale: true, quote: null, quoteVersion: state.quoteVersion + 1 })
+      let result
+      try {
+        result = await cataloguePage('restaurantProfile', [id], () => request === restaurantRequest)
+      } catch (error) {
+        if (request === restaurantRequest) set({ profileStale: true, error: errorView(error) })
+        throw error
+      }
+      const restaurant = result.data
       writable()
       if (request !== restaurantRequest) return null
       if (!restaurant) throw new Error('Restaurant introuvable')
       if (state.cart.items.length && state.cart.restaurantId !== id) throw new Error('Videz le panier avant de changer de restaurant')
-      set({ restaurant: { ...clone(restaurant), menu: [], categories: [] }, menuSections: [], menuNextCursor: null, menuLoading: false, menuError: null, categoryNextCursor: null, categoryLoading: false, categoryError: null, error: null })
+      set({ profileStale: result.stale, menuStale: true, categoryStale: true, catalogueSavedAt: result.savedAt, restaurant: { ...clone(restaurant), menu: [], categories: [] }, menuSections: [], menuNextCursor: null, menuLoading: false, menuError: null, categoryNextCursor: null, categoryLoading: false, categoryError: null, error: null })
       menuScope = { restaurantId: id, search: '', categoryId: null }
       // Partial catalogue failure must open the menu with its own retry controls.
       await Promise.allSettled([actions.loadMenu(), actions.loadMoreCategories()])
@@ -516,7 +567,8 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       set({ menuLoading: true, menuError: null })
       const cursor = reset ? null : state.menuNextCursor
       try {
-        const page = await api.publicMenuPage(restaurantId, normalizedSearch, normalizedCategory, 20, cursor)
+        const result = await cataloguePage('publicMenuPage', [restaurantId, normalizedSearch, normalizedCategory, 20, cursor], () => request === menuRequest && restaurantId === state.restaurant?.id)
+        const page = result.data
         if (request !== menuRequest || restaurantId !== state.restaurant?.id) return null
         if (!page || !Array.isArray(page.sections)) throw new Error('Réponse menu paginée incomplète')
         const sections = clone(reset ? [] : state.menuSections)
@@ -531,11 +583,11 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
         }
         sections.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || a.id.localeCompare(b.id))
         const menu = sections.flatMap(section => section.items)
-        set({ menuSections: sections, menuNextCursor: page.nextCursor || null, menuLoading: false, menuError: null, restaurant: { ...state.restaurant, menu: clone(menu) }, error: null })
+        set({ menuStale: result.stale || (!reset && state.menuStale), catalogueSavedAt: result.savedAt || state.catalogueSavedAt, ...(result.stale ? { quote: null, quoteVersion: state.quoteVersion + 1 } : {}), menuSections: sections, menuNextCursor: page.nextCursor || null, menuLoading: false, menuError: null, restaurant: { ...state.restaurant, menu: clone(menu) }, error: null })
         return clone(sections)
       } catch (error) {
         if (request !== menuRequest || restaurantId !== state.restaurant?.id) return null
-        set({ menuLoading: false, menuError: errorView(error) })
+        set({ menuStale: true, quote: null, quoteVersion: state.quoteVersion + 1, menuLoading: false, menuError: errorView(error) })
         throw error
       }
     },
@@ -545,16 +597,24 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       if (state.categoryLoading || !state.categoryNextCursor && state.restaurant.categories?.length) return clone(state.restaurant.categories)
       const request = ++categoryRequest; set({ categoryLoading: true, categoryError: null })
       try {
-        const page = await api.publicMenuCategoryPage(restaurantId, 20, state.categoryNextCursor)
+        const cursor = state.categoryNextCursor
+        const result = await cataloguePage('publicMenuCategoryPage', [restaurantId, 20, cursor], () => request === categoryRequest && restaurantId === state.restaurant?.id)
+        const page = result.data
         if (request !== categoryRequest || restaurantId !== state.restaurant?.id) return null
         if (!page || !Array.isArray(page.items)) throw new Error('Réponse catégories paginée incomplète')
         const old = state.restaurant.categories || []; const seen = new Set(); const categories = [...old, ...page.items].filter(item => item?.id && !seen.has(String(item.id)) && seen.add(String(item.id)))
-        set({ categoryNextCursor: page.nextCursor || null, categoryLoading: false, categoryError: null, restaurant: { ...state.restaurant, categories: clone(categories) }, error: null })
+        set({ categoryStale: result.stale || (!!cursor && state.categoryStale), catalogueSavedAt: result.savedAt || state.catalogueSavedAt, ...(result.stale ? { quote: null, quoteVersion: state.quoteVersion + 1 } : {}), categoryNextCursor: page.nextCursor || null, categoryLoading: false, categoryError: null, restaurant: { ...state.restaurant, categories: clone(categories) }, error: null })
         return clone(categories)
-      } catch (error) { if (request !== categoryRequest || restaurantId !== state.restaurant?.id) return null; set({ categoryLoading: false, categoryError: errorView(error) }); throw error }
+      } catch (error) { if (request !== categoryRequest || restaurantId !== state.restaurant?.id) return null; set({ categoryStale: true, quote: null, quoteVersion: state.quoteVersion + 1, categoryLoading: false, categoryError: errorView(error) }); throw error }
+    },
+    async refreshCatalogue() {
+      const id = state.restaurant?.id
+      if (!id) throw new Error('Restaurant non sélectionné')
+      return actions.selectRestaurant(id)
     },
     async addItem(item, selections) {
       writable()
+      catalogueWritable()
       const restaurant = state.restaurant
       if (!restaurant || restaurant.open === false) throw new Error('Restaurant fermé ou non sélectionné')
       const current = restaurant.menu?.find((entry) => entry.id === item.id)
@@ -565,6 +625,7 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       return refreshQuote()
     },
     async changeQuantity(index, delta) {
+      catalogueWritable()
       mutate(changeQuantity(state.cart, index, delta))
       return refreshQuote()
     },
@@ -582,6 +643,7 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       if (inFlight) return inFlight
       try {
         writable()
+        catalogueWritable()
         storageReady()
         if (!state.cart.restaurantId || !state.cart.items.length) throw new Error('Panier vide')
         if (!validQuote(state.quote)) throw new Error('Devis serveur requis : actualisez le panier avant de confirmer')

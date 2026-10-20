@@ -18,6 +18,8 @@ native.StyleSheet = { create: x => x }
 const backListeners = new Set()
 native.BackHandler = { addEventListener: (name, listener) => { assert.equal(name, 'hardwareBackPress'); backListeners.add(listener); return { remove: () => backListeners.delete(listener) } } }
 const modules = new Map()
+const asyncStorageData = new Map()
+const asyncStorageMock = { getItem: async key => asyncStorageData.get(key) || null, setItem: async (key, value) => { asyncStorageData.set(key, value) }, removeItem: async key => { asyncStorageData.delete(key) } }
 function loadLocal(file) {
   if (modules.has(file)) return modules.get(file).exports
   const moduleMock = { exports: {} }
@@ -32,6 +34,7 @@ function loadLocal(file) {
     if (name === '@expo/vector-icons/Ionicons') return 'Ionicons'
     if (name === 'expo-font') return { useFonts: () => [true, null] }
     if (name.endsWith('.ttf')) return 1
+    if (name === '@react-native-async-storage/async-storage') return asyncStorageMock
     if (name === 'expo-secure-store') return {}
     if (name === 'expo-crypto') return { randomUUID: () => require('node:crypto').randomUUID(), CryptoDigestAlgorithm: { SHA256: 'sha256' }, digestStringAsync: async (algorithm, value) => require('node:crypto').createHash(algorithm).update(value).digest('hex') }
     if (name.startsWith('.')) return loadLocal(require.resolve(path.resolve(path.dirname(file), name)))
@@ -94,9 +97,9 @@ const api = extra => {
   if (!legacy.publicMenuCategoryPage) legacy.publicMenuCategoryPage = async restaurantId => ({ items: (await legacy.restaurant(restaurantId))?.categories || [], nextCursor: null })
   return legacy
 }
-async function mount (client = api(), storage = memory()) {
+async function mount (client = api(), storage = memory(), catalogueCache = null) {
   let tree
-  await renderer.act(async () => { tree = renderer.create(React.createElement(App, { api: client, storage })) })
+  await renderer.act(async () => { tree = renderer.create(React.createElement(App, { api: client, storage, catalogueCache })) })
   return tree
 }
 async function press (tree, title, type = 'Button') {
@@ -1096,5 +1099,60 @@ test('découverte paginée : chargement initial, erreur puis reprise sans fallba
   assert.doesNotMatch(treeText(tree), /Découverte hors ligne/)
   assert.ok(buttons(tree).some(node => node.props.title === 'Charger plus de restaurants'))
   assert.equal(calls, 2)
+  await unmount(tree)
+})
+
+test('cache public après remontage : profils visités, bannière périmée, options en lecture seule puis actualisation serveur', async () => {
+  const { createCatalogueCache } = require('./catalogue-cache')
+  const disk = memory(); const secure = memory(); const cache = () => createCatalogueCache({ storage: disk, namespace: 'http://localhost:4000/graphql' })
+  let online = true; let quotes = 0; let orders = 0
+  const fail = () => { throw Object.assign(new Error('Réseau indisponible'), { kind: 'unavailable' }) }
+  const configurable = { ...restaurant, version: 1, menu: [{ ...restaurant.menu[0], optionGroups: [{ id: 'format', name: 'Format', minSelections: 0, maxSelections: 1, options: [{ id: 'extra', name: 'Extra test', available: true, priceXof: 50 }] }] }] }
+  const client = api({ restaurants: async () => online ? [configurable] : fail(), restaurant: async () => online ? configurable : fail(), calculateCheckout: async () => { quotes++; return checkout }, placeOrder: async () => { orders++; return order } })
+  let tree = await mount(client, secure, cache())
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity'); await unmount(tree)
+  online = false; tree = await mount(client, secure, cache())
+  assert.match(treeText(tree), /Hors ligne · restaurants déjà consultés/)
+  assert.equal(tree.root.findAllByProps({ accessibilityLabel: 'Rechercher un restaurant' }).length, 0)
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  assert.match(treeText(tree), /potentiellement périmées/)
+  assert.match(treeText(tree), /Lecture seule/)
+  await press(tree, 'Riz test', 'TouchableOpacity')
+  const option = tree.root.findByProps({ accessibilityLabel: 'Extra test' })
+  assert.equal(option.props.disabled, true)
+  const add = tree.root.findAllByType('TouchableOpacity').find(node => node.props.accessibilityLabel === 'Ajouter au panier')
+  assert.equal(add.props.disabled, true); assert.equal(add.props.onPress, undefined)
+  // Forcing the higher-level handler must also hit the controller's write gate.
+  await press(tree, 'Ajouter au panier')
+  assert.match(treeText(tree), /actualisez le catalogue/)
+  assert.equal(quotes, 0); assert.equal(orders, 0)
+  await press(tree, 'Annuler'); online = true
+  await press(tree, 'Actualiser le catalogue')
+  assert.doesNotMatch(treeText(tree), /Lecture seule/)
+  await press(tree, 'Riz test', 'TouchableOpacity')
+  assert.equal(tree.root.findByProps({ accessibilityLabel: 'Extra test' }).props.disabled, false)
+  await press(tree, 'Ajouter au panier'); assert.equal(quotes, 1); assert.equal(orders, 0)
+  await unmount(tree)
+})
+
+test('une coupure invalide le total déjà reçu et ferme les contrôles de devis et checkout du panier', async () => {
+  const { createCatalogueCache } = require('./catalogue-cache')
+  let online = true; let orders = 0
+  const client = api({ restaurant: async () => {
+    if (!online) throw Object.assign(new Error('Réseau indisponible'), { kind: 'unavailable' })
+    return { ...restaurant, version: 1 }
+  }, placeOrder: async () => { orders++; return order } })
+  const tree = await mount(client, memory(), createCatalogueCache({ storage: memory(), namespace: 'test-cart' }))
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity'); await press(tree, 'Riz test', 'TouchableOpacity'); await press(tree, 'Ajouter au panier')
+  online = false
+  await renderer.act(async () => tree.root.findByProps({ accessibilityLabel: 'Rechercher dans le menu' }).props.onPress())
+  await press(tree, 'Panier', 'TouchableOpacity')
+  assert.match(treeText(tree), /Lecture seule/)
+  assert.doesNotMatch(treeText(tree), /Total serveur/)
+  for (const label of ['+', '−', 'Actualiser le total', 'Livrer à cette adresse']) {
+    const button = tree.root.findAllByType('TouchableOpacity').find(node => node.props.accessibilityLabel === label)
+    assert.ok(button, label); assert.equal(button.props.disabled, true, label); assert.equal(button.props.onPress, undefined, label)
+  }
+  assert.equal(orders, 0)
   await unmount(tree)
 })
