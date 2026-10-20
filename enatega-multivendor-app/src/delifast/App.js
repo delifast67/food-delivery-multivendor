@@ -70,6 +70,12 @@ function App({ api, storage }) {
   const [accountAddress, setAccountAddress] = useState(initialAddress)
   const [editingAddressId, setEditingAddressId] = useState(null)
   const [otpNow, setOtpNow] = useState(Date.now())
+  const customerId = state?.customer?.id || null
+  useEffect(() => {
+    // A draft from a revoked account must not reappear in another account.
+    setAccountAddress({ ...initialAddress, point: { ...initialAddress.point } })
+    setEditingAddressId(null)
+  }, [customerId])
   useEffect(() => {
     if (!challenge) return undefined
     const timer = setInterval(() => setOtpNow(Date.now()), 250)

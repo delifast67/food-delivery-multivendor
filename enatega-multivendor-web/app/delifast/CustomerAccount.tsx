@@ -39,7 +39,9 @@ const textError = (error: unknown) => {
     : message;
 };
 const authError = (error: unknown) =>
-  /UNAUTHENTICATED|session|auth|bearer|expired|expir/i.test(textError(error));
+  error instanceof DelifastApiError
+    ? error.code === "UNAUTHENTICATED" || error.status === 401
+    : /\bUNAUTHENTICATED\b|Session client expirée/i.test(textError(error));
 const freshAddress = (): DeliveryAddress => ({
   ...emptyAddress,
   point: { ...emptyAddress.point! },
@@ -67,6 +69,8 @@ export default function CustomerAccount({
   const mounted = useRef(true);
   const epoch = useRef(0);
   const actionLock = useRef<string | null>(null);
+  const otpDeadline = useRef(0);
+  const resendDeadline = useRef(0);
 
   useEffect(() => {
     mounted.current = true;
@@ -88,6 +92,22 @@ export default function CustomerAccount({
   const current = (version: number) =>
     mounted.current && epoch.current === version;
 
+  const clearSession = () => {
+    memoryToken = "";
+    setToken("");
+    setCustomer(null);
+    setAddresses([]);
+    setDraft(freshAddress());
+    setEditing(null);
+  };
+  const accountError = (error: unknown, version: number) => {
+    if (!current(version)) return;
+    if (authError(error)) {
+      epoch.current += 1;
+      clearSession();
+    }
+    setError(textError(error));
+  };
   const load = async (activeToken: string, version = epoch.current) => {
     try {
       const me = await delifastApi.customerMe(activeToken);
@@ -98,14 +118,7 @@ export default function CustomerAccount({
       setCustomer(me);
       setAddresses(list);
     } catch (e) {
-      if (!current(version)) return;
-      if (authError(e)) {
-        memoryToken = "";
-        setToken("");
-        setCustomer(null);
-        setAddresses([]);
-      }
-      setError(textError(e));
+      accountError(e, version);
     }
   };
   useEffect(() => {
@@ -114,21 +127,25 @@ export default function CustomerAccount({
     }
   }, [open, token, customer]);
   useEffect(() => {
-    if (retryAfter <= 0) return;
-    const timer = window.setInterval(
-      () => setRetryAfter((value) => Math.max(0, value - 1)),
-      1000,
-    );
-    return () => window.clearInterval(timer);
-  }, [retryAfter]);
-  useEffect(() => {
-    if (expiresIn <= 0) return;
-    const timer = window.setInterval(
-      () => setExpiresIn((value) => Math.max(0, value - 1)),
-      1000,
-    );
-    return () => window.clearInterval(timer);
-  }, [expiresIn]);
+    if (!challengeId) return;
+    // Background tabs may skip timer ticks. Always derive remaining time from
+    // the deadline, including immediately on focus/visibility restoration.
+    const sync = () => {
+      const now = Date.now();
+      setExpiresIn(Math.max(0, Math.ceil((otpDeadline.current - now) / 1000)));
+      setRetryAfter(
+        Math.max(0, Math.ceil((resendDeadline.current - now) / 1000)),
+      );
+    };
+    const timer = window.setInterval(sync, 1000);
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", sync);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, [challengeId]);
 
   const challenge = async (resend = false) => {
     if (!begin("otp")) return;
@@ -137,20 +154,31 @@ export default function CustomerAccount({
     setNotice("");
     try {
       if (resend) {
-        if (!challengeId || expiresIn <= 0)
+        if (!challengeId || Date.now() >= otpDeadline.current)
           throw new Error(
             "Cette demande a expiré. Recommencez avec votre téléphone.",
           );
-        if (retryAfter > 0) throw new Error(`Réessayez dans ${retryAfter}s.`);
+        const remaining = Math.ceil(
+          (resendDeadline.current - Date.now()) / 1000,
+        );
+        if (remaining > 0) throw new Error(`Réessayez dans ${remaining}s.`);
       } else if (!PHONE.test(phone))
         throw new Error("Utilisez un numéro au format +226XXXXXXXX.");
+      const requestedAt = Date.now();
       const result = resend
         ? await delifastApi.resendCustomerOtp(challengeId)
         : await delifastApi.requestCustomerOtp(phone);
       if (!current(version)) return;
+      // Count request latency conservatively rather than extending server TTL.
+      otpDeadline.current = requestedAt + result.expiresIn * 1000;
+      resendDeadline.current = requestedAt + result.retryAfter * 1000;
       setChallengeId(result.challengeId);
-      setExpiresIn(result.expiresIn);
-      setRetryAfter(result.retryAfter);
+      setExpiresIn(
+        Math.max(0, Math.ceil((otpDeadline.current - Date.now()) / 1000)),
+      );
+      setRetryAfter(
+        Math.max(0, Math.ceil((resendDeadline.current - Date.now()) / 1000)),
+      );
       setCode("");
       setNotice(
         "Demande acceptée par le serveur. La réception du message n'est pas garantie.",
@@ -165,6 +193,8 @@ export default function CustomerAccount({
     if (actionLock.current) return;
     setChallengeId("");
     setCode("");
+    otpDeadline.current = 0;
+    resendDeadline.current = 0;
     setExpiresIn(0);
     setRetryAfter(0);
     setError("");
@@ -179,7 +209,7 @@ export default function CustomerAccount({
     setError("");
     setNotice("");
     try {
-      if (!challengeId || expiresIn <= 0)
+      if (!challengeId || Date.now() >= otpDeadline.current)
         throw new Error(
           "Cette demande a expiré. Recommencez avec votre téléphone.",
         );
@@ -207,12 +237,11 @@ export default function CustomerAccount({
     setBusy("logout");
     const active = token;
     const version = ++epoch.current;
-    memoryToken = "";
-    setToken("");
-    setCustomer(null);
-    setAddresses([]);
+    clearSession();
     setChallengeId("");
     setCode("");
+    otpDeadline.current = 0;
+    resendDeadline.current = 0;
     setExpiresIn(0);
     setRetryAfter(0);
     setDraft(freshAddress());
@@ -254,7 +283,7 @@ export default function CustomerAccount({
       setDraft(freshAddress());
       setEditing(null);
     } catch (e) {
-      if (current(version)) setError(textError(e));
+      accountError(e, version);
     } finally {
       finish("address");
     }
@@ -271,10 +300,15 @@ export default function CustomerAccount({
       if (
         (await delifastApi.deleteCustomerAddress(token, id)) &&
         current(version)
-      )
+      ) {
         setAddresses((items) => items.filter((item) => item.id !== id));
+        if (editing === id) {
+          setEditing(null);
+          setDraft(freshAddress());
+        }
+      }
     } catch (e) {
-      if (current(version)) setError(textError(e));
+      accountError(e, version);
     } finally {
       finish(`delete-${id}`);
     }

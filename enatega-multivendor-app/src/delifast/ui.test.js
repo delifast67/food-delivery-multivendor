@@ -160,3 +160,33 @@ test('compte mobile : le délai de renvoi vient du challenge et changer de tél�
   assert.equal(tree.root.findByType('TextInput').props.editable, true)
   await unmount(tree)
 })
+
+// Sessions injectées exclusivement dans le test : aucune réception SMS réelle.
+test('la révocation efface le brouillon du carnet avant une nouvelle identité', async () => {
+  const storage = memory()
+  await storage.setItem('delifast-customer-token', 'fixture-old-session')
+  let listCalls = 0
+  const tree = await mount(api({
+    setCustomerToken: () => {},
+    customerMe: async () => ({ id: 'fixture-first-customer', phone: '+22670000000' }),
+    customerAddresses: async () => ++listCalls === 1 ? [{ ...address, id: 'old-private-address' }] : [],
+    updateCustomerAddress: async () => { throw Object.assign(new Error('Session client révoquée'), { kind: 'auth' }) },
+    requestCustomerOtp: async () => ({ challengeId: 'protocol-test-only', expiresIn: 60, retryAfter: 0 }),
+    verifyCustomerOtp: async () => ({ token: 'fixture-new-session', customer: { id: 'fixture-second-customer', phone: '+22671111111' } })
+  }), storage)
+  await press(tree, 'Compte', 'TouchableOpacity')
+  await press(tree, 'Modifier')
+  assert.equal(tree.root.findAllByType('TextInput').find(node => node.props.placeholder === 'recipientName').props.value, address.recipientName)
+  await renderer.act(async () => { tree.root.findAllByType('TextInput').find(node => node.props.placeholder === 'instructions').props.onChangeText('Ancien brouillon privé fictif') })
+  await press(tree, 'Enregistrer les modifications')
+  assert.match(treeText(tree), /Connexion par téléphone/)
+  await renderer.act(async () => { tree.root.findByType('TextInput').props.onChangeText('+22671111111') })
+  await press(tree, 'Demander un code')
+  await renderer.act(async () => { tree.root.findAllByType('TextInput').find(node => node.props.placeholder === 'Code de vérification').props.onChangeText('123456') })
+  await press(tree, 'Valider le code')
+  assert.match(treeText(tree), /Téléphone :.*22671111111/)
+  assert.match(treeText(tree), /Ajouter une adresse/)
+  assert.equal(tree.root.findAllByType('TextInput').find(node => node.props.placeholder === 'recipientName').props.value, '')
+  assert.equal(tree.root.findAllByType('TextInput').find(node => node.props.placeholder === 'instructions').props.value, '')
+  await unmount(tree)
+})

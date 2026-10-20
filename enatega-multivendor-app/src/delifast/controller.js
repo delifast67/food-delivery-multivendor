@@ -45,6 +45,12 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
     authInFlight = Promise.resolve().then(work).finally(() => { authInFlight = null; set({ authBusy: false }) })
     return authInFlight
   }
+  async function clearCustomerSession() {
+    ++authEpoch
+    if (api.setCustomerToken) api.setCustomerToken(null)
+    set({ customer: null, addresses: [] })
+    try { if (storage.removeItem) await storage.removeItem(CUSTOMER_TOKEN_KEY) } catch {}
+  }
   const set = (patch) => {
     state = { ...state, ...patch }
     onChange(clone(state))
@@ -345,17 +351,47 @@ function createController({ api, storage = {}, random, onChange = () => {}, poll
     async createCustomerAddress(input) {
       if (!state.customer || !api.createCustomerAddress) throw new Error('Connexion client requise')
       const epoch = authEpoch; const payload = serializeAddress(input)
-      return authExclusive(async() => { const value = await api.createCustomerAddress(payload); if (epoch !== authEpoch) throw new Error('Connexion annulée'); set({ addresses: [...state.addresses, clone(value)] }); return clone(value) })
+      return authExclusive(async() => {
+        try {
+          const value = await api.createCustomerAddress(payload)
+          if (epoch !== authEpoch) throw new Error('Connexion annulée')
+          set({ addresses: [...state.addresses, clone(value)] })
+          return clone(value)
+        } catch (error) {
+          if (epoch === authEpoch && error?.kind === 'auth') await clearCustomerSession()
+          throw error
+        }
+      })
     },
     async updateCustomerAddress(id, input) {
       if (!state.customer || !api.updateCustomerAddress) throw new Error('Connexion client requise')
       const epoch = authEpoch; const payload = serializeAddress(input)
-      return authExclusive(async() => { const value = await api.updateCustomerAddress(id, payload); if (epoch !== authEpoch) throw new Error('Connexion annulée'); set({ addresses: state.addresses.map(item => item.id === id ? clone(value) : item) }); return clone(value) })
+      return authExclusive(async() => {
+        try {
+          const value = await api.updateCustomerAddress(id, payload)
+          if (epoch !== authEpoch) throw new Error('Connexion annulée')
+          set({ addresses: state.addresses.map(item => item.id === id ? clone(value) : item) })
+          return clone(value)
+        } catch (error) {
+          if (epoch === authEpoch && error?.kind === 'auth') await clearCustomerSession()
+          throw error
+        }
+      })
     },
     async deleteCustomerAddress(id) {
       if (!state.customer || !api.deleteCustomerAddress) throw new Error('Connexion client requise')
       const epoch = authEpoch
-      return authExclusive(async() => { const value = await api.deleteCustomerAddress(id); if (epoch !== authEpoch) throw new Error('Connexion annulée'); if (value) set({ addresses: state.addresses.filter(item => item.id !== id) }); return value })
+      return authExclusive(async() => {
+        try {
+          const value = await api.deleteCustomerAddress(id)
+          if (epoch !== authEpoch) throw new Error('Connexion annulée')
+          if (value) set({ addresses: state.addresses.filter(item => item.id !== id) })
+          return value
+        } catch (error) {
+          if (epoch === authEpoch && error?.kind === 'auth') await clearCustomerSession()
+          throw error
+        }
+      })
     },
     stopPolling() {
       if (pollTimer) clearInterval(pollTimer)

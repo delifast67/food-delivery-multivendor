@@ -130,3 +130,91 @@ test('CRUD après restauration utilise des fixtures de session explicites, white
   assert.deepEqual(calls[0][1], { recipientName: address.recipientName, phone: address.phone, city: address.city, neighborhood: address.neighborhood, landmark: address.landmark, instructions: '', point: { latitude: 12.37, longitude: -1.52 } })
   assert.deepEqual(controller.getState().addresses, [{ id: 'old' }])
 })
+
+test('un CRUD refusé pour session révoquée efface le compte local et son token', async () => {
+  const store = storage({ [CUSTOMER_TOKEN_KEY]: 'revoked-token' }); let token = 'revoked-token'
+  const revoked = Object.assign(new Error('Session révoquée'), { kind: 'auth', code: 'UNAUTHENTICATED' })
+  const controller = createController({ storage: store, api: {
+    setCustomerToken: value => { token = value },
+    customerMe: async () => ({ id: 'c', phone: '+22670000000' }),
+    customerAddresses: async () => [{ id: 'old' }],
+    updateCustomerAddress: async () => { throw revoked }
+  } })
+  await controller.restoreCustomer()
+  await assert.rejects(controller.updateCustomerAddress('old', address), /révoquée/)
+  assert.equal(token, null)
+  assert.equal(store.db[CUSTOMER_TOKEN_KEY], undefined)
+  assert.equal(controller.getState().customer, null)
+  assert.deepEqual(controller.getState().addresses, [])
+})
+
+test('le client HTTP distingue une réponse GraphQL UNAUTHENTICATED', async () => {
+  const api = createClient({ fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ errors: [{ message: 'Session révoquée', extensions: { code: 'UNAUTHENTICATED' } }] }) }) })
+  await assert.rejects(api.customerMe(), error => error.kind === 'auth' && error.code === 'UNAUTHENTICATED')
+})
+
+for (const method of ['createCustomerAddress', 'deleteCustomerAddress']) {
+  test(`${method} refuse une session révoquée et efface les données privées`, async () => {
+    const store = storage({ [CUSTOMER_TOKEN_KEY]: 'revoked-test-token' }); let token
+    const controller = createController({ storage: store, api: {
+      setCustomerToken: value => { token = value },
+      customerMe: async () => ({ id: 'c', phone: '+22670000000' }),
+      customerAddresses: async () => [{ id: 'old' }],
+      [method]: async () => { throw Object.assign(new Error('Session refusée'), { kind: 'auth' }) }
+    } })
+    await controller.restoreCustomer()
+    await assert.rejects(method === 'createCustomerAddress' ? controller[method](address) : controller[method]('old'), /Session refusée/)
+    assert.equal(token, null)
+    assert.equal(store.db[CUSTOMER_TOKEN_KEY], undefined)
+    assert.equal(controller.getState().customer, null)
+    assert.deepEqual(controller.getState().addresses, [])
+  })
+}
+
+test('une panne réseau du carnet ne supprime pas la session client', async () => {
+  const store = storage({ [CUSTOMER_TOKEN_KEY]: 'valid-test-token' }); let token
+  const customer = { id: 'c', phone: '+22670000000' }
+  const controller = createController({ storage: store, api: {
+    setCustomerToken: value => { token = value },
+    customerMe: async () => customer,
+    customerAddresses: async () => [{ id: 'old' }],
+    updateCustomerAddress: async () => { throw Object.assign(new Error('Connexion interrompue'), { kind: 'unavailable' }) }
+  } })
+  await controller.restoreCustomer()
+  await assert.rejects(controller.updateCustomerAddress('old', address), /Connexion interrompue/)
+  assert.equal(token, 'valid-test-token')
+  assert.equal(store.db[CUSTOMER_TOKEN_KEY], 'valid-test-token')
+  assert.deepEqual(controller.getState().customer, customer)
+  assert.deepEqual(controller.getState().addresses, [{ id: 'old' }])
+})
+
+for (const status of [401, 403]) {
+  test(`le client HTTP classe le statut ${status} en refus d'authentification`, async () => {
+    const api = createClient({ fetchImpl: async () => ({ ok: false, status, json: async () => ({ errors: [{ message: 'Accès refusé' }] }) }) })
+    await assert.rejects(api.customerAddresses(), error => error.kind === 'auth' && error.status === status)
+  })
+}
+
+test('un refus obsolète du carnet après logout ne purge pas une seconde fois le stockage', async () => {
+  const wait = deferred(); let removals = 0
+  const store = storage({ [CUSTOMER_TOKEN_KEY]: 'old-token' })
+  const remove = store.removeItem
+  store.removeItem = async key => { removals++; await remove(key) }
+  const controller = createController({ storage: store, api: {
+    setCustomerToken: () => {},
+    customerMe: async () => ({ id: 'c', phone: '+22670000000' }),
+    customerAddresses: async () => [{ id: 'old' }],
+    customerLogout: async () => true,
+    updateCustomerAddress: async () => wait.promise
+  } })
+  await controller.restoreCustomer()
+  const updating = controller.updateCustomerAddress('old', address)
+  const rejected = assert.rejects(updating, /Session refusée/)
+  await tick()
+  await controller.logoutCustomer()
+  assert.equal(removals, 1)
+  wait.reject(Object.assign(new Error('Session refusée'), { kind: 'auth' }))
+  await rejected
+  assert.equal(removals, 1)
+  assert.equal(controller.getState().customer, null)
+})

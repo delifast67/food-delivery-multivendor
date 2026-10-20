@@ -2,13 +2,13 @@
 
 Orange SMS BF remplace D7 comme transport prévu pour Delifast. Le serveur génère et vérifie lui-même les codes de connexion ; Orange ne reçoit qu’un SMS à transmettre. Le contrat `SmsProvider.send(phone, message)` permet de changer de transport sans déléguer la sécurité du compte au prestataire.
 
-**L’intégration reste désactivée par défaut. Aucun SMS réel, appel API Orange, achat de bundle, souscription ou changement de l’application Orange n’a été effectué.** Le serveur conserve son verrou anti-production. Les tests utilisent exclusivement des transports isolés ; ils ne prouvent pas la livraison d’un SMS.
+**L’intégration reste désactivée par défaut. Aucun SMS réel, achat de bundle, souscription ou changement de l’application Orange n’a été effectué.** Un contrôle OAuth Client Credentials a réussi le 20 octobre 2026 à 06:49 UTC ; il ne prouve pas l’envoi ou la réception d’un SMS. Le serveur conserve son verrou anti-production. Les tests de développement utilisent exclusivement des transports isolés.
 
 ## Ce qui reste à vérifier dans le compte
 
-Le lien fourni vers l’application `h6oAU7302infbuiI` redirige vers la connexion Orange Developer. Il n’y a pas de session Orange connectée dans ce navigateur. Le statut d’abonnement SMS Burkina Faso, les scopes effectifs, le solde et sa validité, ainsi que les noms d’expéditeur autorisés sont donc **inconnus**, et non supposés actifs. Aucun secret de la console n’a été ouvert ou copié. La recherche des secrets sauvegardés « Orange » n’a trouvé aucune correspondance.
+Le dernier état transmis pour le compte est **0 unité SMS**. Hilton a explicitement reporté l’achat du pack Starter et l’essai réel. Les identifiants ont été sauvegardés séparément du dépôt ; ne pas les recopier dans les fichiers ni refaire le contrôle OAuth sans nécessité. Le contrôle OAuth réussi ne valide ni un solde utilisable, ni un expéditeur personnalisé, ni la capacité de réception sur téléphone.
 
-Après connexion autorisée, consulter uniquement le produit SMS BF associé et son écran de configuration. La souscription au produit, la demande d’expéditeur et l’achat de crédits sont des actions séparées, non autorisées par la simple intégration de code.
+La souscription au produit, la demande d’expéditeur, l’achat de crédits et l’envoi d’un SMS sont des actions séparées. Aucune n’est autorisée pour la poursuite du développement local ; attendre un accord explicite avant toute activation ou modification Orange.
 
 ## Protocole officiel
 
@@ -31,8 +31,8 @@ Les exemples [.env.orange.example](../delifast-api/.env.orange.example) et [.env
 | --- | --- |
 | `SMS_PROVIDER` | Vide. Seule la valeur `orange` est prise en charge. |
 | `ORANGE_SMS_ENABLED` | `false`. Doit être exactement `true` pour autoriser le transport configuré. |
-| `ORANGE_CLIENT_ID` | Vide. ID client de l’application Orange, à collecter via formulaire sécurisé. |
-| `ORANGE_CLIENT_SECRET` | Vide. Secret client, à collecter via formulaire sécurisé. |
+| `ORANGE_CLIENT_ID` | Vide. ID client de l’application Orange, à injecter depuis les secrets sauvegardés uniquement après autorisation d’activation. |
+| `ORANGE_CLIENT_SECRET` | Vide. Secret client, à injecter depuis les secrets sauvegardés uniquement après autorisation d’activation. |
 | `ORANGE_SMS_SENDER_ADDRESS` | `tel:+2260000`. Le lot est limité au Burkina Faso. |
 | `ORANGE_SMS_SENDER_NAME` | Vide. Ne renseigner qu’un nom approuvé dans le compte. |
 | `CUSTOMER_OTP_HASH_KEY` | Vide. Clé serveur aléatoire d’au moins 32 octets ; ne pas réutiliser le secret Orange. À générer dans le gestionnaire de secrets, pas à demander au client mobile. |
@@ -58,7 +58,7 @@ Le transport n’accepte que l’origine HTTPS Orange fixe, refuse les redirecti
 
 1. Se connecter au compte Orange et confirmer, en lecture seule, que l’application est bien celle de Hilton, que SMS BF est souscrit et que l’expéditeur est autorisé.
 2. Confirmer un contrat SMS valide avec solde positif. Si une souscription, une demande d’expéditeur ou un achat est nécessaire, obtenir une autorisation séparée avant cette action.
-3. Collecter via formulaire sécurisé l’ID client et le secret client ; confirmer l’expéditeur autorisé. Générer séparément la clé HMAC côté serveur. Ne pas demander de credential en clair dans la conversation.
+3. Utiliser les identifiants déjà sauvegardés ; confirmer l’expéditeur autorisé. Générer séparément la clé HMAC côté serveur. Ne pas demander de credential en clair dans la conversation.
 4. Obtenir un accord explicite pour l’essai réel, le numéro BF destinataire consentant et le coût. Choisir un seul SMS initial ; ne pas enchaîner automatiquement sur une réponse ambiguë.
 5. Configurer le serveur sans clé publique, puis effectuer l’essai autorisé et vérifier la réception et la saisie du vrai code par le destinataire. Les tests actuels ne remplacent pas cette recette.
 
@@ -78,3 +78,5 @@ npm run export:delifast --prefix enatega-multivendor-app
 Les tests transport remplacent `fetch` et les tests auth injectent un `SmsProvider` local réservé aux tests. L’application utilisateur ne propose aucun mode OTP simulé. Les comptes personnels et adresses restent isolés par session ; les précédents lots commande, zones, personnel et paiement sont conservés.
 
 Résultats du lot Orange : **234 tests API, 120 tests web et 60 tests mobiles réussis**, builds API/web et exports Android/iOS réussis. L’export reste un bundle JavaScript/Hermes, pas un APK/IPA signé ni une recette sur téléphone. Les avertissements existants Metro (`useWatchman`) et de dépréciation du test renderer ne bloquent pas ces validations.
+
+Le lot suivant de fiabilisation porte la validation à **234 tests API, 130 tests web et 69 tests mobiles réussis**. Il couvre l’expiration web après suspension des timers, les refus de session sur les trois opérations du carnet, la conservation de session en cas de panne réseau, les réponses tardives après déconnexion et l’effacement du brouillon mobile entre deux identités de test. Les builds API/web, les exports JS/Hermes Android/iOS, les contrats GraphQL et la persistance des commandes après arrêt complet puis redémarrage MongoDB/API passent également. Aucun nouvel appel Orange, aucun SMS, achat, paiement, push Git, fusion ou déploiement n’a été réalisé dans ce lot.

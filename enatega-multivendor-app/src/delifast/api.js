@@ -2,6 +2,7 @@
 
 const DEFAULT_ENDPOINT = 'http://localhost:4000/graphql'
 const VALIDATION_CODES = new Set(['INVALID_INPUT', 'INVALID_CART', 'INVALID_QUANTITY', 'INVALID_PRICE', 'AMOUNT_OVERFLOW', 'RESTAURANT_NOT_FOUND', 'RESTAURANT_CLOSED', 'ITEM_NOT_FOUND', 'ITEM_RESTAURANT_MISMATCH', 'ITEM_UNAVAILABLE', 'OUT_OF_DEMO_ZONE', 'INVALID_PHONE', 'INVALID_ADDRESS', 'INVALID_IDEMPOTENCY_KEY', 'INVALID_OPTIONS', 'CATEGORY_NOT_FOUND', 'DELIVERY_POINT_REQUIRED', 'OUT_OF_DELIVERY_ZONE', 'MINIMUM_ORDER_NOT_MET', 'GRAPHQL_VALIDATION_FAILED', 'GRAPHQL_PARSE_FAILED', 'BAD_USER_INPUT'])
+const AUTH_CODES = new Set(['UNAUTHENTICATED', 'FORBIDDEN'])
 class DelifastApiError extends Error {
   constructor(message, kind = 'unknown', code, status) {
     super(message)
@@ -79,7 +80,9 @@ function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetc
           if (!response.ok || body?.errors?.length) {
             const error = body?.errors?.[0]
             const code = error?.extensions?.code
-            const kind = response.status < 500 && VALIDATION_CODES.has(code) ? 'validation' : 'unknown'
+            const kind = AUTH_CODES.has(code) || response.status === 401 || response.status === 403
+              ? 'auth'
+              : response.status < 500 && VALIDATION_CODES.has(code) ? 'validation' : 'unknown'
             throw new DelifastApiError(error?.message || 'Erreur Delifast', kind, code, response.status)
           }
           if (!body?.data || typeof body.data !== 'object') throw new DelifastApiError('Réponse backend vide', 'unavailable')
