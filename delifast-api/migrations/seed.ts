@@ -183,7 +183,7 @@ export async function seedAll(db: any) {
     },
     {
       id: "staff-rest-1",
-      name: "Restaurant Koudougou",
+      name: "La Table du Faso",
       email: "restaurant1@delifast.local",
       role: "RESTAURANT",
       restaurantId: "rest-koudougou",
@@ -211,7 +211,7 @@ export async function seedAll(db: any) {
     await db.collection("staff_users").updateOne(
       { id: s.id },
       {
-        $set: { ...user, passwordHash: passwordHash(password), active: true },
+        $setOnInsert: { ...user, passwordHash: passwordHash(password), active: true },
       },
       { upsert: true },
     );

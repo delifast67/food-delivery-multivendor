@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   delifastApi,
   formatXof,
@@ -45,8 +45,17 @@ export default function OperationsPage() {
   const [notice, setNotice] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<string | null>(null);
   const [section, setSection] = useState<"orders" | "catalogue">("orders");
+  const sessionVersion = useRef(0);
+  const activeTokenRef = useRef("");
+  const requestVersion = useRef(0);
 
   const load = useCallback(async (activeToken: string, clearError = true) => {
+    const session = sessionVersion.current;
+    const request = ++requestVersion.current;
+    const isCurrent = () =>
+      session === sessionVersion.current &&
+      request === requestVersion.current &&
+      activeToken === activeTokenRef.current;
     setBusy("orders");
     if (clearError) setError("");
     try {
@@ -55,11 +64,15 @@ export default function OperationsPage() {
         delifastApi.me(activeToken),
       ]);
       if (!me) throw new Error("Session staff expirée. Reconnectez-vous.");
+      if (!isCurrent()) return;
       setUser(me);
       setOrders(nextOrders);
-      if (me.role.toLowerCase() === "admin")
-        setRiders(await delifastApi.availableRiders(activeToken));
+      if (me.role.toLowerCase() === "admin") {
+        const nextRiders = await delifastApi.availableRiders(activeToken);
+        if (isCurrent()) setRiders(nextRiders);
+      }
     } catch (e) {
+      if (!isCurrent()) return;
       const text = message(e);
       if (
         errorCode(e) === "UNAUTHENTICATED" ||
@@ -74,13 +87,14 @@ export default function OperationsPage() {
       }
       setError(text);
     } finally {
-      setBusy("");
+      if (isCurrent()) setBusy("");
     }
   }, []);
 
   useEffect(() => {
     const saved = sessionStorage.getItem(TOKEN_KEY);
     if (saved) {
+      activeTokenRef.current = saved;
       setToken(saved);
       void load(saved);
     }
@@ -95,8 +109,12 @@ export default function OperationsPage() {
     event.preventDefault();
     setBusy("login");
     setError("");
+    setNotice("");
     try {
       const session = await delifastApi.staffLogin(email, password);
+      sessionVersion.current += 1;
+      requestVersion.current += 1;
+      activeTokenRef.current = session.token;
       sessionStorage.setItem(TOKEN_KEY, session.token);
       setToken(session.token);
       setUser(session.user);
@@ -109,10 +127,21 @@ export default function OperationsPage() {
     }
   };
   const logout = async () => {
+    const previousToken = token;
+    sessionVersion.current += 1;
+    requestVersion.current += 1;
+    activeTokenRef.current = "";
     setBusy("logout");
+    setNotice("");
     try {
-      if (token) await delifastApi.staffLogout(token);
-      setNotice("Session serveur révoquée.");
+      const revoked = previousToken
+        ? await delifastApi.staffLogout(previousToken)
+        : false;
+      setNotice(
+        revoked
+          ? "Session serveur révoquée."
+          : "Déconnexion locale effectuée ; la révocation serveur n’a pas pu être confirmée.",
+      );
     } catch {
       setNotice(
         "Déconnexion locale effectuée ; la révocation serveur n’a pas pu être confirmée.",

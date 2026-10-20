@@ -493,32 +493,151 @@ describe("Delifast options and menu grouping", () => {
   });
 });
 
-
-describe('Zones de livraison côté client', () => {
-  it('transmet le point à la découverte et au devis, puis invalide le devis hors zone', async () => {
-    const { DelifastApiError } = await import('@/lib/delifast/api');
+describe("Zones de livraison côté client", () => {
+  it("transmet le point à la découverte et au devis, puis invalide le devis hors zone", async () => {
+    const { DelifastApiError } = await import("@/lib/delifast/api");
     render(<DelifastPage />);
-    await screen.findByText('Chez A');
-    expect(delifastApi.restaurants).toHaveBeenCalledWith({latitude:12.3714,longitude:-1.5197});
-    fireEvent.click(screen.getByRole('button', {name:'Ajouter Riz'}));
-    await waitFor(() => expect(screen.getByRole('button', {name:'Enregistrer la commande'})).not.toBeDisabled());
-    expect(delifastApi.checkout).toHaveBeenCalledWith(expect.objectContaining({point:{latitude:12.3714,longitude:-1.5197}}));
+    await screen.findByText("Chez A");
+    expect(delifastApi.restaurants).toHaveBeenCalledWith({
+      latitude: 12.3714,
+      longitude: -1.5197,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Ajouter Riz" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Enregistrer la commande" }),
+      ).not.toBeDisabled(),
+    );
+    expect(delifastApi.checkout).toHaveBeenCalledWith(
+      expect.objectContaining({
+        point: { latitude: 12.3714, longitude: -1.5197 },
+      }),
+    );
     vi.mocked(delifastApi.restaurants).mockResolvedValue([]);
-    vi.mocked(delifastApi.checkout).mockRejectedValue(new DelifastApiError('Point hors zone de livraison','validation',400,'OUT_OF_DELIVERY_ZONE'));
-    fireEvent.change(screen.getByLabelText('Latitude'), {target:{value:'0'}});
-    await waitFor(() => expect(delifastApi.restaurants).toHaveBeenLastCalledWith({latitude:0,longitude:-1.5197}));
-    await screen.findByText('Point hors zone de livraison');
-    expect(screen.getByRole('button',{name:'Enregistrer la commande'})).toBeDisabled();
+    vi.mocked(delifastApi.checkout).mockRejectedValue(
+      new DelifastApiError(
+        "Point hors zone de livraison",
+        "validation",
+        400,
+        "OUT_OF_DELIVERY_ZONE",
+      ),
+    );
+    fireEvent.change(screen.getByLabelText("Latitude"), {
+      target: { value: "0" },
+    });
+    await waitFor(() =>
+      expect(delifastApi.restaurants).toHaveBeenLastCalledWith({
+        latitude: 0,
+        longitude: -1.5197,
+      }),
+    );
+    await screen.findByText("Point hors zone de livraison");
+    expect(
+      screen.getByRole("button", { name: "Enregistrer la commande" }),
+    ).toBeDisabled();
   });
-  it('inclut le point du devis dans la nouvelle adresse sans modifier un prix côté client', async () => {
-    const place = vi.spyOn(delifastApi,'placeOrder').mockResolvedValue(order);
+  it("inclut le point du devis dans la nouvelle adresse sans modifier un prix côté client", async () => {
+    const place = vi.spyOn(delifastApi, "placeOrder").mockResolvedValue(order);
     render(<DelifastPage />);
     await prepareOrder();
-    fireEvent.click(screen.getByRole('button',{name:'Enregistrer la commande'}));
-    await screen.findByText('COMMANDE ENREGISTRÉE');
-    const payload=place.mock.calls[0][0];
-    expect(payload.deliveryAddress.point).toEqual({latitude:12.3714,longitude:-1.5197});
-    expect(payload).not.toHaveProperty('deliveryFee');
-    expect(payload).not.toHaveProperty('point');
+    fireEvent.click(
+      screen.getByRole("button", { name: "Enregistrer la commande" }),
+    );
+    await screen.findByText("COMMANDE ENREGISTRÉE");
+    const payload = place.mock.calls[0][0];
+    expect(payload.deliveryAddress.point).toEqual({
+      latitude: 12.3714,
+      longitude: -1.5197,
+    });
+    expect(payload).not.toHaveProperty("deliveryFee");
+    expect(payload).not.toHaveProperty("point");
+  });
+});
+
+describe("Confirmation sans avertissement périmé", () => {
+  it("retire l'avertissement mono-restaurant seulement après la réponse serveur", async () => {
+    vi.spyOn(delifastApi, "placeOrder").mockResolvedValue(order);
+    render(<DelifastPage />);
+    await prepareOrder();
+    fireEvent.click(screen.getByRole("button", { name: "Ajouter Poulet" }));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Votre panier est mono-restaurant",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Enregistrer la commande" }),
+    );
+    await screen.findByText("COMMANDE ENREGISTRÉE");
+    expect(
+      screen.queryByText(/Votre panier est mono-restaurant/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("ne transforme pas une réponse perdue en confirmation et nettoie la notice après reprise réussie", async () => {
+    const { DelifastApiError } = await import("@/lib/delifast/api");
+    const place = vi
+      .spyOn(delifastApi, "placeOrder")
+      .mockRejectedValueOnce(
+        new DelifastApiError("Réponse perdue", "unavailable"),
+      )
+      .mockResolvedValueOnce(order);
+    render(<DelifastPage />);
+    await prepareOrder();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Enregistrer la commande" }),
+    );
+    await screen.findByText(/Réponse incertaine/);
+    expect(screen.queryByText("COMMANDE ENREGISTRÉE")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reprendre la même tentative" }),
+    );
+    await screen.findByText("COMMANDE ENREGISTRÉE");
+    expect(screen.queryByText(/Réponse incertaine/)).not.toBeInTheDocument();
+    expect(place.mock.calls[1][0]).toEqual(place.mock.calls[0][0]);
+  });
+
+  it("sépare les options nommées du plat et de la ligne de total serveur", async () => {
+    const snapshotOrder = {
+      ...order,
+      checkout: {
+        ...checkout,
+        items: [
+          {
+            menuItemId: "m1",
+            name: "Riz",
+            quantity: 1,
+            baseUnitPrice: 1000,
+            unitPrice: 1000,
+            total: 1000,
+            selectedOptions: [
+              {
+                groupId: "g",
+                groupName: "Format",
+                optionId: "o",
+                name: "Grand",
+                priceXof: 0,
+              },
+            ],
+          },
+        ],
+      },
+    } as Order;
+    vi.spyOn(delifastApi, "placeOrder").mockResolvedValue(snapshotOrder);
+    render(<DelifastPage />);
+    await prepareOrder();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Enregistrer la commande" }),
+    );
+    await screen.findByText("COMMANDE ENREGISTRÉE");
+    const snapshot = screen.getByRole("region", {
+      name: "Plats et options commandés",
+    });
+    expect(snapshot).toHaveTextContent("1 × Riz");
+    expect(snapshot.querySelector("small")).toHaveTextContent(
+      "Options : Format : Grand",
+    );
+    expect(snapshot.closest(".df-total")).toBeNull();
+    expect(
+      screen.getByText("Total serveur").parentElement,
+    ).not.toContainElement(snapshot);
   });
 });

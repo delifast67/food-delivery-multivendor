@@ -159,6 +159,43 @@ describe("connexion et session staff", () => {
       "révocation serveur n’a pas pu être confirmée",
     );
   });
+
+  it("efface la notice de révocation après une nouvelle connexion", async () => {
+    await login();
+    fireEvent.click(screen.getByRole("button", { name: "Se déconnecter" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Session serveur révoquée.",
+    );
+
+    cleanup();
+    await login();
+    expect(screen.queryByText("Session serveur révoquée.")).not.toBeInTheDocument();
+  });
+
+  it("ignore la réponse d’un chargement lancé avant le changement de session", async () => {
+    await login();
+    let resolveOldOrders: (value: Order[]) => void = () => undefined;
+    let resolveOldMe: (value: StaffUser) => void = () => undefined;
+    operationsOrders.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveOldOrders = resolve)),
+    );
+    me.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveOldMe = resolve)),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Actualiser" }));
+    await waitFor(() => expect(operationsOrders).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Se déconnecter" }));
+    await screen.findByRole("heading", { name: "Connexion équipe" });
+
+    cleanup();
+    await login();
+    resolveOldOrders([makeOrder("CANCELLED")]);
+    resolveOldMe(restaurant);
+    await waitFor(() => expect(screen.getByText("#o1")).toBeInTheDocument());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("Acceptée")).toBeInTheDocument();
+  });
 });
 
 describe("permissions et mutations opérations", () => {

@@ -110,10 +110,18 @@ export default function DelifastPage() {
     setRestaurants([]);
     delifastApi
       .restaurants(point)
-      .then((value) => { if (!cancelled) setRestaurants(value); })
-      .catch((e) => { if (!cancelled) setError(messageFor(e)); })
-      .finally(() => { if (!cancelled) setLoading(""); });
-    return () => { cancelled = true; };
+      .then((value) => {
+        if (!cancelled) setRestaurants(value);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(messageFor(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading("");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [point]);
   useEffect(() => {
     try {
@@ -153,7 +161,8 @@ export default function DelifastPage() {
       setSelected(restored);
       setCart(attempt.payload.items);
       setAddress(attempt.payload.deliveryAddress);
-      if (attempt.payload.deliveryAddress.point) setPoint(attempt.payload.deliveryAddress.point);
+      if (attempt.payload.deliveryAddress.point)
+        setPoint(attempt.payload.deliveryAddress.point);
     }
   }, [attempt, restaurants, selected]);
   const refreshOrder = async () => {
@@ -383,6 +392,7 @@ export default function DelifastPage() {
       };
       setAttempt(saved);
       setOrder(created); // success remains visible even if persistence after API success fails
+      setNotice(""); // Only an acknowledged server response resolves earlier warnings.
       try {
         localStorage.setItem(attemptStorageKey, JSON.stringify(saved));
       } catch {
@@ -474,25 +484,29 @@ export default function DelifastPage() {
           <div className="df-total">
             <span>Total serveur</span>
             <strong>{formatXof(order.checkout.total)}</strong>
-            {!!order.checkout.items?.length && (
-              <div className="df-order-snapshot">
-                {order.checkout.items.map((entry, i) => (
-                  <div key={`${entry.menuItemId}-${i}`}>
-                    <span>
-                      {entry.quantity} × {entry.name}
-                    </span>
-                    {entry.selectedOptions?.length ? (
-                      <small>
-                        {entry.selectedOptions
-                          .map((option) => option.name)
-                          .join(", ")}
-                      </small>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
+          {!!order.checkout.items?.length && (
+            <section
+              className="df-order-snapshot"
+              aria-label="Plats et options commandés"
+            >
+              {order.checkout.items.map((entry, i) => (
+                <div key={`${entry.menuItemId}-${i}`}>
+                  <span>
+                    {entry.quantity} × {entry.name}
+                  </span>
+                  {entry.selectedOptions?.length ? (
+                    <small>
+                      Options :{" "}
+                      {entry.selectedOptions
+                        .map((option) => `${option.groupName} : ${option.name}`)
+                        .join(", ")}
+                    </small>
+                  ) : null}
+                </div>
+              ))}
+            </section>
+          )}
           <button className="df-secondary" onClick={resetForNewOrder}>
             Retour aux restaurants
           </button>
@@ -805,11 +819,32 @@ export default function DelifastPage() {
                 />
                 <div className="df-point-box">
                   <strong>Point de livraison</strong>
-                  <small>Coordonnées fictives de démonstration, non commerciales. Changer le point recalcule les restaurants et les tarifs.</small>
+                  <small>
+                    Coordonnées fictives de démonstration, non commerciales.
+                    Changer le point recalcule les restaurants et les tarifs.
+                  </small>
                   <label htmlFor="latitude">Latitude</label>
-                  <input id="latitude" type="number" step="0.0001" min="-90" max="90" value={point.latitude} disabled={locked} onChange={(e) => updatePoint("latitude", e.target.value)} />
+                  <input
+                    id="latitude"
+                    type="number"
+                    step="0.0001"
+                    min="-90"
+                    max="90"
+                    value={point.latitude}
+                    disabled={locked}
+                    onChange={(e) => updatePoint("latitude", e.target.value)}
+                  />
                   <label htmlFor="longitude">Longitude</label>
-                  <input id="longitude" type="number" step="0.0001" min="-180" max="180" value={point.longitude} disabled={locked} onChange={(e) => updatePoint("longitude", e.target.value)} />
+                  <input
+                    id="longitude"
+                    type="number"
+                    step="0.0001"
+                    min="-180"
+                    max="180"
+                    value={point.longitude}
+                    disabled={locked}
+                    onChange={(e) => updatePoint("longitude", e.target.value)}
+                  />
                 </div>
                 <label htmlFor="instructions">Instructions (facultatif)</label>
                 <textarea
@@ -830,10 +865,20 @@ export default function DelifastPage() {
                     <span>{formatXof(checkout.subtotal)}</span>
                   </div>
                   <div>
-                    <span>Livraison{checkout.delivery ? ` · ${checkout.delivery.zoneName}` : ""}</span>
+                    <span>
+                      Livraison
+                      {checkout.delivery
+                        ? ` · ${checkout.delivery.zoneName}`
+                        : ""}
+                    </span>
                     <span>{formatXof(checkout.deliveryFee)}</span>
                   </div>
-                  {checkout.delivery && <div><span>Délai estimé</span><span>{checkout.delivery.estimatedMinutes} min</span></div>}
+                  {checkout.delivery && (
+                    <div>
+                      <span>Délai estimé</span>
+                      <span>{checkout.delivery.estimatedMinutes} min</span>
+                    </div>
+                  )}
                   <div>
                     <span>Service</span>
                     <span>{formatXof(checkout.serviceFee)}</span>
