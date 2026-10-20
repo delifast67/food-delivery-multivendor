@@ -16,6 +16,16 @@ Mutations réservées à ADMIN/RESTAURANT, avec portée au restaurant propre pou
 
 `MenuItemInput` impose name/description non vides et trimés, prix entier XOF `0..2147483647`, et `available` booléen. Les textes sont bornés (nom 160, description 2000). Il n'existe aucune suppression ni déplacement de restaurant.
 
+## Liste admin paginée des restaurants
+
+L’admin local utilise `operationsRestaurantSummaries(limit: Int = 20, after: ID, restaurantId: ID): RestaurantSummaryPage!`, exclusivement **ADMIN**. Chaque page contient `items { id name open version }` et `nextCursor`. Le type distinct `RestaurantSummary` interdit au niveau GraphQL les champs riches (description, horaires, zones, menus, catégories et audit). MongoDB ne lit que ces quatre champs avec une projection minimale.
+
+La limite est un entier de 1 à 50 (l’interface fixe 20). Le serveur lit au plus `limit + 1` documents, sans comptage global ni offset. Le tri ascendant `id` et le filtre de continuation `{id: {$gt: after}}` réutilisent l’index unique existant `id_1`, également utilisé par la recherche `restaurantId` **exacte**, sans regex ni recherche par nom. Les identifiants sont trimés, non vides et limités à 128 caractères. `nextCursor` est le dernier identifiant livré s’il reste une page ; sinon `null`. C’est une borne publique, non un jeton d’autorisation ; le contrôle ADMIN est réappliqué à chaque requête. Les pages ne constituent pas un snapshot transactionnel : les insertions/suppressions concurrentes peuvent modifier le parcours.
+
+`operationsRestaurant(id: ID!): Restaurant` est également exclusivement ADMIN et charge un seul profil à la demande, avec les normalisations historiques et les archives de menu de la vue opérations. Un identifiant valide inconnu renvoie `null`. L’édition garde ses versions CAS et ses protections contre le rejeu. Aucun nouveau rôle ni compte n’est accordé.
+
+**Audit restant :** la requête historique `operationsRestaurants` reste non bornée pour compatibilité avec les clients existants, mais l’admin local ne l’appelle plus. La liste publique `restaurants`, les menus/catégories par restaurant, la liste des zones et celle des livreurs n’acquièrent pas de pagination dans ce lot. Les zones globales utilisent un autre tri (`priority/id`) et alimentent l’affectation partagée ; une modification sûre nécessite un contrat distinct plutôt qu’une troncature silencieuse. Un détail individuel très volumineux peut encore rencontrer la borne de réponse du client. Ce changement ne prétend donc pas borner tout le catalogue.
+
 ## Horaires restaurant
 
 `weeklySchedule: [RestaurantHours!]` est nullable. `null` (ou champ absent dans un document historique) signifie sans restriction horaire ; `[]` signifie fermé toute la semaine. La mutation reçoit `[RestaurantHoursInput!]` avec `{day,startMinute,endMinute}` : dimanche `0` à samedi `6`, minutes entières depuis minuit, début `0..1439`, fin `1..1440`, début strictement inférieur à fin. Maximum 28 créneaux, tri canonique jour/début/fin, aucun chevauchement sur un jour ; les créneaux adjacents sont acceptés. Une nuit se représente par deux créneaux sur les jours correspondants.
@@ -32,7 +42,7 @@ Chaque écriture catalogue embarque un audit borné aux 100 derniers événement
 
 ## Seed et limites
 
-La seed utilise `$setOnInsert` pour restaurants et menus: un redémarrage ne réécrit donc pas les changements locaux. Les comptes existants restent gérés séparément. Les mutations ne fournissent pas de pagination; la liste operations est adaptée au catalogue local de démonstration et n'est pas un service de paiement. Aucun paiement réel n'est déclenché par cette fonctionnalité.
+La seed utilise `$setOnInsert` pour restaurants et menus: un redémarrage ne réécrit donc pas les changements locaux. Les comptes existants restent gérés séparément. Les mutations ne fournissent pas de pagination ; les résumés admin sont paginés comme décrit ci-dessus, tandis que les listes historiques restent compatibles. Le catalogue n’est pas un service de paiement. Aucun paiement réel n'est déclenché par cette fonctionnalité.
 
 Erreurs catalogue: `INVALID_INPUT`, `UNAUTHENTICATED`, `FORBIDDEN`, `ITEM_NOT_FOUND`, `RESTAURANT_NOT_FOUND`, `CONCURRENT_MODIFICATION` (plus les erreurs checkout existantes).
 

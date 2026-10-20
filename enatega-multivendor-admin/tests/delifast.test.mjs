@@ -26,7 +26,7 @@ function transport(handler) {
   };
   return calls;
 }
-const operations = { operationsOrdersPage: { items: [], nextCursor: null }, operationsRestaurants: [], availableRiders: [] };
+const operations = { operationsOrdersPage: { items: [], nextCursor: null }, operationsRestaurantSummaries: { items: [], nextCursor: null }, availableRiders: [] };
 afterEach(() => { globalThis.fetch = originalFetch; delete globalThis.window; });
 
 test('les vrais documents client valident le schéma v1, avec variables CAS et bearer', async () => {

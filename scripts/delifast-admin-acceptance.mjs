@@ -77,6 +77,32 @@ try {
   const pageBytes = Buffer.byteLength(JSON.stringify(paged.slice(0, 20)));
   assert.ok(fullBytes > 2_000_000 && pageBytes < 1_500_000, `Fixture volume incorrect : ${fullBytes}/${pageBytes}`);
   console.log(`Fixtures commandes : ${fullBytes} octets complets, ${pageBytes} par page de test`);
+  // 125 catalog fixtures remain after the two real seeded restaurants (IDs sort by
+  // the real `rest-*` prefix first). Rich descriptions stay below the API's 2,000
+  // character validation limit; the synthetic audit makes the former unbounded
+  // operationsRestaurants payload exceed 2 MiB without affecting summary pages.
+  const restaurantFixtures = Array.from({ length: 125 }, (_, i) => {
+    const id = `z-fixture-${String(i).padStart(3, '0')}`;
+    return {
+      id,
+      name: `Restaurant synthétique ${String(i).padStart(3, '0')}`,
+      description: `Description riche du profil ${id}. ${'Informations de recette catalogue — '.repeat(52)}`.slice(0, 1900),
+      open: i % 2 === 0,
+      version: i,
+      weeklySchedule: [{ day: i % 7, startMinute: 480, endMinute: 1320 }],
+      deliveryZoneIds: [],
+      audit: Array.from({ length: 150 }, (_, auditIndex) => ({
+        actor: { id: 'fixture-admin', role: 'ADMIN' },
+        at: fixtureTime,
+        action: `FIXTURE_PROFILE_AUDIT_${String(auditIndex).padStart(3, '0')}_${'x'.repeat(110)}`,
+        version: i,
+      })),
+    };
+  });
+  await db.collection('restaurants').insertMany(restaurantFixtures);
+  const restaurantAuditBytes = Buffer.byteLength(JSON.stringify(restaurantFixtures));
+  assert.ok(restaurantAuditBytes > 2_000_000, `Fixture catalogue volume incorrect : ${restaurantAuditBytes}`);
+  console.log(`Fixtures restaurants : ${restaurantAuditBytes} octets legacy, 125 profils synthétiques`);
   // Support tickets are inserted as test documents, never through a production provider.
   const now = new Date().toISOString();
   await db.collection('support_tickets').insertMany(['admin-ticket-a', 'admin-ticket-b', ...Array.from({length: 20}, (_, i) => `page-ticket-${i}`)].map((id, i) => ({ id, idempotencyKey: `fixture-${id}`, fingerprint: `fixture-${id}`, customerId: null, creatorId: i ? 'staff-rider' : 'staff-rest-1', creatorRole: i ? 'RIDER' : 'RESTAURANT', restaurantId: i ? null : 'rest-koudougou', scopeTenant: i ? '' : 'rest-koudougou', subject: `Recette support ${i + 1}`, description: 'Ticket fixture admin uniquement', status: 'OPEN', version: 0, createdAt: new Date(Date.parse(now) + i).toISOString(), updatedAt: now, history: [{ status: 'OPEN', at: now, actorRole: i ? 'RIDER' : 'RESTAURANT', note: '' }] })));

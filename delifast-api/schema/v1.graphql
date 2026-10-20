@@ -13,6 +13,8 @@ type Query {
   operationsOrdersPage(limit: Int = 20, after: String, status: String, payment: String, restaurantId: ID, search: String): OperationOrderPage!
   operationsOrder(id: ID!): Order
   operationsRestaurants: [Restaurant!]!
+  operationsRestaurantSummaries(limit: Int = 20, after: ID, restaurantId: ID): RestaurantSummaryPage!
+  operationsRestaurant(id: ID!): Restaurant
   availableRiders: [StaffUser!]!
   me: StaffUser
   customerMe: Customer
@@ -74,6 +76,8 @@ input RestaurantProfileInput { name: String!, description: String!, open: Boolea
 input RestaurantHoursInput { day: Int!, startMinute: Int!, endMinute: Int! }
 type RestaurantHours { day: Int!, startMinute: Int!, endMinute: Int! }
 type Restaurant { id: ID!, name: String!, description: String!, open: Boolean!, version: Int!, weeklySchedule: [RestaurantHours!], deliveryZoneIds: [ID!]!, categories: [MenuCategory!]!, menu: [MenuItem!]! }
+type RestaurantSummary { id: ID!, name: String!, open: Boolean!, version: Int! }
+type RestaurantSummaryPage { items: [RestaurantSummary!]!, nextCursor: String }
 type MenuCategory { id: ID!, name: String!, sortOrder: Int!, archived: Boolean!, version: Int! }
 type MenuItem { id: ID!, name: String!, description: String!, priceXof: Int!, available: Boolean!, version: Int!, archived: Boolean!, categoryId: ID, optionGroups: [MenuOptionGroup!]! }
 input MenuCategoryInput { name: String!, sortOrder: Int! }

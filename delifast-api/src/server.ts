@@ -31,6 +31,8 @@ import {
   publicRestaurants,
   publicRestaurant,
   operationsRestaurants,
+  operationsRestaurantSummaries,
+  operationsRestaurant,
   menuFor,
   categoriesFor,
   createMenuCategory,
@@ -143,6 +145,14 @@ const resolvers: any = {
     restaurant: (_: any, { id }: any) => publicRestaurant(getDb(), id),
     operationsRestaurants: (_: any, _a: any, ctx: any) =>
       operationsRestaurants(getDb(), requireRole(ctx, ["ADMIN", "RESTAURANT"])),
+    operationsRestaurantSummaries: (_: any, { limit, after, restaurantId }: any, ctx: any) => {
+      requireRole(ctx, ["ADMIN"]);
+      return operationsRestaurantSummaries(getDb(), limit, after, restaurantId);
+    },
+    operationsRestaurant: (_: any, { id }: any, ctx: any) => {
+      requireRole(ctx, ["ADMIN"]);
+      return operationsRestaurant(getDb(), id);
+    },
     calculateCheckout: (_: any, { input }: any) =>
       calculateCheckout(getDb(), normalizeCart(input)),
     order: (_: any, { id, accessToken }: any) =>

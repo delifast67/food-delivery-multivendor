@@ -9,7 +9,7 @@ const MAX_DESCRIPTION = 2000;
 const MAX_OPTIONS = 30;
 const MAX_GROUPS = 20;
 const idOf = (v: unknown, field: string) => {
-  if (typeof v !== "string" || !v.trim() || v.length > 128)
+  if (typeof v !== "string" || !v.trim() || v.trim().length > 128)
     fail("INVALID_INPUT", `${field} invalide`);
   return v.trim();
 };
@@ -96,6 +96,41 @@ export async function operationsRestaurants(db: Db, user: Staff) {
     ...viewRestaurant(r),
     __catalogOperations: true,
   }));
+}
+export type RestaurantSummaryPage = {
+  items: Array<{ id: string; name: string; open: boolean; version: number }>;
+  nextCursor: string | null;
+};
+export async function operationsRestaurantSummaries(
+  db: Db,
+  limitRaw: unknown = 20,
+  afterRaw?: unknown,
+  restaurantIdRaw?: unknown,
+): Promise<RestaurantSummaryPage> {
+  const limit = limitRaw == null ? 20 : limitRaw;
+  if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 50)
+    fail("INVALID_INPUT", "Limite invalide");
+  const after = afterRaw == null ? null : idOf(afterRaw, "after");
+  const restaurantId = restaurantIdRaw == null ? null : idOf(restaurantIdRaw, "restaurantId");
+  const filter: any = {
+    ...(restaurantId == null
+      ? (after == null ? {} : { id: { $gt: after } })
+      : { id: after == null ? restaurantId : { $eq: restaurantId, $gt: after } }),
+  };
+  const rows = await db.collection("restaurants")
+    .find(filter, { projection: { _id: 0, id: 1, name: 1, open: 1, version: 1 } })
+    .sort({ id: 1 }).hint("id_1").limit((limit as number) + 1).toArray();
+  const hasNext = rows.length > (limit as number);
+  const items = rows.slice(0, limit as number).map((r: any) => ({
+    id: r.id, name: r.name, open: r.open !== false,
+    version: Number.isInteger(r.version) ? r.version : 0,
+  }));
+  return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
+}
+export async function operationsRestaurant(db: Db, idRaw: unknown) {
+  const id = idOf(idRaw, "id");
+  const restaurant = await db.collection("restaurants").findOne({ id });
+  return restaurant ? { ...viewRestaurant(restaurant), __catalogOperations: true } : null;
 }
 export async function categoriesFor(db: Db, parent: any) {
   const q: any = { restaurantId: parent.id };

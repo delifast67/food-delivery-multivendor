@@ -8,6 +8,8 @@ import {
   type DeliveryZone,
   type DeliveryZoneInput,
   type RestaurantProfileInput,
+  type Restaurant,
+  type RestaurantSummary,
 } from '@/lib/delifast/client';
 import './delifast.css';
 import { parseHoursText, parsePolygonText } from '@/lib/delifast/zone-parsing';
@@ -37,6 +39,9 @@ type OrderFilters = {
   search?: string;
 };
 type PageSnapshot = DelifastSnapshot & { nextCursor: string | null };
+
+// Restaurant data is deliberately paged independently from orders. Details are fetched only on demand.
+
 function money(value: number) {
   return `${new Intl.NumberFormat('fr-FR').format(value)} XOF`;
 }
@@ -65,10 +70,27 @@ export default function DelifastPage() {
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [restaurantDetail, setRestaurantDetail] = useState<Restaurant | null>(null);
+  const [restaurantDetailLoading, setRestaurantDetailLoading] = useState(false);
+  const [restaurantHistory, setRestaurantHistory] = useState<string[]>([]);
+  const [draftCatalogId, setDraftCatalogId] = useState('');
+  const [catalogIdQuery, setCatalogIdQuery] = useState('');
+  const selectedRestaurantId = useRef<string | null>(null);
+  const restaurantSequence = useRef(0);
+  const mounted = useRef(true);
   const [fresh, setFresh] = useState(false);
   const sequence = useRef(0);
   const sessionEpoch = useRef(0);
   const pageCursor = cursors[cursors.length - 1] ?? '';
+  const restaurantPageCursor = restaurantHistory[restaurantHistory.length - 1];
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+    mounted.current = false;
+    sequence.current++;
+    restaurantSequence.current++;
+    };
+  }, []);
   const readDetail = async (
     id: string,
     token = sequence.current
@@ -104,13 +126,23 @@ export default function DelifastPage() {
     try {
       const next = (await client.snapshot(
         cleanFilters(filters),
-        cursor || undefined
+        cursor || undefined,
+        restaurantPageCursor,
+        catalogIdQuery.trim() || undefined
       )) as PageSnapshot;
       if (token !== sequence.current) return false;
       setSnapshot(next);
+      // The summary page is the only restaurant catalogue response; never loop to hydrate it.
       if (selectedId) {
         const ok = await readDetail(selectedId, token);
         if (!ok) return false;
+      }
+      const restaurantId = selectedRestaurantId.current;
+      if (restaurantId) {
+        const restaurantToken = ++restaurantSequence.current;
+        const value = await client.operationsRestaurant(restaurantId);
+        if (token !== sequence.current || restaurantToken !== restaurantSequence.current || !mounted.current) return false;
+        setRestaurantDetail(value);
       }
       if (token !== sequence.current) return false;
       setFresh(true);
@@ -193,7 +225,7 @@ export default function DelifastPage() {
   };
   useEffect(() => {
     if (snapshot) void refresh();
-  }, [filters, cursors]);
+  }, [filters, cursors, restaurantHistory, catalogIdQuery]);
   if (!enabled)
     return (
       <main className="df-shell">
@@ -275,6 +307,12 @@ export default function DelifastPage() {
     setFresh(false);
     setLoading(false);
     setDetailLoading(false);
+    restaurantSequence.current++;
+    setRestaurantDetail(null);
+    setRestaurantHistory([]);
+    setDraftCatalogId('');
+    setCatalogIdQuery('');
+    selectedRestaurantId.current = null;
     setCursors(['']);
     setFilters({});
     setDraftSearch('');
@@ -286,6 +324,25 @@ export default function DelifastPage() {
     setNotice('');
     void pending;
   };
+  const loadRestaurantDetail = async (id: string) => {
+    selectedRestaurantId.current = id;
+    const token = ++restaurantSequence.current;
+    setRestaurantDetailLoading(true);
+    try {
+      const value = await client.operationsRestaurant(id);
+      if (mounted.current && token === restaurantSequence.current) setRestaurantDetail(value);
+    } catch (e) {
+      if (e instanceof DelifastError && ['UNAUTHENTICATED', 'FORBIDDEN'].includes(e.code)) {
+        logout();
+        return;
+      }
+      if (mounted.current && token === restaurantSequence.current) setError(e instanceof Error ? e.message : 'Détail restaurant indisponible');
+    } finally {
+      if (mounted.current && token === restaurantSequence.current) setRestaurantDetailLoading(false);
+    }
+  };
+  const selectRestaurant = (id: string) => { selectedRestaurantId.current = id; setRestaurantDetail(null); void loadRestaurantDetail(id); };
+
   const selectOrder = (id: string) => {
     const token = ++sequence.current;
     setLoading(false);
@@ -301,12 +358,28 @@ export default function DelifastPage() {
         search: draftSearch.trim(),
         payment: draftPayment,
         status: draftStatus,
-        restaurantId: draftRestaurant,
+        restaurantId: draftRestaurant === 'ALL' ? '' : draftRestaurant.trim(),
       })
     );
     setCursors(['']);
     setSelectedId(null);
     setDetail(null);
+  };
+  const applyCatalogFilter = () => {
+    sequence.current++;
+    restaurantSequence.current++;
+    selectedRestaurantId.current = null;
+    setRestaurantDetail(null);
+    setCatalogIdQuery(draftCatalogId.trim());
+    setRestaurantHistory([]);
+  };
+  const clearCatalogFilter = () => {
+    setDraftCatalogId('');
+    setCatalogIdQuery('');
+    setRestaurantHistory([]);
+    restaurantSequence.current++;
+    selectedRestaurantId.current = null;
+    setRestaurantDetail(null);
   };
   const goPage = (cursor: string) => {
     setCursors((current) =>
@@ -318,6 +391,9 @@ export default function DelifastPage() {
     );
     setSelectedId(null);
     setDetail(null);
+    restaurantSequence.current++;
+    selectedRestaurantId.current = null;
+    setRestaurantDetail(null);
   };
   const selectedRestaurant = (id: string) =>
     snapshot.restaurants.find((r) => r.id === id)?.name ?? id;
@@ -429,20 +505,8 @@ export default function DelifastPage() {
               </select>
             </label>
             <label>
-              Restaurant
-              <select
-                aria-label="Restaurant"
-                disabled={busy || loading || detailLoading}
-                value={draftRestaurant}
-                onChange={(e) => setDraftRestaurant(e.target.value)}
-              >
-                <option value="ALL">Tous</option>
-                {snapshot.restaurants.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name}
-                  </option>
-                ))}
-              </select>
+              ID restaurant exact
+              <input aria-label="ID restaurant exact" maxLength={128} value={draftRestaurant === 'ALL' ? '' : draftRestaurant} disabled={busy || loading || detailLoading} onChange={(e) => setDraftRestaurant(e.target.value)} placeholder="ID complet" />
             </label>
             <button
               disabled={busy || loading || detailLoading}
@@ -557,15 +621,26 @@ export default function DelifastPage() {
               </>
             )}
           </section>
+          <section className="df-card df-restaurants" aria-label="Catalogue restaurants paginé">
+            <div className="df-section-head"><div><p className="df-kicker">CATALOGUE RESTAURANTS</p><h2>Ouverture, horaires et profils</h2></div><span>{catalogIdQuery ? 'Filtre ID exact' : '20 maximum par page'}</span></div>
+            <p className="df-muted">La liste est indépendante des commandes. Les détails sont chargés uniquement lorsque vous sélectionnez un restaurant. La page affichée peut être incomplète : utilisez l’ID exact pour atteindre n’importe quel restaurant.</p>
+            <div className="df-filters"><label>ID catalogue exact<input aria-label="ID catalogue exact" maxLength={128} value={draftCatalogId} disabled={busy || loading || !fresh} onChange={(e) => setDraftCatalogId(e.target.value)} /></label><button type="button" disabled={busy || loading || !fresh} onClick={applyCatalogFilter}>Appliquer ID restaurant</button><button type="button" className="df-secondary" disabled={busy || loading || !fresh} onClick={clearCatalogFilter}>Effacer filtre restaurants</button></div>
+            <div className="df-restaurant-list">{snapshot.restaurants.map((restaurant) => <div key={restaurant.id}><div><b>{restaurant.name}</b><small>ID {restaurant.id} · v{restaurant.version} · {restaurant.open ? 'ouvert' : 'fermé'}</small></div><button type="button" disabled={busy || loading || restaurantDetailLoading || !fresh} onClick={() => selectRestaurant(restaurant.id)}>Charger le détail</button></div>)}</div>
+            <div className="df-button-row"><button className="df-secondary" disabled={!restaurantHistory.length || loading || busy} onClick={() => { restaurantSequence.current++; selectedRestaurantId.current = null; setRestaurantDetail(null); setRestaurantHistory((h) => h.slice(0, -1)); }}>Précédente</button><span>Page {restaurantHistory.length + 1}</span><button className="df-secondary" disabled={!snapshot.restaurantNextCursor || loading || busy} onClick={() => { if (snapshot.restaurantNextCursor) { restaurantSequence.current++; selectedRestaurantId.current = null; setRestaurantDetail(null); setRestaurantHistory((h) => [...h, snapshot.restaurantNextCursor!]); } }}>Suivante</button></div>
+            {restaurantDetailLoading && <p>Lecture du détail restaurant…</p>}
+            {restaurantDetail && <p className="df-notice">Détail chargé : <b>{restaurantDetail.name}</b> · v{restaurantDetail.version}</p>}
+          </section>
           <RestaurantProfilesPanel
             snapshot={snapshot}
-            busy={busy || loading || !fresh}
+            restaurantDetail={restaurantDetail}
+            onSelect={selectRestaurant}
+            busy={busy || loading || restaurantDetailLoading || !fresh}
             run={run}
             refreshSnapshot={refresh}
           />
           <RestaurantSchedule
-            restaurants={snapshot.restaurants}
-            busy={busy || loading || !fresh}
+            restaurants={restaurantDetail ? [restaurantDetail] : []}
+            busy={busy || loading || restaurantDetailLoading || !fresh}
             save={async (id, version, schedule) =>
               (
                 await run(
@@ -607,11 +682,15 @@ function emptyRestaurantProfile(): RestaurantProfileInput {
 }
 function RestaurantProfilesPanel({
   snapshot,
+  restaurantDetail,
+  onSelect,
   busy,
   run,
   refreshSnapshot,
 }: {
   snapshot: DelifastSnapshot;
+  restaurantDetail: Restaurant | null;
+  onSelect: (id: string) => void;
   busy: boolean;
   refreshSnapshot: () => Promise<boolean>;
   run: (action: () => Promise<unknown>, message: string, reconcile?: boolean) => Promise<{ ok: boolean; actionCompleted: boolean; refreshed: boolean }>;
@@ -625,7 +704,7 @@ function RestaurantProfilesPanel({
   const [blocked, setBlocked] = useState<'conflict' | 'ambiguous' | null>(null);
   const [listReviewed, setListReviewed] = useState(false);
   const saveRef = useRef(false);
-  const selected = snapshot.restaurants.find((restaurant) => restaurant.id === selectedId) ?? null;
+  const selected = restaurantDetail?.id === selectedId ? restaurantDetail : null;
   useEffect(() => {
     let active = true;
     setZonesLoading(true);
@@ -634,17 +713,26 @@ function RestaurantProfilesPanel({
     }).finally(() => { if (active) setZonesLoading(false); });
     return () => { active = false; };
   }, [snapshot]);
-  const edit = (restaurant: typeof snapshot.restaurants[number]) => {
+  // Capture the editing version only after this specific profile detail arrives.
+  // Subsequent refreshes never overwrite the draft or its original CAS version.
+  useEffect(() => {
+    if (selected && editingVersion === null) {
+      setEditingVersion(selected.version);
+      setForm({ name: selected.name, description: selected.description, open: selected.open, deliveryZoneIds: [...selected.deliveryZoneIds] });
+    }
+  }, [selected, editingVersion]);
+  const edit = (restaurant: RestaurantSummary) => {
     setSelectedId(restaurant.id);
-    setEditingVersion(restaurant.version);
-    setForm({ name: restaurant.name, description: restaurant.description, open: restaurant.open, deliveryZoneIds: [...restaurant.deliveryZoneIds] });
+    setEditingVersion(null);
+    setForm(emptyRestaurantProfile());
     setBlocked(null); setListReviewed(false); setError('');
+    onSelect(restaurant.id);
   };
   const reset = () => { setSelectedId(null); setEditingVersion(null); setForm(emptyRestaurantProfile()); setBlocked(null); setListReviewed(false); };
   const reviewExisting = () => {
     if (!selectedId) return;
-    const current = snapshot.restaurants.find((restaurant) => restaurant.id === selectedId);
-    if (!current) { setError('Profil introuvable dans la liste relue.'); return; }
+    const current = selected;
+    if (!current) { setError('Relisez le détail du profil avant de réviser.'); return; }
     setEditingVersion(current.version); setBlocked(null); setListReviewed(false);
     setError('Version relue. Vérifiez puis validez explicitement votre brouillon.');
   };
@@ -670,9 +758,9 @@ function RestaurantProfilesPanel({
     <div className="df-section-head"><div><p className="df-kicker">PROFILS RESTAURANT</p><h2>Créer ou modifier un profil</h2></div><span>{zonesLoading ? 'Zones en chargement…' : `${zones.length} zone(s) disponibles`}</span></div>
     <p className="df-muted">Un nouveau profil est fermé par défaut. Cochez explicitement « ouvert » pour l’activer. Les zones sont des références existantes : leurs tarifs et paramètres ne sont pas modifiés ici.</p>
     {error && <p className="df-error" role="alert">{error}</p>}
-    {blocked === 'conflict' && <div className="df-error"><b>Conflit :</b> le profil a changé ailleurs. <button type="button" className="df-secondary" onClick={async () => { await refreshSnapshot(); }}>Relire et réviser</button>{selectedId && <button type="button" onClick={reviewExisting}>J’ai vérifié, réviser ce brouillon</button>}</div>}
-    {blocked === 'ambiguous' && <div className="df-error"><b>Résultat ambigu :</b> aucune nouvelle écriture ne sera envoyée. {selectedId ? <button type="button" className="df-secondary" onClick={async () => { await refreshSnapshot(); }}>Relire avant de réviser</button> : <><button type="button" className="df-secondary" onClick={async () => { await refreshSnapshot(); setListReviewed(true); }}>Rechercher le profil dans la liste</button>{listReviewed && <button type="button" onClick={() => { setBlocked(null); setError('Vous avez confirmé la vérification ; vous pouvez recommencer.'); }}>J’ai vérifié la liste, recommencer</button>}</>}</div>}
-    <div className="df-restaurant-list">{snapshot.restaurants.map((restaurant) => <div key={restaurant.id}><div><b>{restaurant.name}</b><small>Version {restaurant.version} · {restaurant.open ? 'ouvert' : 'fermé'} · {restaurant.deliveryZoneIds.length} zone(s)</small></div><button type="button" disabled={busy} onClick={() => edit(restaurant)}>Modifier</button></div>)}</div>
+    {blocked === 'conflict' && <div className="df-error"><b>Conflit :</b> le profil a changé ailleurs. <button type="button" className="df-secondary" onClick={async () => { await refreshSnapshot(); if (selectedId) onSelect(selectedId); }}>Relire et réviser</button>{selectedId && <button type="button" onClick={reviewExisting}>J’ai vérifié, réviser ce brouillon</button>}</div>}
+    {blocked === 'ambiguous' && <div className="df-error"><b>Résultat ambigu :</b> aucune nouvelle écriture ne sera envoyée. {selectedId ? <button type="button" className="df-secondary" onClick={async () => { await refreshSnapshot(); if (selectedId) onSelect(selectedId); }}>Relire avant de réviser</button> : <><button type="button" className="df-secondary" onClick={async () => { await refreshSnapshot(); setListReviewed(true); }}>Rechercher le profil dans les pages du catalogue</button>{listReviewed && <button type="button" onClick={() => { setBlocked(null); setError('Vous avez confirmé la vérification des pages du catalogue ; vous pouvez recommencer.'); }}>J’ai vérifié la liste, recommencer</button>}</>}</div>}
+    <div className="df-restaurant-list">{snapshot.restaurants.map((restaurant) => <div key={restaurant.id}><div><b>{restaurant.name}</b><small>Version {restaurant.version} · {restaurant.open ? 'ouvert' : 'fermé'} · ID {restaurant.id}</small></div><button type="button" disabled={busy} onClick={() => edit(restaurant)}>Modifier</button></div>)}</div>
     <form className="df-profile-form" onSubmit={submit}>
       <strong>{selectedId ? `Modifier ${form.name || selected?.name || 'profil'} · v${editingVersion ?? selected?.version ?? '?'}` : 'Nouveau profil restaurant'}</strong>
       <label>Nom ({form.name.length}/160)<input required maxLength={160} value={form.name} onChange={(e) => setForm((current) => ({ ...current, name: e.target.value }))} /></label>
@@ -696,6 +784,10 @@ function DeliveryZonesPanel({ snapshot, busy, refresh }: { snapshot: DelifastSna
   const saveRef = useRef(false);
   const field = (key: keyof DeliveryZoneInput, value: unknown) => setForm((current) => ({ ...current, [key]: value }));
   const resetDraft = () => { setEditing(null); setForm(emptyZone()); setPolygonText(''); setHoursTextValue('[]'); };
+  useEffect(() => {
+    const current = snapshot.restaurants.some((restaurant) => restaurant.id === restaurantId);
+    if (!current) setRestaurantId(snapshot.restaurants[0]?.id ?? '');
+  }, [snapshot.restaurants, restaurantId]);
   const load = async (id: string) => {
     const sequence = ++loadSequence.current;
     if (!id) { setZones([]); return; }
@@ -734,7 +826,7 @@ function DeliveryZonesPanel({ snapshot, busy, refresh }: { snapshot: DelifastSna
   return <section className="df-card df-zones">
     <div className="df-section-head"><div><p className="df-kicker">ZONES DE LIVRAISON</p><h2>Tarifs, périmètres et disponibilité</h2></div><span>UTC · [] = toujours</span></div>
     {error && <p className="df-error" role="alert">{error}</p>}
-    <label>Restaurant<select value={restaurantId} onChange={(e) => setRestaurantId(e.target.value)}>{snapshot.restaurants.map((restaurant) => <option key={restaurant.id} value={restaurant.id}>{restaurant.name}</option>)}</select></label>
+    <label>Restaurant (page catalogue)<select value={restaurantId} onChange={(e) => setRestaurantId(e.target.value)}>{snapshot.restaurants.map((restaurant) => <option key={restaurant.id} value={restaurant.id}>{restaurant.name}</option>)}</select></label><p className="df-muted">Sélection limitée à la page catalogue courante ; utilisez le catalogue et sa pagination pour changer de page.</p>
     <div className="df-zone-layout"><div><ul className="df-zone-list">{zones.map((zone) => <li key={zone.id}><div><strong>{zone.name}</strong><small>{zone.shape} · {money(zone.feeXof)} · {zone.estimatedMinutes} min · v{zone.version}{zone.enabled ? '' : ' · désactivée'}</small></div><button type="button" className="df-secondary" onClick={() => selectZone(zone)}>Modifier</button></li>)}</ul>{zones.length === 0 && <p className="df-muted">Aucune zone configurée.</p>}</div>
     <form className="df-zone-form" onSubmit={submit}><strong>{editing ? `Modifier ${editing.name} · v${editing.version}` : 'Nouvelle zone'}</strong><label>Nom<input required value={form.name} onChange={(e) => field('name', e.target.value)} /></label><label>Forme<select value={form.shape} onChange={(e) => field('shape', e.target.value as DeliveryZoneInput['shape'])}><option value="CIRCLE">Cercle</option><option value="POLYGON">Polygone</option></select></label><div className="df-zone-two"><label>Latitude <small>(exemple fictif, à remplacer)</small><input type="number" step="0.0001" value={form.center?.latitude ?? ''} onChange={(e) => field('center', { ...(form.center ?? { longitude: 0 }), latitude: Number(e.target.value) })} /></label><label>Longitude <small>(exemple fictif, à remplacer)</small><input type="number" step="0.0001" value={form.center?.longitude ?? ''} onChange={(e) => field('center', { ...(form.center ?? { latitude: 0 }), longitude: Number(e.target.value) })} /></label></div><label>Rayon mètres<input type="number" min="1" value={form.radiusMeters ?? ''} onChange={(e) => field('radiusMeters', e.target.value === '' ? null : Number(e.target.value))} /></label><label>Polygone <small>JSON Point[] ou lat,lng; lat,lng (exemple fictif, à remplacer)</small><textarea value={polygonText} onChange={(e) => setPolygonText(e.target.value)} rows={3} placeholder='[{"latitude":12.3,"longitude":-1.5}]' /></label><div className="df-zone-two"><label>Frais XOF <small>(aucun tarif commercial prérempli)</small><input type="number" min="0" value={form.feeXof} onChange={(e) => field('feeXof', Number(e.target.value))} /></label><label>Minimum XOF<input type="number" min="0" value={form.minimumOrderXof} onChange={(e) => field('minimumOrderXof', Number(e.target.value))} /></label></div><div className="df-zone-two"><label>Délai minutes<input type="number" min="1" value={form.estimatedMinutes} onChange={(e) => field('estimatedMinutes', Number(e.target.value))} /></label><label>Priorité<input type="number" value={form.priority} onChange={(e) => field('priority', Number(e.target.value))} /></label></div><label className="df-check"><input type="checkbox" checked={form.enabled} onChange={(e) => field('enabled', e.target.checked)} /> Zone active</label><label className="df-check"><input type="checkbox" checked={form.demo} onChange={(e) => field('demo', e.target.checked)} /> Démo (point fictif)</label><label>Horaires UTC <small>JSON [{'{'}&quot;day&quot;:1,&quot;startMinute&quot;:480,&quot;endMinute&quot;:1200{'}'}] ; [] = toujours</small><textarea value={hoursTextValue} onChange={(e) => setHoursTextValue(e.target.value)} rows={3} /></label><div className="df-button-row"><button disabled={busy || saveRef.current || !restaurantId}>{editing ? 'Enregistrer la version' : 'Créer la zone'}</button>{editing && <button type="button" className="df-secondary" onClick={resetDraft}>Annuler</button>}</div></form></div>
   </section>;

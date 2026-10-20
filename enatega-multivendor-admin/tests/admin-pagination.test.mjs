@@ -10,7 +10,7 @@ const originalFetch = globalThis.fetch;
 const schema = () => buildSchema(fs.readFileSync(new URL('../../delifast-api/schema/v1.graphql', import.meta.url), 'utf8'));
 const me = { id: 'admin-fictif', role: 'ADMIN' };
 const result = data => new Response(JSON.stringify({ data }), { headers: { 'content-type': 'application/json' } });
-const operations = page => ({ operationsOrdersPage: page, operationsRestaurants: [], availableRiders: [] });
+const operations = page => ({ operationsOrdersPage: page, operationsRestaurantSummaries: { items: [], nextCursor: null }, availableRiders: [] });
 afterEach(() => { globalThis.fetch = originalFetch; });
 test('pagination serveur : vingt éléments, filtres et curseur transmis, aucun appel legacy', async () => {
   const calls = [];

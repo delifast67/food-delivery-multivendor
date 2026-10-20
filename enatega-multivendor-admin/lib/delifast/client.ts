@@ -97,11 +97,14 @@ export type OrderFilters = {
 };
 export type OrderSummary = Pick<Order, 'id' | 'status' | 'paymentStatus' | 'createdAt' | 'updatedAt' | 'restaurantId' | 'riderId'> & { deliveryAddress: Pick<Order['deliveryAddress'], 'recipientName'>; checkout: Pick<Checkout, 'total'> };
 export type OrderPage = { items: OrderSummary[]; nextCursor: string | null };
+export type RestaurantSummary = Pick<Restaurant, 'id' | 'name' | 'open' | 'version'>;
+export type RestaurantSummaryPage = { items: RestaurantSummary[]; nextCursor: string | null };
 export type DelifastSnapshot = {
   me: StaffUser;
   orders: OrderSummary[];
   nextCursor: string | null;
-  restaurants: Restaurant[];
+  restaurants: RestaurantSummary[];
+  restaurantNextCursor: string | null;
   riders: StaffUser[];
 };
 export type SupportStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED';
@@ -156,7 +159,7 @@ const RESTAURANT_FIELDS =
   'id name description open deliveryZoneIds version weeklySchedule { day startMinute endMinute }';
 const ORDER_FIELDS =
   'id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity baseUnitPrice unitPrice selectedOptions { groupName name priceXof } total } }';
-const OPERATIONS_QUERY = `query Operations($limit: Int, $after: String, $status: String, $payment: String, $restaurantId: ID, $search: String) { operationsOrdersPage(limit: $limit, after: $after, status: $status, payment: $payment, restaurantId: $restaurantId, search: $search) { items { id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName } checkout { total } } nextCursor } operationsRestaurants { ${RESTAURANT_FIELDS} } availableRiders { id name role restaurantId } }`;
+const OPERATIONS_QUERY = `query Operations($limit: Int, $after: String, $status: String, $payment: String, $restaurantId: ID, $search: String, $restaurantAfter: ID, $catalogRestaurantId: ID) { operationsOrdersPage(limit: $limit, after: $after, status: $status, payment: $payment, restaurantId: $restaurantId, search: $search) { items { id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName } checkout { total } } nextCursor } operationsRestaurantSummaries(limit: 20, after: $restaurantAfter, restaurantId: $catalogRestaurantId) { items { id name open version } nextCursor } availableRiders { id name role restaurantId } }`;
 const MAX_RESPONSE_BYTES = 2_000_000;
 /** Bound bytes before JSON parsing: a huge list must fail closed, not freeze the admin. */
 async function readBody(response: Response): Promise<GraphQLBody> {
@@ -304,8 +307,14 @@ export class DelifastClient {
   }
   async snapshot(
     filters: OrderFilters = {},
-    after?: string
+    after?: string,
+    restaurantAfter?: string,
+    restaurantId?: string
   ): Promise<DelifastSnapshot> {
+    for (const value of [restaurantAfter, restaurantId]) {
+      if (value !== undefined && (typeof value !== 'string' || !value.trim() || value.length > 128))
+        throw new DelifastError('Identifiant restaurant invalide', 'INVALID_ARGUMENT');
+    }
     // Never request operational data until the restored session has been checked.
     const meData = await this.request<{ me: StaffUser | null }>(ME_QUERY);
     if (!meData.me || meData.me.role !== 'ADMIN') {
@@ -317,12 +326,14 @@ export class DelifastClient {
     }
     const data = await this.request<{
       operationsOrdersPage: OrderPage;
-      operationsRestaurants: Restaurant[];
+      operationsRestaurantSummaries: RestaurantSummaryPage;
       availableRiders: StaffUser[];
     }>(OPERATIONS_QUERY, {
       ...filters,
       limit: 20,
       ...(after ? { after } : {}),
+      ...(restaurantAfter === undefined ? {} : { restaurantAfter: restaurantAfter.trim() }),
+      ...(restaurantId === undefined ? {} : { catalogRestaurantId: restaurantId.trim() }),
     });
     if (
       !data.operationsOrdersPage ||
@@ -330,7 +341,7 @@ export class DelifastClient {
       data.operationsOrdersPage.items.length > 20 ||
       (data.operationsOrdersPage.nextCursor !== null &&
         typeof data.operationsOrdersPage.nextCursor !== 'string') ||
-      !Array.isArray(data.operationsRestaurants) ||
+      !this.validRestaurantPage(data.operationsRestaurantSummaries) ||
       !Array.isArray(data.availableRiders)
     )
       throw new DelifastError('Liste API invalide', 'INVALID_RESPONSE');
@@ -338,9 +349,33 @@ export class DelifastClient {
       me: meData.me,
       orders: data.operationsOrdersPage.items,
       nextCursor: data.operationsOrdersPage.nextCursor,
-      restaurants: data.operationsRestaurants,
+      restaurants: data.operationsRestaurantSummaries.items.map(({ id, name, open, version }) => ({ id, name, open, version })),
+      restaurantNextCursor: data.operationsRestaurantSummaries.nextCursor,
       riders: data.availableRiders,
     };
+  }
+  private validRestaurantPage(page: RestaurantSummaryPage): boolean {
+    return Boolean(page && Array.isArray(page.items) && page.items.length <= 20 &&
+      (page.nextCursor === null || (typeof page.nextCursor === 'string' && page.nextCursor.length > 0 && page.nextCursor.length <= 128)) &&
+      page.items.every(item => item && typeof item.id === 'string' && item.id.length > 0 && item.id.length <= 128 &&
+        typeof item.name === 'string' && typeof item.open === 'boolean' && Number.isInteger(item.version) && item.version >= 0 &&
+        Object.keys(item).every(key => ['id', 'name', 'open', 'version'].includes(key))) &&
+      new Set(page.items.map(item => item.id)).size === page.items.length &&
+      (page.nextCursor === null || (page.items.length > 0 && page.nextCursor === page.items[page.items.length - 1].id)));
+  }
+  async operationsRestaurant(id: string): Promise<Restaurant | null> {
+    if (typeof id !== 'string' || !id.trim() || id.length > 128)
+      throw new DelifastError('Identifiant restaurant invalide', 'INVALID_ARGUMENT');
+    const exactId = id.trim();
+    const data = await this.request<{ operationsRestaurant: Restaurant | null }>(
+      `query OperationsRestaurant($id: ID!) { operationsRestaurant(id: $id) { ${RESTAURANT_FIELDS} } }`, { id: exactId }
+    );
+    const item = data.operationsRestaurant;
+    if (item !== null && (!item || item.id !== exactId || typeof item.name !== 'string' || typeof item.description !== 'string' ||
+      typeof item.open !== 'boolean' || !Number.isInteger(item.version) || !Array.isArray(item.deliveryZoneIds) ||
+      (item.weeklySchedule !== null && !Array.isArray(item.weeklySchedule))))
+      throw new DelifastError('Détail restaurant invalide', 'INVALID_RESPONSE');
+    return item;
   }
   async operationsOrder(id: string): Promise<Order | null> {
     const data = await this.request<{ operationsOrder: Order | null }>(

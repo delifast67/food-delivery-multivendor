@@ -116,7 +116,7 @@ try {
   await client.setRestaurantOpen(own.id, closed.version, true);
   ok('restaurants : ouverture versionnée, concurrence et cloisonnement vérifiés');
   const scheduleMutation = 'mutation($id:ID!,$v:Int!,$s:[RestaurantHoursInput!]){setRestaurantSchedule(id:$id,expectedVersion:$v,weeklySchedule:$s){id version weeklySchedule{day startMinute endMinute}}}';
-  const scheduledOwn = (await client.snapshot()).restaurants.find(r => r.id === own.id);
+  const scheduledOwn = await client.operationsRestaurant(own.id);
   assert.equal(scheduledOwn.weeklySchedule, null);
   for (const [staff, code] of [[undefined, 'UNAUTHENTICATED'], [other, 'FORBIDDEN'], [rider, 'FORBIDDEN']]) {
     await rejected(scheduleMutation, { id: own.id, v: scheduledOwn.version, s: [] }, staff?.token, code);
@@ -149,7 +149,7 @@ try {
   assert.equal(updatedProfile.version, 1);
   await assert.rejects(client.updateRestaurantProfile(profile.id, profile.version, profileInput), e => e.code === 'CONCURRENT_MODIFICATION');
   await assert.rejects(client.updateRestaurantProfile(profile.id, updatedProfile.version, { ...profileInput, deliveryZoneIds: ['zone-inconnue-fictive'] }), e => e.code === 'ZONE_NOT_FOUND');
-  const persistedProfile = (await client.snapshot()).restaurants.find(r => r.id === profile.id);
+  const persistedProfile = await client.operationsRestaurant(profile.id);
   assert.equal(persistedProfile.name, 'Profil fictif modifié');
   assert.deepEqual(persistedProfile.deliveryZoneIds, [linked.id]);
   const openedProfile = await client.setRestaurantOpen(profile.id, updatedProfile.version, true);
@@ -299,6 +299,41 @@ try {
   assert.equal(cancelled.paymentStatus, 'REFUND_PENDING');
   await rejected(transitionMutation, { id: cancel.id, expected: 'CANCELLED', status: 'ACCEPTED' }, admin.token, 'INVALID_TRANSITION');
   ok('annulation terminale avec remboursement en attente uniquement, aucun remboursement exécuté');
+  // Catalogue volumineux exclusivement synthétique : résumés bornés et détail séparé.
+  const catalogFixtures = Array.from({ length: 125 }, (_, i) => ({ id: `z-admin-catalog-${String(i).padStart(3, '0')}`, name: `Restaurant synthétique ${i}`, description: 'Détail privé de fixture', open: i % 2 === 0, version: 0, weeklySchedule: null, deliveryZoneIds: [], audit: [{ note: 'x'.repeat(20000) }] }));
+  await db.collection('restaurants').insertMany(catalogFixtures);
+  const catalogIds = [];
+  let catalogAfter;
+  do {
+    const page = await client.snapshot({}, undefined, catalogAfter);
+    assert.ok(page.restaurants.length <= 20);
+    assert.ok(page.restaurants.every(row => Object.keys(row).sort().join(',') === 'id,name,open,version'));
+    catalogIds.push(...page.restaurants.map(row => row.id));
+    catalogAfter = page.restaurantNextCursor || undefined;
+  } while (catalogAfter);
+  assert.equal(new Set(catalogIds).size, catalogIds.length);
+  assert.equal(catalogIds.length, 128);
+  const exactCatalog = await client.snapshot({}, undefined, undefined, 'z-admin-catalog-124');
+  assert.deepEqual(exactCatalog.restaurants.map(row => row.id), ['z-admin-catalog-124']);
+  assert.equal(exactCatalog.restaurantNextCursor, null);
+  const exactDetail = await client.operationsRestaurant('z-admin-catalog-124');
+  assert.equal(exactDetail.description, 'Détail privé de fixture');
+  assert.equal(exactDetail.weeklySchedule, null);
+  const summaryQuery = 'query($limit:Int,$after:ID,$id:ID){operationsRestaurantSummaries(limit:$limit,after:$after,restaurantId:$id){items{id name open version} nextCursor}}';
+  for (const [token, code] of [[undefined, 'UNAUTHENTICATED'], [restaurant.token, 'FORBIDDEN'], [rider.token, 'FORBIDDEN']]) {
+    await rejected(summaryQuery, {}, token, code);
+    await rejected('query{operationsRestaurant(id:"rest-koudougou"){id}}', {}, token, code);
+  }
+  for (const variables of [{ limit: 0 }, { limit: 51 }, { after: '' }, { id: ' ' }]) await rejected(summaryQuery, variables, admin.token, 'INVALID_INPUT');
+  const privateSummary = await raw('{operationsRestaurantSummaries{items{id description}}}', {}, admin.token);
+  assert.ok(privateSummary.errors?.length);
+  for (const filter of [{}, { id: { $gt: 'z-admin-catalog-050' } }, { id: 'z-admin-catalog-124' }]) {
+    const explain = await db.collection('restaurants').find(filter).project({ _id: 0, id: 1, name: 1, open: 1, version: 1 }).sort({ id: 1 }).limit(21).explain('executionStats');
+    const plan = JSON.stringify(explain.queryPlanner.winningPlan);
+    assert.match(plan, /IXSCAN/); assert.doesNotMatch(plan, /COLLSCAN|"stage":"SORT"/);
+    assert.ok(explain.executionStats.totalDocsExamined <= 21);
+  }
+  ok('catalogue restaurants : 128 profils sur pages de 20, filtre ID exact, résumé minimal, détail ciblé, droits ADMIN et plans indexés sans tri bloquant');
   await client.logout();
   assert.equal(client.hasSession, false);
   for (const session of [admin, restaurant, other, rider]) await gql('mutation{staffLogout}', {}, session.token);

@@ -60,36 +60,108 @@ with sync_playwright() as p:
     search = page.get_by_role('searchbox', name='Rechercher une commande')
     apply = filters.get_by_role('button', name='Appliquer les filtres', exact=True)
     rows = page.locator('button[aria-label^="Ouvrir la commande "]')
-    expect(rows).to_have_count(20)
+    def apply_order_filters():
+        with page.expect_response(lambda response: 'operationsOrdersPage(' in (response.request.post_data or '')):
+            apply.click()
+        expect(page.get_by_role('button', name='Actualiser', exact=True)).to_be_enabled()
+    # Restaurant catalogue is an independent cursor: summaries are minimal and
+    # bounded even though the old unpaged payload is deliberately >2 MiB.
+    catalog = page.locator('section[aria-label="Catalogue restaurants paginé"]')
+    restaurant_rows = catalog.locator('.df-restaurant-list > div')
+    summary_requests = []
+    def track_restaurant_summaries(route):
+        body = json.loads(route.request.post_data or '{}')
+        if 'operationsRestaurantSummaries(' in body.get('query', ''):
+            summary_requests.append(body)
+            response = route.fetch()
+            payload = response.json()
+            assert not payload.get('errors'), payload.get('errors')
+            page_data = payload['data']['operationsRestaurantSummaries']
+            assert len(page_data['items']) <= 20
+            assert all(set(item) == {'id', 'name', 'open', 'version'} for item in page_data['items'])
+            assert 'operationsRestaurants' not in body['query']
+            assert all(field not in body['query'] for field in ('description', 'weeklySchedule', 'deliveryZoneIds'))
+            route.fulfill(response=response)
+        else:
+            route.fallback()
+    page.route('**/api/delifast/graphql', track_restaurant_summaries)
+    expect(restaurant_rows).to_have_count(20)
+    expect(catalog.get_by_text('Page 1', exact=False)).to_be_visible()
+    first_restaurant_ids = set(catalog.locator('.df-restaurant-list small').all_inner_texts())
+    with page.expect_response(lambda response: 'operationsRestaurantSummaries(' in (response.request.post_data or '')):
+        catalog.get_by_role('button', name='Suivante', exact=True).click()
+    expect(page.get_by_role('button', name='Actualiser', exact=True)).to_be_enabled()
+    expect(catalog.get_by_text('Page 2', exact=False)).to_be_visible()
+    expect(restaurant_rows).to_have_count(20)
+    second_restaurant_ids = set(catalog.locator('.df-restaurant-list small').all_inner_texts())
+    assert first_restaurant_ids.isdisjoint(second_restaurant_ids)
+    for page_number in range(3, 8):
+        with page.expect_response(lambda response: 'operationsRestaurantSummaries(' in (response.request.post_data or '')):
+            catalog.get_by_role('button', name='Suivante', exact=True).click()
+        expect(page.get_by_role('button', name='Actualiser', exact=True)).to_be_enabled()
+        expect(catalog.get_by_text(f'Page {page_number}', exact=True)).to_be_visible()
+    expect(catalog.get_by_text('Page 7', exact=False)).to_be_visible()
+    expect(restaurant_rows).to_have_count(7)
+    expect(catalog.get_by_text('ID z-fixture-124', exact=False)).to_be_visible()
+    assert len(summary_requests) >= 6
+    checked('catalogue restaurants indépendant paginé : première, deuxième et dernière page, 20 maximum sans doublon')
+    # Exact ID reaches a restaurant outside the initial page; its rich profile is
+    # fetched only after explicitly selecting the detail action.
+    exact_id = catalog.get_by_label('ID catalogue exact', exact=True)
+    previous_requests = len(summary_requests)
+    exact_id.fill('z-fixture-124')
+    assert len(summary_requests) == previous_requests, 'Le brouillon ne déclenche pas de requête'
+    catalog.get_by_role('button', name='Appliquer ID restaurant', exact=True).click()
+    expect(restaurant_rows).to_have_count(1)
+    expect(catalog.get_by_text('ID z-fixture-124', exact=False)).to_be_visible()
+    catalog.get_by_role('button', name='Charger le détail', exact=True).click()
+    expect(catalog.get_by_text('Détail chargé :', exact=False)).to_be_visible()
+    profiles = page.locator('section').filter(has=page.get_by_role('heading', name='Créer ou modifier un profil', exact=True))
+    profiles.get_by_role('button', name='Modifier', exact=True).click()
+    expect(profiles.locator('textarea')).to_have_value(re.compile('Description riche du profil z-fixture-124'))
+    profiles.get_by_role('button', name='Annuler', exact=True).click()
+    page.set_viewport_size({'width':390,'height':844})
+    catalog.scroll_into_view_if_needed()
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    capture(page, 'admin-restaurants-390.png')
+    page.set_viewport_size({'width':1280,'height':900})
+    checked('ID restaurant exact hors page initiale et détail profil chargé à la demande')
+    catalog.get_by_role('button', name='Effacer filtre restaurants', exact=True).click()
+    expect(restaurant_rows).to_have_count(20)
+    expect(catalog.get_by_text('Page 1', exact=False)).to_be_visible()
+    assert len(summary_requests) >= 8
+    page.unroute('**/api/delifast/graphql', track_restaurant_summaries)
+    checked('reset filtres restaurant restauré en page 1 et borne 20')
     assert rows.count() <= 20
     first_page = set(rows.all_inner_texts())
     first_label = rows.first.get_attribute('aria-label')
-    page_two = page.get_by_role('button', name='Suivante', exact=True)
+    order_pagination = page.locator('[aria-label="Pagination"]')
+    page_two = order_pagination.get_by_role('button', name='Suivante', exact=True)
     expect(page_two).to_be_enabled()
     page_two.click()
-    expect(page.get_by_text('Page 2', exact=False)).to_be_visible()
+    expect(order_pagination.get_by_text('Page 2', exact=True)).to_be_visible()
     expect(page.get_by_role('button', name=first_label, exact=True)).to_have_count(0)
     expect(rows).to_have_count(20)
     second_page = set(rows.all_inner_texts())
     assert first_page.isdisjoint(second_page), (first_page, second_page)
-    page.get_by_role('button', name='Précédente', exact=True).click()
-    expect(page.get_by_text('Page 1', exact=False)).to_be_visible()
+    order_pagination.get_by_role('button', name='Précédente', exact=True).click()
+    expect(order_pagination.get_by_text('Page 1', exact=True)).to_be_visible()
     expect(page.get_by_role('button', name=first_label, exact=True)).to_be_visible()
     checked('pages serveur bornées à 20 sans doublon entre pages')
     # The target is deliberately outside page 1; only an explicit Apply may issue
     # the server-side search request.
     search.fill(paged[0])
     expect(page.get_by_role('button', name='Ouvrir la commande ' + paged[0], exact=True)).to_have_count(0)
-    apply.click()
+    apply_order_filters()
     expect(page.get_by_role('button', name='Ouvrir la commande ' + paged[0], exact=True)).to_be_visible()
     filters.get_by_label('Paiement', exact=True).select_option('PAID')
     filters.get_by_label('Statut', exact=True).select_option('CONFIRMED')
-    filters.get_by_label('Restaurant', exact=True).select_option('rest-koudougou')
-    apply.click()
+    filters.get_by_label('ID restaurant exact', exact=True).fill('rest-koudougou')
+    apply_order_filters()
     expect(page.get_by_role('button', name='Ouvrir la commande ' + paged[0], exact=True)).to_be_visible()
     page.get_by_role('button', name='Effacer les filtres', exact=True).click()
     filters.get_by_label('Statut', exact=True).select_option('CONFIRMED')
-    apply.click()
+    apply_order_filters()
     checked('recherche serveur hors première page et filtres combinés appliqués explicitement')
     link = page.get_by_role('button', name='Ouvrir la commande ' + ids[0], exact=True)
     expect(link).to_be_enabled()
