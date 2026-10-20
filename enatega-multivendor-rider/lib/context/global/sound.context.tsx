@@ -26,7 +26,9 @@ export const SoundProvider = ({ children }: ISoundContextProviderProps) => {
   const { assignedOrders } = useUserContext();
 
   // Create audio player
-  const player = useAudioPlayer(require("@/lib/assets/sound/beep3.mp3") as AudioSource);
+  const player = useAudioPlayer(
+    require("@/lib/assets/sound/beep3.mp3") as AudioSource,
+  );
 
   // Handlers
   const playSound = useCallback(() => {
@@ -57,9 +59,12 @@ export const SoundProvider = ({ children }: ISoundContextProviderProps) => {
 
   // Audio player event listeners
   useEffect(() => {
-    const playingSubscription = player.addListener('playingChange', (isPlaying) => {
-      isPlayingRef.current = isPlaying;
-    });
+    const playingSubscription = player.addListener(
+      "playbackStatusUpdate",
+      (status) => {
+        isPlayingRef.current = status.playing;
+      },
+    );
 
     return () => {
       playingSubscription?.remove();

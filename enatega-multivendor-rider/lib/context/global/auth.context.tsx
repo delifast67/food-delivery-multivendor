@@ -2,7 +2,11 @@ import * as Location from "expo-location";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 // Interfaces§
-import { getSecureItem, removeSecureItem, setSecureItem } from "@/lib/services/secure-storage";
+import {
+  getSecureItem,
+  removeSecureItem,
+  setSecureItem,
+} from "@/lib/services/secure-storage";
 import { IAuthContext, IAuthProviderProps } from "@/lib/utils/interfaces";
 import { useRouter } from "expo-router";
 import { useRiderMode } from "@/lib/context/global/rider-mode.context";
@@ -41,6 +45,7 @@ export const AuthProvider: React.FC<IAuthProviderProps> = ({
 
         if (
           isMounted &&
+          storedToken !== null &&
           hasCompleteRiderSession(storedToken, storedRiderId)
         ) {
           setToken(storedToken);
@@ -81,7 +86,10 @@ export const AuthProvider: React.FC<IAuthProviderProps> = ({
     setToken("");
 
     try {
-      await Promise.all([removeSecureItem(tokenKey), removeSecureItem(riderIdKey)]);
+      await Promise.all([
+        removeSecureItem(tokenKey),
+        removeSecureItem(riderIdKey),
+      ]);
 
       try {
         await client.clearStore();
@@ -111,17 +119,18 @@ export const AuthProvider: React.FC<IAuthProviderProps> = ({
     }
   }, [client, riderIdKey, router, tokenKey]);
 
-  useEffect(
-    () =>
-      subscribeToSessionInvalidation((event) => {
-        if (event.tokenKey === tokenKey && event.riderIdKey === riderIdKey) {
-          void logout();
-          return true;
-        }
-        return false;
-      }),
-    [logout, riderIdKey, tokenKey],
-  );
+  useEffect(() => {
+    const unsubscribe = subscribeToSessionInvalidation((event) => {
+      if (event.tokenKey === tokenKey && event.riderIdKey === riderIdKey) {
+        void logout();
+        return true;
+      }
+      return false;
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [logout, riderIdKey, tokenKey]);
 
   const values: IAuthContext = useMemo(
     () => ({

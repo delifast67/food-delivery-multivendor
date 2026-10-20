@@ -14,7 +14,7 @@ import {
 import { VEHICLE_TYPE } from "@/lib/utils/constants";
 import { IVehicleTypeItem } from "@/lib/utils/interfaces";
 import { useMutation } from "@apollo/client";
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import {
   FlatList,
@@ -32,7 +32,7 @@ export default function VehicleTypeMainScreen() {
   const { appTheme } = useApptheme();
   const { t } = useTranslation();
 
-  const vehicleMap: Record<string, JSX.Element> = {
+  const vehicleMap: Record<string, ReactElement> = {
     bicycle: <BikeRidingIcon color={appTheme.fontMainColor} />,
     motorbike: <MotorBikeIcon color={appTheme.fontMainColor} />,
     car: <CarIcon color={appTheme.fontMainColor} />,

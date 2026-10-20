@@ -767,9 +767,11 @@ export default function OrderDetailScreen() {
               {/* Divider */}
               <View className="flex-1 h-[1px] mb-4" />
 
-              <AccordionItem title={t("Order Details")}>
-                <ItemDetails orderData={order} tab={tab} />
-              </AccordionItem>
+              {order && (
+                <AccordionItem title={t("Order Details")}>
+                  <ItemDetails orderData={order} tab={tab ?? ""} />
+                </AccordionItem>
+              )}
 
               {tab === "processing" && (
                 <TouchableOpacity

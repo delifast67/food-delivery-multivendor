@@ -48,10 +48,17 @@ export default function Layout() {
           </View>
         ),
 
-        tabBarButton: (props) => {
+        tabBarButton: ({ ref, ...props }) => {
           return (
             <Pressable
               {...props}
+              ref={(node) => {
+                if (typeof ref === "function") {
+                  ref(node);
+                } else if (ref) {
+                  ref.current = node;
+                }
+              }}
               android_ripple={{ color: "transparent" }} // Remove ripple on Android
               style={({ pressed }) => [
                 props.style,

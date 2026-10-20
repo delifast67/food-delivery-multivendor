@@ -35,7 +35,7 @@ interface RiderOrdersCacheData {
   riderOrders: IOrder[];
 }
 
-const useDetails = (orderData: IOrder) => {
+const useDetails = (orderData: IOrder | undefined) => {
   // Hooks
   const { t } = useTranslation();
   const router = useRouter();
@@ -45,7 +45,7 @@ const useDetails = (orderData: IOrder) => {
       ? SINGLE_VENDOR_RIDER_ORDERS
       : RIDER_ORDERS;
   const { assignedOrders, loadingAssigned, userId } = useContext(UserContext);
-  const [order, setOrder] = useState<IOrder>(orderData);
+  const [order, setOrder] = useState<IOrder | undefined>(orderData);
 
   useEffect(() => {
     if (!loadingAssigned && orderData?._id) {

@@ -1,4 +1,15 @@
-const wrapAddress = (address, maxLength = 48) => {
+import type { IOrder } from "../interfaces/order.interface";
+
+export type ReceiptOrder = IOrder & { currencySymbol?: string };
+
+const requireAmount = (value: number | undefined, field: string): number => {
+  if (value === undefined) {
+    throw new Error(`Cannot print receipt: missing ${field}`);
+  }
+  return value;
+};
+
+const wrapAddress = (address: string, maxLength = 48) => {
   const words = address.split(" ");
   const lines = [];
   let currentLine = "";
@@ -16,7 +27,7 @@ const wrapAddress = (address, maxLength = 48) => {
   return lines; // returns an array
 };
 
-export const formatReceiptOld = (order) => {
+export const formatReceiptOld = (order: ReceiptOrder) => {
   /**
    * Breaks text into lines for thermal printers.
    * - maxChars: chars per full line (48 for 80mm standard)
@@ -27,7 +38,7 @@ export const formatReceiptOld = (order) => {
   const breakIntoLines = (
     text: string,
     maxChars = 48,
-    indentSpaces = 4
+    indentSpaces = 4,
   ): string => {
     if (!text) return "";
 
@@ -61,7 +72,7 @@ export const formatReceiptOld = (order) => {
         // subsequent chunks use (maxChars - indentSpaces) since they will be indented.
         let start = 0;
         // first chunk uses 'limit'
-        let firstChunkSize = limit;
+        const firstChunkSize = limit;
         segments.push(word.slice(start, start + firstChunkSize));
         start += firstChunkSize;
         lineIndex++;
@@ -108,17 +119,16 @@ export const formatReceiptOld = (order) => {
       .join("\n");
   };
 
-  const address = order.isPickedup
+  const address = order.isPickedUp
     ? "PICKUP"
     : breakIntoLines(
-        `${order.deliveryAddress.label || ""} ${order.deliveryAddress.details || order.deliveryAddress.deliveryAddress || ""}`.trim()
+        `${order.deliveryAddress.label || ""} ${order.deliveryAddress.details || order.deliveryAddress.deliveryAddress || ""}`.trim(),
       );
 
   const {
     user: { email, phone },
     taxationAmount: tax,
     tipping: tip,
-    paidAmount,
     orderAmount,
     deliveryCharges,
     currencySymbol,
@@ -131,7 +141,7 @@ export const formatReceiptOld = (order) => {
       const addonsText = item.addons
         .map(
           (addon) =>
-            `${addon.title}: ${addon.options.map((option) => `${option.title} ${option.price}`).join(", ")}`
+            `${addon.title}: ${addon.options.map((option) => `${option.title} ${option.price}`).join(", ")}`,
         )
         .join("; ");
 
@@ -149,7 +159,7 @@ export const formatReceiptOld = (order) => {
           .reduce((sum, val) => sum + val, 0); */
 
       return `${item.quantity}x ${String(item.title)}${variationText}   ${currencySymbol}${itemPrice.toFixed(
-        2
+        2,
       )}${addonsSection}`;
     })
     .join("\n");
@@ -169,7 +179,7 @@ export const formatReceiptOld = (order) => {
     --- Order Details --------------------------
     Order ID: ${orderId}
     Payment Method: ${paymentMethod}
-    Order Type: ${order.isPickedup ? "Pick up" : "Delivery"}
+    Order Type: ${order.isPickedUp ? "Pick up" : "Delivery"}
 
     --- Items ----------------------------------
     ${itemsText}
@@ -177,10 +187,10 @@ export const formatReceiptOld = (order) => {
     --- Surcharge ------------------------------
     Tax:           ${currencySymbol}${tax.toFixed(2)}
     Tip:           ${currencySymbol}${tip.toFixed(2)}
-    Delivery ch.:  ${currencySymbol}${deliveryCharges.toFixed(2)}
+    Delivery ch.:  ${currencySymbol}${requireAmount(deliveryCharges, "deliveryCharges").toFixed(2)}
 
     --------------------------------------------
-    Total:         ${currencySymbol}${orderAmount.toFixed(2)}
+    Total:         ${currencySymbol}${requireAmount(orderAmount, "orderAmount").toFixed(2)}
 
     --------------------------------------------
     Thank you for your business!
@@ -189,8 +199,8 @@ export const formatReceiptOld = (order) => {
   return text;
 };
 
-export const formatReceipt = (order) => {
-  const address = order.isPickedup
+export const formatReceipt = (order: ReceiptOrder) => {
+  const address = order.isPickedUp
     ? "PICKUP"
     : `${order.deliveryAddress.label || ""} ${order.deliveryAddress.deliveryAddress || order.deliveryAddress.details || ""}`.trim();
 
@@ -200,7 +210,6 @@ export const formatReceipt = (order) => {
     user: { email, phone, name },
     taxationAmount: tax,
     tipping: tip,
-    paidAmount,
     orderAmount,
     deliveryCharges,
     currencySymbol,
@@ -214,7 +223,7 @@ export const formatReceipt = (order) => {
       const addonsText = item.addons
         .map(
           (addon) =>
-            `${addon.title}: ${addon.options.map((option) => `${option.title} [R]${currencySymbol}${option.price}`).join(", ")}`
+            `${addon.title}: ${addon.options.map((option) => `${option.title} [R]${currencySymbol}${option.price}`).join(", ")}`,
         )
         .join("\n - ");
 
@@ -232,7 +241,7 @@ export const formatReceipt = (order) => {
           .reduce((sum, val) => sum + val, 0); */
 
       return `${item.quantity}x ${String(item.title)}${variationText}   [R]${currencySymbol}${itemPrice.toFixed(
-        2
+        2,
       )}${addonsSection}`;
     })
     .join("\n");
@@ -260,13 +269,13 @@ ${itemsText}
 [L]--- Surcharge ------------------------------
 [L]Tax:           ${currencySymbol}${tax.toFixed(2)}
 [L]Tip:           ${currencySymbol}${tip.toFixed(2)}
-[L]Delivery ch.:  ${currencySymbol}${deliveryCharges.toFixed(2)}
+[L]Delivery ch.:  ${currencySymbol}${requireAmount(deliveryCharges, "deliveryCharges").toFixed(2)}
 
 ${instructions ? "[L]--- Instructions ------------------------------" : ""}
 ${instructions ? `[L]${instructions}` : ""}
 
 [R]--------------------------------------------
-[R]<b>Total: ${currencySymbol}${orderAmount.toFixed(2)}</b>
+[R]<b>Total: ${currencySymbol}${requireAmount(orderAmount, "orderAmount").toFixed(2)}</b>
 [R]--------------------------------------------
 
 [C]Thank you for your business!
