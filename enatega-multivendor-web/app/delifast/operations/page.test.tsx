@@ -169,7 +169,9 @@ describe("connexion et session staff", () => {
 
     cleanup();
     await login();
-    expect(screen.queryByText("Session serveur révoquée.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Session serveur révoquée."),
+    ).not.toBeInTheDocument();
   });
 
   it("ignore la réponse d’un chargement lancé avant le changement de session", async () => {
@@ -214,7 +216,9 @@ describe("connexion et session staff", () => {
     cleanup();
     await login();
     resolveOldAction(makeOrder("PREPARING"));
-    await waitFor(() => expect(screen.getByText("Acceptée")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("Acceptée")).toBeInTheDocument(),
+    );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /#o1/ }));
     expect(
@@ -414,4 +418,62 @@ describe("détail de préparation avec options", () => {
     );
     expect(screen.getByText(/2 × Plat fictif commandé/)).toBeInTheDocument();
   });
+});
+
+describe("support multirôle", () => {
+  it.each([restaurant, rider])(
+    "ne propose pas le support au rôle $role",
+    async (staff) => {
+      me.mockResolvedValue(staff);
+      const list = vi.spyOn(delifastApi, "operationsSupportTickets");
+      await login();
+      expect(
+        screen.queryByRole("tab", { name: "Support" }),
+      ).not.toBeInTheDocument();
+      expect(list).not.toHaveBeenCalled();
+    },
+  );
+  it("ouvre les tickets pour l’admin et nettoie le panneau à la déconnexion", async () => {
+    me.mockResolvedValue(admin);
+    const list = vi
+      .spyOn(delifastApi, "operationsSupportTickets")
+      .mockResolvedValue([]);
+    await login();
+    fireEvent.click(screen.getByRole("tab", { name: "Support" }));
+    expect(
+      await screen.findByRole("region", { name: "Gestion du support" }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(list).toHaveBeenCalledWith(token, 20, 0));
+    fireEvent.click(screen.getByRole("button", { name: "Se déconnecter" }));
+    await screen.findByRole("heading", { name: "Connexion équipe" });
+    expect(
+      screen.queryByRole("region", { name: "Gestion du support" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+it("retire immédiatement le support pendant une révocation serveur lente", async () => {
+  me.mockResolvedValue(admin);
+  vi.spyOn(delifastApi, "operationsSupportTickets").mockResolvedValue([]);
+  let finishLogout!: (value: boolean) => void;
+  vi.mocked(delifastApi.staffLogout).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finishLogout = resolve;
+      }),
+  );
+  await login();
+  fireEvent.click(screen.getByRole("tab", { name: "Support" }));
+  await screen.findByText("Aucun ticket sur cette page.");
+  fireEvent.click(screen.getByRole("button", { name: "Se déconnecter" }));
+  expect(
+    screen.queryByRole("region", { name: "Gestion du support" }),
+  ).not.toBeInTheDocument();
+  expect(sessionStorage.getItem("delifast-staff-token")).toBeNull();
+  expect(screen.getByRole("button", { name: "Se connecter" })).toBeDisabled();
+  finishLogout(true);
+  await screen.findByText("Session serveur révoquée.");
+  expect(
+    screen.getByRole("button", { name: "Se connecter" }),
+  ).not.toBeDisabled();
 });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import SupportPanel from "./SupportPanel";
 import {
   delifastApi,
   DelifastApiError,
@@ -66,6 +67,7 @@ export default function CustomerAccount({
   const [notice, setNotice] = useState("");
   const [draft, setDraft] = useState<DeliveryAddress>(freshAddress);
   const [editing, setEditing] = useState<string | null>(null);
+  const [supportOpen, setSupportOpen] = useState(false);
   const mounted = useRef(true);
   const epoch = useRef(0);
   const actionLock = useRef<string | null>(null);
@@ -99,6 +101,7 @@ export default function CustomerAccount({
     setAddresses([]);
     setDraft(freshAddress());
     setEditing(null);
+    setSupportOpen(false);
   };
   const accountError = (error: unknown, version: number) => {
     if (!current(version)) return;
@@ -417,6 +420,14 @@ export default function CustomerAccount({
             </>
           ) : (
             <>
+              <button
+                className="df-secondary"
+                aria-expanded={supportOpen}
+                onClick={() => setSupportOpen((value) => !value)}
+              >
+                Tickets et réclamations
+              </button>
+              {supportOpen && <SupportPanel token={token} />}
               <div className="df-address-list">
                 {addresses.map((address) => (
                   <article className="df-card" key={address.id}>

@@ -9,6 +9,7 @@ import {
 } from "@/lib/delifast/api";
 import "../delifast.css";
 import Catalogue from "./Catalogue";
+import SupportPanel from "../SupportPanel";
 
 const TOKEN_KEY = "delifast-staff-token";
 const labels: Record<string, string> = {
@@ -44,7 +45,9 @@ export default function OperationsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<string | null>(null);
-  const [section, setSection] = useState<"orders" | "catalogue">("orders");
+  const [section, setSection] = useState<"orders" | "catalogue" | "support">(
+    "orders",
+  );
   const sessionVersion = useRef(0);
   const activeTokenRef = useRef("");
   const requestVersion = useRef(0);
@@ -107,6 +110,7 @@ export default function OperationsPage() {
 
   const login = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (busy === "logout") return;
     setBusy("login");
     setError("");
     setNotice("");
@@ -133,6 +137,12 @@ export default function OperationsPage() {
     activeTokenRef.current = "";
     setBusy("logout");
     setNotice("");
+    sessionStorage.removeItem(TOKEN_KEY);
+    setToken("");
+    setUser(null);
+    setOrders([]);
+    setRiders([]);
+    setSection("orders");
     try {
       const revoked = previousToken
         ? await delifastApi.staffLogout(previousToken)
@@ -147,12 +157,6 @@ export default function OperationsPage() {
         "Déconnexion locale effectuée ; la révocation serveur n’a pas pu être confirmée.",
       );
     }
-    sessionStorage.removeItem(TOKEN_KEY);
-    setToken("");
-    setUser(null);
-    setOrders([]);
-    setRiders([]);
-    setSection("orders");
     setBusy("");
   };
   const refresh = () => token && void load(token);
@@ -160,7 +164,8 @@ export default function OperationsPage() {
     const session = sessionVersion.current;
     const activeToken = activeTokenRef.current;
     const isCurrent = () =>
-      session === sessionVersion.current && activeToken === activeTokenRef.current;
+      session === sessionVersion.current &&
+      activeToken === activeTokenRef.current;
     setBusy(kind);
     setError("");
     setNotice("");
@@ -225,7 +230,10 @@ export default function OperationsPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-            <button className="df-primary" disabled={busy === "login"}>
+            <button
+              className="df-primary"
+              disabled={busy === "login" || busy === "logout"}
+            >
               {busy === "login" ? "Connexion…" : "Se connecter"}
             </button>
           </form>
@@ -247,7 +255,13 @@ export default function OperationsPage() {
         <div className="df-ops-head">
           <div>
             <span className="df-kicker">OPÉRATIONS · {user.role}</span>
-            <h1>{section === "orders" ? "Commandes" : "Catalogue"}</h1>
+            <h1>
+              {section === "orders"
+                ? "Commandes"
+                : section === "support"
+                  ? "Support"
+                  : "Catalogue"}
+            </h1>
             <p className="df-muted">
               Les statuts affichés sont la source serveur. Actualisation
               automatique toutes les 30 secondes.
@@ -278,6 +292,18 @@ export default function OperationsPage() {
                 Catalogue
               </button>
             )}
+            {role === "admin" && (
+              <button
+                role="tab"
+                aria-selected={section === "support"}
+                className={
+                  section === "support" ? "df-primary" : "df-secondary"
+                }
+                onClick={() => setSection("support")}
+              >
+                Support
+              </button>
+            )}
             {section === "orders" && (
               <button
                 className="df-secondary"
@@ -299,8 +325,10 @@ export default function OperationsPage() {
             {notice}
           </div>
         )}
-        {section === "catalogue" &&
-        (role === "admin" || role === "restaurant") ? (
+        {section === "support" && role === "admin" ? (
+          <SupportPanel token={token} admin />
+        ) : section === "catalogue" &&
+          (role === "admin" || role === "restaurant") ? (
           <Catalogue token={token} user={user} />
         ) : (
           <div className="df-ops-list">
@@ -486,7 +514,9 @@ function OrderDetails({
       {role === "admin" &&
         ["ACCEPTED", "PREPARING", "READY"].includes(order.status) && (
           <div className="df-assign">
-            <label htmlFor={`assign-rider-${order.id}`}>Assigner un livreur</label>
+            <label htmlFor={`assign-rider-${order.id}`}>
+              Assigner un livreur
+            </label>
             <select
               id={`assign-rider-${order.id}`}
               value={order.riderId || ""}

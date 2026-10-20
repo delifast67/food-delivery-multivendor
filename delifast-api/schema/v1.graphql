@@ -13,6 +13,10 @@ type Query {
   me: StaffUser
   customerMe: Customer
   customerAddresses: [CustomerAddress!]!
+  customerSupportTickets(limit: Int = 20, offset: Int = 0): [SupportTicket!]!
+  customerSupportTicket(id: ID!): SupportTicket
+  operationsSupportTickets(limit: Int = 20, offset: Int = 0): [SupportTicket!]!
+  operationsSupportTicket(id: ID!): SupportTicket
 }
 type Mutation {
   placeOrder(input: PlaceOrderInput!): Order!
@@ -42,12 +46,18 @@ type Mutation {
   createCustomerAddress(input: DeliveryAddressInput!): CustomerAddress!
   updateCustomerAddress(id: ID!, input: DeliveryAddressInput!): CustomerAddress!
   deleteCustomerAddress(id: ID!): Boolean!
+  createSupportTicket(input: CreateSupportTicketInput!): SupportTicket!
+  transitionSupportTicket(id: ID!, expectedVersion: Int!, status: SupportStatus!, note: String!): SupportTicket!
 }
 type Point { latitude: Float!, longitude: Float! }
 type Customer { id: ID!, phone: String! }
 type CustomerSession { token: String!, customer: Customer! }
 type CustomerOtpChallenge { challengeId: ID!, expiresIn: Int!, retryAfter: Int! }
 type CustomerAddress { id: ID!, recipientName: String!, phone: String!, city: String!, neighborhood: String!, landmark: String!, instructions: String!, point: Point! }
+enum SupportStatus { OPEN IN_PROGRESS RESOLVED }
+input CreateSupportTicketInput { subject: String!, description: String!, idempotencyKey: String! }
+type SupportEvent { status: SupportStatus!, at: String!, actorRole: String!, note: String! }
+type SupportTicket { id: ID!, customerId: ID!, subject: String!, description: String!, status: SupportStatus!, version: Int!, createdAt: String!, updatedAt: String!, history: [SupportEvent!]! }
 input DeliveryPointInput { latitude: Float!, longitude: Float! }
 input RestaurantProfileInput { name: String!, description: String!, open: Boolean!, deliveryZoneIds: [ID!]! }
 input RestaurantHoursInput { day: Int!, startMinute: Int!, endMinute: Int! }

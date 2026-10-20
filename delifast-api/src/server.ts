@@ -22,6 +22,7 @@ import {
 import { authenticate, login, logout, requireRole } from "./auth.js";
 import { authenticateCustomer } from "./customer-auth.js";
 import { requestOtp, resendOtp, verifyOtp, customerLogout, listAddresses, createAddress, updateAddress, deleteAddress, requireCustomer } from "./customer-auth.js";
+import { createSupportTicket, customerSupportTickets, customerSupportTicket, operationsSupportTickets, operationsSupportTicket, transitionSupportTicket } from "./support.js";
 import {
   publicRestaurants,
   publicRestaurant,
@@ -90,6 +91,7 @@ const knownCodes = new Set([
   "CONCURRENT_REQUEST",
   "ADDRESS_NOT_FOUND",
   "DELIVERY_POINT_REQUIRED",
+  "SUPPORT_TICKET_NOT_FOUND",
 ]);
 function rateLimit() {
   const buckets = new Map<string, { start: number; count: number }>();
@@ -150,6 +152,10 @@ const resolvers: any = {
     me: (_: any, _a: any, ctx: any) => ctx.user || null,
     customerMe: (_: any, _a: any, ctx: any) => ctx.customer || null,
     customerAddresses: (_: any, _a: any, ctx: any) => listAddresses(getDb(), ctx),
+    customerSupportTickets: (_: any, { limit, offset }: any, ctx: any) => customerSupportTickets(getDb(), ctx, limit, offset),
+    customerSupportTicket: (_: any, { id }: any, ctx: any) => customerSupportTicket(getDb(), ctx, id),
+    operationsSupportTickets: (_: any, { limit, offset }: any, ctx: any) => operationsSupportTickets(getDb(), requireRole(ctx, ["ADMIN"]), limit, offset),
+    operationsSupportTicket: (_: any, { id }: any, ctx: any) => operationsSupportTicket(getDb(), requireRole(ctx, ["ADMIN"]), id),
   },
   Restaurant: {
     deliveryZoneIds: (r: any) => restaurantZoneIds(getDb(), r),
@@ -292,6 +298,8 @@ const resolvers: any = {
     createCustomerAddress: (_: any, { input }: any, ctx: any) => createAddress(getDb(), ctx, input),
     updateCustomerAddress: (_: any, { id, input }: any, ctx: any) => updateAddress(getDb(), ctx, id, input),
     deleteCustomerAddress: (_: any, { id }: any, ctx: any) => deleteAddress(getDb(), ctx, id),
+    createSupportTicket: (_: any, { input }: any, ctx: any) => createSupportTicket(getDb(), ctx, input),
+    transitionSupportTicket: (_: any, { id, expectedVersion, status, note }: any, ctx: any) => transitionSupportTicket(getDb(), requireRole(ctx, ["ADMIN"]), id, expectedVersion, status, note),
   },
 };
 export async function createApp(

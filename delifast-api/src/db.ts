@@ -52,6 +52,10 @@ export async function connect(
   await db.collection("customer_otp_rate_limits").createIndex({ windowUntil: 1 }, { expireAfterSeconds: 0 });
   await db.collection("customer_addresses").createIndex({ id: 1 }, { unique: true });
   await db.collection("customer_addresses").createIndex({ customerId: 1 });
+  await db.collection("support_tickets").createIndex({ id: 1 }, { unique: true });
+  await db.collection("support_tickets").createIndex({ customerId: 1, idempotencyKey: 1 }, { unique: true });
+  await db.collection("support_tickets").createIndex({ customerId: 1, createdAt: 1, id: 1 });
+  await db.collection("support_tickets").createIndex({ createdAt: 1, id: 1 });
   return db;
 }
 export function getDb() {

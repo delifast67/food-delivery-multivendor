@@ -133,6 +133,13 @@ export type StaffSession = { token: string; user: StaffUser };
 export type Customer = { id: string; phone: string };
 export type CustomerSession = { token: string; customer: Customer };
 export type CustomerOtpChallenge = { challengeId: string; expiresIn: number; retryAfter: number };
+export type SupportStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED";
+export type SupportTicket = {
+  id: string; customerId: string; subject: string; description: string;
+  status: SupportStatus; version: number; createdAt: string; updatedAt: string;
+  history: { status: SupportStatus; at: string; actorRole: string; note: string }[];
+};
+export type SupportTicketInput = { subject: string; description: string; idempotencyKey: string };
 export type CustomerAddress = DeliveryAddress & { id: string; point: DeliveryPoint };
 export function deliveryAddressInput(input: DeliveryAddress): DeliveryAddress {
   return {
@@ -192,6 +199,12 @@ const DELETE_CUSTOMER_ADDRESS = `mutation DeleteCustomerAddress($id: ID!) { dele
 const SIMULATE_PAYMENT = `mutation SimulateDemoPayment($orderId: ID!) { simulateDemoPayment(orderId: $orderId) { ${ORDER_OPERATIONS_FIELDS} } }`;
 const TRANSITION = `mutation TransitionOrder($orderId: ID!, $status: String!, $expectedStatus: String!) { transitionOrder(orderId: $orderId, status: $status, expectedStatus: $expectedStatus) { ${ORDER_OPERATIONS_FIELDS} } }`;
 const ASSIGN = `mutation AssignRider($orderId: ID!, $riderId: ID!, $expectedStatus: String!) { assignRider(orderId: $orderId, riderId: $riderId, expectedStatus: $expectedStatus) { ${ORDER_OPERATIONS_FIELDS} } }`;
+
+const SUPPORT_FIELDS = `id customerId subject description status version createdAt updatedAt history { status at actorRole note }`;
+const CUSTOMER_SUPPORT = `query CustomerSupport($limit:Int!,$offset:Int!){customerSupportTickets(limit:$limit,offset:$offset){${SUPPORT_FIELDS}}}`;
+const OPERATIONS_SUPPORT = `query OperationsSupport($limit:Int!,$offset:Int!){operationsSupportTickets(limit:$limit,offset:$offset){${SUPPORT_FIELDS}}}`;
+const CREATE_SUPPORT = `mutation CreateSupport($input:CreateSupportTicketInput!){createSupportTicket(input:$input){${SUPPORT_FIELDS}}}`;
+const TRANSITION_SUPPORT = `mutation TransitionSupport($id:ID!,$expectedVersion:Int!,$status:SupportStatus!,$note:String!){transitionSupportTicket(id:$id,expectedVersion:$expectedVersion,status:$status,note:$note){${SUPPORT_FIELDS}}}`;
 
 function validOtpChallenge(value: unknown): CustomerOtpChallenge {
   if (
@@ -312,6 +325,14 @@ async function request<T>(
 }
 
 export const delifastApi = {
+  customerSupportTickets: (token: string, limit = 20, offset = 0) =>
+    request<{ customerSupportTickets: SupportTicket[] }>(CUSTOMER_SUPPORT, { limit, offset }, token).then((d) => d.customerSupportTickets),
+  operationsSupportTickets: (token: string, limit = 20, offset = 0) =>
+    request<{ operationsSupportTickets: SupportTicket[] }>(OPERATIONS_SUPPORT, { limit, offset }, token).then((d) => d.operationsSupportTickets),
+  createSupportTicket: (token: string, input: SupportTicketInput) =>
+    request<{ createSupportTicket: SupportTicket }>(CREATE_SUPPORT, { input }, token).then((d) => d.createSupportTicket),
+  transitionSupportTicket: (token: string, id: string, expectedVersion: number, status: SupportStatus, note: string) =>
+    request<{ transitionSupportTicket: SupportTicket }>(TRANSITION_SUPPORT, { id, expectedVersion, status, note }, token).then((d) => d.transitionSupportTicket),
   restaurants: (point?: DeliveryPoint) =>
     request<{ restaurants: Restaurant[] }>(RESTAURANTS, { point: point ?? null }).then(
       (data) => data.restaurants,

@@ -26,10 +26,12 @@ try {
   await source.collection('menu_categories').createIndex({id:1},{unique:true});
   await source.collection('menu_categories').insertOne({id:'test-category',restaurantId:'test-restaurant',name:'Catégorie fictive',sortOrder:2,archived:true,version:3});
   await source.createCollection('empty_collection');
+  await source.collection('support_tickets').createIndex({ customerId: 1, idempotencyKey: 1 }, { unique: true });
+  await source.collection('support_tickets').insertOne({ id: 'backup-ticket', customerId: 'test-customer', idempotencyKey: 'backup-support-key', subject: 'Réclamation fictive', description: 'Test de conservation', status: 'RESOLVED', version: 2, history: [{ status: 'OPEN', at: new Date().toISOString(), actorRole: 'CUSTOMER', note: '' }, { status: 'IN_PROGRESS', at: new Date().toISOString(), actorRole: 'ADMIN', note: 'Examen' }, { status: 'RESOLVED', at: new Date().toISOString(), actorRole: 'ADMIN', note: 'Résolution fictive' }] });
   const sourceUri = mongo.getUri('delifast_backup_source');
   await assert.rejects(backup({ uri: sourceUri, file }), /--offline/);
   const saved = await backup({ uri: sourceUri, file, offline: true });
-  assert.deepEqual(saved, { collections: 6, documents: 5 });
+  assert.deepEqual(saved, { collections: 7, documents: 6 });
   assert.equal((await stat(file)).mode & 0o777, 0o600);
   assert.doesNotMatch(await readFile(file, 'utf8'), /should-not-survive/);
   await assert.rejects(backup({ uri: sourceUri, file, offline: true }), /EEXIST/);
@@ -42,9 +44,10 @@ try {
   assert.deepEqual(await target.collection('orders').findOne({ id: 'backup-order' }), await source.collection('orders').findOne({ id: 'backup-order' }));
   assert.equal(await target.collection('staff_users').countDocuments(), 1);
   assert.equal(await target.collection('staff_sessions').countDocuments(), 0);
-  for (const collection of ['restaurants', 'menu_items', 'menu_categories']) assert.deepEqual(await target.collection(collection).findOne({}), await source.collection(collection).findOne({}));
+  for (const collection of ['restaurants', 'menu_items', 'menu_categories', 'support_tickets']) assert.deepEqual(await target.collection(collection).findOne({}), await source.collection(collection).findOne({}));
   assert.equal((await target.listCollections({ name: 'empty_collection' }).toArray()).length, 1);
   await assert.rejects(target.collection('orders').insertOne({ id: 'backup-order' }), /duplicate key/);
+  await assert.rejects(target.collection('support_tickets').insertOne({ customerId: 'test-customer', idempotencyKey: 'backup-support-key' }), /duplicate key/);
   console.log('OK — restauration dans une base vierge : BSON, historique, catalogue, versions, audits et index unique préservés');
   const corrupt = JSON.parse(await readFile(file, 'utf8'));
   corrupt.payload += ' ';
