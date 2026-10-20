@@ -164,3 +164,78 @@ describe("identité de configuration panier", () => {
     );
   });
 });
+
+describe("Contrats catalogue admin paginé", () => {
+  const response = (data: unknown) => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ data }),
+  });
+  it("demande les résumés avec limite 20 sans description ni options", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      response({
+        operationsMenuItemSummaries: { items: [], nextCursor: "next" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await delifastApi.operationsMenuItemSummaries("staff", "r1", "after", "m1");
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.variables).toEqual({
+      restaurantId: "r1",
+      after: "after",
+      menuItemId: "m1",
+    });
+    expect(body.query).toContain("limit: 20");
+    expect(body.query).toContain("operationsMenuItemSummaries");
+    expect(body.query).not.toContain("description");
+    expect(body.query).not.toContain("optionGroups");
+  });
+  it("demande le détail avec restaurantId/id et limite le payload aux champs détaillés", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      response({
+        operationsMenuItem: {
+          id: "m1",
+          name: "Plat",
+          description: "D",
+          optionGroups: [],
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await delifastApi.operationsMenuItem("staff", "r1", "m1");
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.variables).toEqual({ restaurantId: "r1", id: "m1" });
+    expect(body.query).toContain(
+      "operationsMenuItem(restaurantId: $restaurantId, id: $id)",
+    );
+    expect(body.query).toContain("description");
+    expect(body.query).toContain("optionGroups");
+  });
+  it("retourne un profil operationsRestaurant sans menu et transmet setRestaurantOpen sans menu", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response({
+          operationsRestaurant: { id: "r1", name: "Chez A", categories: [] },
+        }),
+      )
+      .mockResolvedValueOnce(
+        response({
+          setRestaurantOpen: {
+            id: "r1",
+            name: "Chez A",
+            open: false,
+            version: 2,
+          },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const profile = await delifastApi.operationsRestaurant("staff", "r1");
+    await delifastApi.setRestaurantOpen("staff", "r1", 1, false);
+    expect(profile).toEqual(expect.objectContaining({ id: "r1", menu: [] }));
+    const profileQuery = JSON.parse(fetchMock.mock.calls[0][1].body).query;
+    const openQuery = JSON.parse(fetchMock.mock.calls[1][1].body).query;
+    expect(profileQuery).not.toMatch(/\bmenu\b/);
+    expect(openQuery).not.toMatch(/\bmenu\b/);
+  });
+});

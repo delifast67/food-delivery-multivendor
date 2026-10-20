@@ -45,6 +45,16 @@ export type MenuItem = {
   optionGroups?: MenuOptionGroup[];
 };
 
+export type MenuItemSummary = Pick<
+  MenuItem,
+  | "id"
+  | "name"
+  | "priceXof"
+  | "available"
+  | "archived"
+  | "version"
+  | "categoryId"
+>;
 export type RestaurantSummary = {
   id: string;
   name: string;
@@ -271,15 +281,19 @@ const STAFF_LOGIN = `mutation StaffLogin($email: String!, $password: String!) { 
 const OPERATIONS_ORDERS = `query OperationsOrders { operationsOrders { ${ORDER_OPERATIONS_FIELDS} } }`;
 const OPERATIONS_RESTAURANTS = `query OperationsRestaurants { operationsRestaurants { ${RESTAURANT_FIELDS} } }`;
 const OPERATIONS_RESTAURANT_SUMMARIES = `query OperationsRestaurantSummaries($after: ID, $restaurantId: ID) { operationsRestaurantSummaries(limit: 20, after: $after, restaurantId: $restaurantId) { items { id name open version } nextCursor } }`;
-const OPERATIONS_RESTAURANT = `query OperationsRestaurant($id: ID!) { operationsRestaurant(id: $id) { ${RESTAURANT_FIELDS} } }`;
+// Le profil admin conserve les catégories nécessaires au formulaire, jamais tous les plats.
+const OPERATIONS_RESTAURANT = `query OperationsRestaurant($id: ID!) { operationsRestaurant(id: $id) { id name description open version categories { ${CATEGORY_FIELDS} } } }`;
 const MENU_ITEM_FIELDS = `id name description priceXof available archived version categoryId optionGroups { ${GROUP_FIELDS} }`;
+const MENU_SUMMARY_FIELDS = `id name priceXof available archived version categoryId`;
+const MENU_SUMMARIES = `query OperationsMenuItemSummaries($restaurantId: ID!, $after: ID, $menuItemId: ID) { operationsMenuItemSummaries(restaurantId: $restaurantId, limit: 20, after: $after, menuItemId: $menuItemId) { items { ${MENU_SUMMARY_FIELDS} } nextCursor } }`;
+const MENU_DETAIL = `query OperationsMenuItem($restaurantId: ID!, $id: ID!) { operationsMenuItem(restaurantId: $restaurantId, id: $id) { ${MENU_ITEM_FIELDS} } }`;
 const CREATE_MENU_ITEM = `mutation CreateMenuItem($restaurantId: ID!, $input: MenuItemInput!) { createMenuItem(restaurantId: $restaurantId, input: $input) { ${MENU_ITEM_FIELDS} } }`;
 const UPDATE_MENU_ITEM = `mutation UpdateMenuItem($id: ID!, $expectedVersion: Int!, $input: MenuItemInput!) { updateMenuItem(id: $id, expectedVersion: $expectedVersion, input: $input) { ${MENU_ITEM_FIELDS} } }`;
 const CREATE_CATEGORY = `mutation CreateMenuCategory($restaurantId: ID!, $input: MenuCategoryInput!) { createMenuCategory(restaurantId: $restaurantId, input: $input) { ${CATEGORY_FIELDS} } }`;
 const UPDATE_CATEGORY = `mutation UpdateMenuCategory($id: ID!, $expectedVersion: Int!, $input: MenuCategoryInput!) { updateMenuCategory(id: $id, expectedVersion: $expectedVersion, input: $input) { ${CATEGORY_FIELDS} } }`;
 const SET_CATEGORY_ARCHIVED = `mutation SetMenuCategoryArchived($id: ID!, $expectedVersion: Int!, $archived: Boolean!) { setMenuCategoryArchived(id: $id, expectedVersion: $expectedVersion, archived: $archived) { ${CATEGORY_FIELDS} } }`;
 const SET_MENU_ITEM_ARCHIVED = `mutation SetMenuItemArchived($id: ID!, $expectedVersion: Int!, $archived: Boolean!) { setMenuItemArchived(id: $id, expectedVersion: $expectedVersion, archived: $archived) { ${MENU_ITEM_FIELDS} } }`;
-const SET_RESTAURANT_OPEN = `mutation SetRestaurantOpen($id: ID!, $expectedVersion: Int!, $open: Boolean!) { setRestaurantOpen(id: $id, expectedVersion: $expectedVersion, open: $open) { ${RESTAURANT_FIELDS} } }`;
+const SET_RESTAURANT_OPEN = `mutation SetRestaurantOpen($id: ID!, $expectedVersion: Int!, $open: Boolean!) { setRestaurantOpen(id: $id, expectedVersion: $expectedVersion, open: $open) { id name description open version } }`;
 const AVAILABLE_RIDERS = `query AvailableRiders { availableRiders { id name role restaurantId } }`;
 const RIDER_SUMMARIES = `query OperationsRiderSummaries($after: ID, $riderId: ID) { operationsRiderSummaries(limit: 20, after: $after, riderId: $riderId) { items { id name } nextCursor } }`;
 const RIDER_DETAIL = `query OperationsRider($id: ID!) { operationsRider(id: $id) { id name role restaurantId } }`;
@@ -605,7 +619,31 @@ export const delifastApi = {
       if (restaurant && restaurant.id !== id) {
         throw new DelifastApiError("Réponse restaurant incohérente", "unknown");
       }
-      return restaurant;
+      return restaurant ? { ...restaurant, menu: [] as MenuItem[] } : null;
+    }),
+  operationsMenuItemSummaries: (
+    token: string,
+    restaurantId: string,
+    after: string | null = null,
+    menuItemId: string | null = null,
+  ) =>
+    request<{
+      operationsMenuItemSummaries: {
+        items: MenuItemSummary[];
+        nextCursor: string | null;
+      };
+    }>(MENU_SUMMARIES, { restaurantId, after, menuItemId }, token).then(
+      (data) => data.operationsMenuItemSummaries,
+    ),
+  operationsMenuItem: (token: string, restaurantId: string, id: string) =>
+    request<{ operationsMenuItem: MenuItem | null }>(
+      MENU_DETAIL,
+      { restaurantId, id },
+      token,
+    ).then((data) => {
+      if (data.operationsMenuItem && data.operationsMenuItem.id !== id)
+        throw new DelifastApiError("Réponse plat incohérente", "unknown");
+      return data.operationsMenuItem;
     }),
   operationsRestaurants: (token: string) =>
     request<{ operationsRestaurants: Restaurant[] }>(

@@ -28,3 +28,30 @@ test('les nouveaux helpers restaurants sont réservés au catalogue opérations 
   assert.match(api, /operationsRestaurantSummaries\(limit: 20,/);
   assert.match(api, /operationsRestaurant\(id: \$id\)/);
 });
+
+test('le catalogue admin Web ne recharge pas tous les plats depuis un profil ou son ouverture', () => {
+  const api = readFileSync(new URL('../enatega-multivendor-web/lib/delifast/api.ts', import.meta.url), 'utf8');
+  const ui = readFileSync(new URL('../enatega-multivendor-web/app/delifast/operations/Catalogue.tsx', import.meta.url), 'utf8');
+  assert.match(api, /operationsMenuItemSummaries\(restaurantId: \$restaurantId, limit: 20,/);
+  assert.match(api, /operationsMenuItem\(restaurantId: \$restaurantId, id: \$id\)/);
+  const profile = api.match(/const OPERATIONS_RESTAURANT = `([^`]+)`/)[1];
+  const toggle = api.match(/const SET_RESTAURANT_OPEN = `([^`]+)`/)[1];
+  assert.doesNotMatch(profile, /\bmenu\s*\{/);
+  assert.doesNotMatch(toggle, /\bmenu\s*\{/);
+  assert.match(ui, /const visibleMenu = isAdmin \? menuRows/);
+  assert.match(ui, /delifastApi\.operationsMenuItem\(/);
+});
+
+test('les résumés des plats sont bornés et utilisent le nouvel index de portée', () => {
+  const catalog = readFileSync(new URL('../delifast-api/src/catalog.ts', import.meta.url), 'utf8');
+  const block = catalog.slice(catalog.indexOf('export async function operationsMenuItemSummaries('), catalog.indexOf('export async function operationsMenuItem('));
+  assert.match(block, /user\.role !== "ADMIN"/);
+  assert.match(block, /projection: menuSummaryProjection, maxTimeMS: 2000/);
+  assert.match(block, /hint\("menu_items_restaurant_id"\)/);
+  assert.match(block, /limit\(\(limit as number\) \+ 1\)/);
+  for (const file of ['src/db.ts', 'migrations/index.ts']) {
+    const text = readFileSync(new URL('../delifast-api/' + file, import.meta.url), 'utf8');
+    assert.match(text, /restaurantId: 1, id: 1/);
+    assert.match(text, /name: "menu_items_restaurant_id"/);
+  }
+});

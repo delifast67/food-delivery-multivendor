@@ -49,6 +49,7 @@ const page = (
 });
 let summaries: MockInstance<typeof delifastApi.operationsRestaurantSummaries>;
 let details: MockInstance<typeof delifastApi.operationsRestaurant>;
+let menuSummaries: MockInstance<typeof delifastApi.operationsMenuItemSummaries>;
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -66,6 +67,9 @@ beforeEach(() => {
   details = vi
     .spyOn(delifastApi, "operationsRestaurant")
     .mockImplementation(async (_t, id) => restaurant(id, id));
+  menuSummaries = vi
+    .spyOn(delifastApi, "operationsMenuItemSummaries")
+    .mockResolvedValue({ items: [], nextCursor: null });
 });
 afterEach(() => cleanup());
 
@@ -102,6 +106,47 @@ describe("Catalogue admin pagination", () => {
     expect(details).toHaveBeenLastCalledWith(token, "r99");
   });
 
+  it("pagine le menu par 20, conserve les curseurs, filtre exactement et réinitialise", async () => {
+    const menu = (n: number) => ({
+      id: `m${n}`,
+      name: `Plat ${n}`,
+      priceXof: n,
+      available: true,
+      archived: false,
+      version: 1,
+      categoryId: null,
+    });
+    const first = { items: [menu(1)], nextCursor: "m20" };
+    const second = { items: [menu(21)], nextCursor: "m40" };
+    menuSummaries
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second)
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce({ items: [menu(99)], nextCursor: null })
+      .mockResolvedValueOnce(first);
+    details.mockResolvedValue({ ...restaurant("r1", "R1"), menu: [] });
+    render(<Catalogue token={token} user={user} />);
+    await screen.findByText("Plat 1");
+    expect(menuSummaries).toHaveBeenLastCalledWith(token, "r1", null, null);
+    fireEvent.click(screen.getByRole("button", { name: "Plats suivants" }));
+    await screen.findByText("Plat 21");
+    expect(menuSummaries).toHaveBeenLastCalledWith(token, "r1", "m20", null);
+    fireEvent.click(screen.getByRole("button", { name: "Plats précédents" }));
+    await screen.findByText("Plat 1");
+    expect(menuSummaries).toHaveBeenLastCalledWith(token, "r1", null, null);
+    fireEvent.change(screen.getByLabelText("ID plat exact"), {
+      target: { value: "m99" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Rechercher le plat" }));
+    await screen.findByText("Plat 99");
+    expect(menuSummaries).toHaveBeenLastCalledWith(token, "r1", null, "m99");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Réinitialiser les plats" }),
+    );
+    await screen.findByText("Plat 1");
+    expect(screen.getByLabelText("ID plat exact")).toHaveValue("");
+  });
+
   it("n'autorise pas l'ancien détail après erreur puis permet un retry", async () => {
     summaries
       .mockRejectedValueOnce(new Error("liste indisponible"))
@@ -133,7 +178,9 @@ describe("Catalogue admin pagination", () => {
     fireEvent.change(screen.getByLabelText("ID restaurant exact"), {
       target: { value: "r99" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Restaurants suivants" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Restaurants suivants" }),
+    );
     await screen.findByText("R21");
     expect(summaries).toHaveBeenLastCalledWith(token, "c20", null);
     fireEvent.click(
@@ -156,8 +203,12 @@ describe("Catalogue admin pagination", () => {
       expect(screen.getByRole("alert")).toHaveTextContent(
         "introuvable ou incohérent",
       );
-      expect(screen.queryByRole("button", { name: "Modifier" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Créer le plat" })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Modifier" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Créer le plat" }),
+      ).not.toBeInTheDocument();
     },
   );
 
@@ -173,14 +224,22 @@ describe("Catalogue admin pagination", () => {
     const { rerender } = render(<Catalogue token="old" user={user} />);
     await waitFor(() => expect(details).toHaveBeenCalledWith("old", "r1"));
     rerender(<Catalogue token="new" user={{ ...user, id: "new-admin" }} />);
-    await waitFor(() => expect(screen.getByText("Nouvelle session")).toBeInTheDocument());
-    await act(async () => oldResolve.resolve(restaurant("r1", "Ancien détail")));
+    await waitFor(() =>
+      expect(screen.getByText("Nouvelle session")).toBeInTheDocument(),
+    );
+    await act(async () =>
+      oldResolve.resolve(restaurant("r1", "Ancien détail")),
+    );
     expect(screen.queryByText("Ancien détail")).not.toBeInTheDocument();
 
     rerender(<Catalogue token="old-2" user={{ ...user, id: "old-admin-2" }} />);
-    await waitFor(() => expect(details).toHaveBeenLastCalledWith("old-2", "r1"));
+    await waitFor(() =>
+      expect(details).toHaveBeenLastCalledWith("old-2", "r1"),
+    );
     rerender(<Catalogue token="new-2" user={{ ...user, id: "new-admin-2" }} />);
-    await waitFor(() => expect(screen.getByText("Nouvelle session")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("Nouvelle session")).toBeInTheDocument(),
+    );
     await act(async () => oldReject.reject(new Error("ancien rejet")));
     expect(screen.queryByText("ancien rejet")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -193,15 +252,42 @@ describe("Catalogue admin pagination", () => {
     vi.spyOn(delifastApi, "setRestaurantOpen")
       .mockImplementationOnce(() => oldMutation.promise)
       .mockResolvedValue(fresh);
-    const { rerender } = render(<Catalogue token="old" user={{ ...user, role: "RESTAURANT", restaurantId: "r1" }} />);
+    const { rerender } = render(
+      <Catalogue
+        token="old"
+        user={{ ...user, role: "RESTAURANT", restaurantId: "r1" }}
+      />,
+    );
     await screen.findByRole("button", { name: "Fermer le restaurant" });
-    fireEvent.click(screen.getByRole("button", { name: "Fermer le restaurant" }));
-    rerender(<Catalogue token="new" user={{ ...user, role: "RESTAURANT", restaurantId: "r1" }} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Fermer le restaurant" }),
+    );
+    rerender(
+      <Catalogue
+        token="new"
+        user={{ ...user, role: "RESTAURANT", restaurantId: "r1" }}
+      />,
+    );
     await screen.findByText("Session récente");
-    await act(async () => oldMutation.reject(new DelifastApiError("ancien conflit", "unknown", 409, "CONCURRENT_MODIFICATION")));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Fermer le restaurant" })).toBeEnabled());
+    await act(async () =>
+      oldMutation.reject(
+        new DelifastApiError(
+          "ancien conflit",
+          "unknown",
+          409,
+          "CONCURRENT_MODIFICATION",
+        ),
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Fermer le restaurant" }),
+      ).toBeEnabled(),
+    );
     expect(screen.queryByText("Restaurant fermé.")).not.toBeInTheDocument();
-    expect(screen.queryByText(/rechargées|rechargement a échoué/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/rechargées|rechargement a échoué/),
+    ).not.toBeInTheDocument();
     expect(delifastApi.operationsRestaurants).toHaveBeenCalledTimes(2);
   });
 
@@ -219,20 +305,61 @@ describe("Catalogue admin pagination", () => {
       },
     ];
     const refreshed = restaurant("r21", "R21");
-    refreshed.menu = [{ ...restaurant("m1").menu[0], id: "m1", name: "Plat", version: 9 }];
+    refreshed.menu = [
+      { ...restaurant("m1").menu[0], id: "m1", name: "Plat", version: 9 },
+    ];
     summaries
       .mockResolvedValueOnce(page(1, "c20"))
-      .mockResolvedValueOnce({ items: [{ id: "r21", name: "R21", open: true, version: 5 }], nextCursor: null })
-      .mockResolvedValueOnce({ items: [{ id: "r21", name: "R21", open: true, version: 9 }], nextCursor: null });
-    details.mockImplementation(async (_t, id) => (id === "r21" ? (details.mock.calls.length > 2 ? refreshed : r21) : restaurant(id)));
+      .mockResolvedValueOnce({
+        items: [{ id: "r21", name: "R21", open: true, version: 5 }],
+        nextCursor: null,
+      })
+      .mockResolvedValueOnce({
+        items: [{ id: "r21", name: "R21", open: true, version: 9 }],
+        nextCursor: null,
+      });
+    details.mockImplementation(async (_t, id) =>
+      id === "r21"
+        ? details.mock.calls.length > 2
+          ? refreshed
+          : r21
+        : restaurant(id),
+    );
+    menuSummaries.mockImplementation(async (_t, id) => ({
+      items:
+        id === "r21"
+          ? (details.mock.calls.length > 2 ? refreshed : r21).menu.map((m) => ({
+              ...m,
+              description: undefined,
+              optionGroups: undefined,
+            }))
+          : [],
+      nextCursor: null,
+    }));
     vi.spyOn(delifastApi, "setMenuItemArchived")
-      .mockRejectedValueOnce(new DelifastApiError("conflit", "unknown", 409, "CONCURRENT_MODIFICATION"))
-      .mockResolvedValue({ ...r21.menu[0], id: "m1", version: 10, archived: true });
+      .mockRejectedValueOnce(
+        new DelifastApiError(
+          "conflit",
+          "unknown",
+          409,
+          "CONCURRENT_MODIFICATION",
+        ),
+      )
+      .mockResolvedValue({
+        ...r21.menu[0],
+        id: "m1",
+        version: 10,
+        archived: true,
+      });
     render(<Catalogue token={token} user={user} />);
     await screen.findByText("R1");
-    fireEvent.click(screen.getByRole("button", { name: "Restaurants suivants" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Restaurants suivants" }),
+    );
     await waitFor(() =>
-      expect(screen.getByText("R21", { selector: "strong" })).toBeInTheDocument(),
+      expect(
+        screen.getByText("R21", { selector: "strong" }),
+      ).toBeInTheDocument(),
     );
     fireEvent.click(screen.getByRole("button", { name: "Archiver" }));
     await screen.findByRole("alert");
@@ -243,11 +370,20 @@ describe("Catalogue admin pagination", () => {
     expect(details).toHaveBeenCalledWith(token, "r21");
     expect(screen.getByText(/version 9/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Archiver" }));
-    await waitFor(() => expect(delifastApi.setMenuItemArchived).toHaveBeenLastCalledWith(token, "m1", 9, true));
+    await waitFor(() =>
+      expect(delifastApi.setMenuItemArchived).toHaveBeenLastCalledWith(
+        token,
+        "m1",
+        9,
+        true,
+      ),
+    );
   });
 
   it("retire les boutons d'édition si la liste échoue après affichage du détail", async () => {
-    summaries.mockResolvedValueOnce(page(1, null)).mockRejectedValueOnce(new Error("liste indisponible"));
+    summaries
+      .mockResolvedValueOnce(page(1, null))
+      .mockRejectedValueOnce(new Error("liste indisponible"));
     details.mockResolvedValueOnce({
       ...restaurant("r1", "R1"),
       menu: [
@@ -261,11 +397,27 @@ describe("Catalogue admin pagination", () => {
         },
       ],
     });
+    menuSummaries.mockResolvedValueOnce({
+      items: [
+        {
+          id: "m1",
+          name: "Plat éditable",
+          priceXof: 1,
+          available: true,
+          archived: false,
+          version: 1,
+          categoryId: null,
+        },
+      ],
+      nextCursor: null,
+    });
     render(<Catalogue token={token} user={user} />);
     await screen.findByRole("button", { name: "Modifier" });
     fireEvent.click(screen.getByRole("button", { name: "Actualiser" }));
     await screen.findByRole("alert");
-    expect(screen.queryByRole("button", { name: "Modifier" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Modifier" }),
+    ).not.toBeInTheDocument();
   });
 
   it("ignore le détail le plus ancien lors de deux sélections rapides", async () => {
@@ -278,15 +430,25 @@ describe("Catalogue admin pagination", () => {
       ],
       nextCursor: null,
     });
-    details.mockImplementationOnce(() => first.promise).mockImplementationOnce(() => second.promise);
+    details
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
     render(<Catalogue token={token} user={user} />);
     await waitFor(() => expect(details).toHaveBeenCalledWith(token, "r1"));
-    fireEvent.change(screen.getByLabelText("Choisir un restaurant"), { target: { value: "r2" } });
+    fireEvent.change(screen.getByLabelText("Choisir un restaurant"), {
+      target: { value: "r2" },
+    });
     await waitFor(() => expect(details).toHaveBeenLastCalledWith(token, "r2"));
     await act(async () => second.resolve(restaurant("r2", "Second")));
-    await waitFor(() => expect(screen.getByText("Second", { selector: "strong" })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        screen.getByText("Second", { selector: "strong" }),
+      ).toBeInTheDocument(),
+    );
     await act(async () => first.resolve(restaurant("r1", "Premier")));
-    expect(screen.queryByText("Premier", { selector: "strong" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Premier", { selector: "strong" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByLabelText("Choisir un restaurant")).toHaveValue("r2");
   });
 });

@@ -25,6 +25,10 @@ export async function connect(
   await db
     .collection("menu_items")
     .createIndex({ restaurantId: 1, archived: 1 });
+  await db.collection("menu_items").createIndex(
+    { restaurantId: 1, id: 1 },
+    { name: "menu_items_restaurant_id" },
+  );
   await db
     .collection("delivery_zones")
     .createIndex({ id: 1 }, { unique: true });

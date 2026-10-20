@@ -58,6 +58,10 @@ try {
   env.MONGODB_URI = mongo.getUri();
   Object.assign(process.env, env);
   execFileSync('npm', ['run', 'build'], { cwd: join(root, 'delifast-api'), env, stdio: 'inherit' });
+  for (let i = 0; i < 2; i++) {
+    const migration = spawn(process.execPath, [join(root, 'delifast-api/dist/migrations/index.js')], { cwd: join(root, 'delifast-api'), env, stdio: 'inherit' });
+    const [code] = await once(migration, 'exit'); assert.equal(code, 0, 'Migration réexécutable');
+  }
   const tracked = execFileSync('git', ['ls-files', '-z', 'enatega-multivendor-web'], { cwd: root }).toString().split('\0').filter(Boolean);
   for (const file of tracked) { if (/(^|\/)\.env(?:\.|$)/.test(file)) continue; const target = join(web, file.slice('enatega-multivendor-web/'.length)); await mkdir(dirname(target), { recursive: true }); await copyFile(join(root, file), target); }
   await symlink(join(root, 'enatega-multivendor-web/node_modules'), join(web, 'node_modules'));
@@ -79,11 +83,30 @@ try {
   ];
   await db.collection('staff_users').insertMany(accounts.map(({ password, ...u }) => ({ ...u, active: true, passwordHash: passwordHash(password) })));
   await db.collection('restaurants').insertOne({ id: 'rest-koudougou', name: 'Restaurant fixture catalogue', description: 'Fixture uniquement', open: true, version: 0, audit: [] });
-  await db.collection('menu_items').insertOne({ id: 'riz-gras', restaurantId: 'rest-koudougou', name: 'Plat fixture catalogue', description: 'Fixture uniquement', priceXof: 1000, available: true, archived: false, version: 0, audit: [] });
+  await db.collection('menu_categories').insertOne({ id: 'cat-fixture', restaurantId: 'rest-koudougou', name: 'Catégorie fixture', sortOrder: 1, archived: false, version: 0, audit: [] });
+  await db.collection('menu_items').insertOne({ id: 'riz-gras', restaurantId: 'rest-koudougou', name: 'Plat fixture catalogue', description: 'Fixture uniquement', priceXof: 1000, available: true, archived: false, version: 0, categoryId: 'cat-fixture', optionGroups: [], audit: [] });
   await db.collection('delivery_zones').insertOne({ id: 'zone-rest-koudougou-riders', restaurantId: 'rest-koudougou', name: 'Zone fixture catalogue', shape: 'CIRCLE', center: { latitude: 12.3714, longitude: -1.5197 }, radiusMeters: 10000, enabled: true, feeXof: 0, minimumOrderXof: 0, estimatedMinutes: 30, priority: 0, demo: true, hours: [], version: 0, audit: [] });
   const restaurants = Array.from({ length: 65 }, (_, i) => ({ id: `z-web-restaurant-${String(i).padStart(3, '0')}`, name: `Restaurant Web ${String(i).padStart(3, '0')}`, description: 'Fixture uniquement', open: i % 2 === 0, version: 0, audit: [] }));
   await db.collection('restaurants').insertMany(restaurants);
-  await db.collection('menu_items').insertMany(restaurants.flatMap(r => [false, true].map(archived => ({ id: `${r.id}-${archived ? 'archive' : 'plat'}`, restaurantId: r.id, name: `${archived ? 'Archive' : 'Plat'} ${r.id}`, description: 'Fixture uniquement', priceXof: 1000, available: !archived, archived, version: 0, audit: [] }))));
+  const targetId = 'z-web-restaurant-064';
+  await db.collection('menu_categories').insertOne({ id: 'cat-web-064', restaurantId: targetId, name: 'Catégorie 064', sortOrder: 1, archived: false, version: 0, audit: [] });
+  const targetItems = Array.from({ length: 130 }, (_, i) => ({
+    id: `${targetId}-item-${String(i).padStart(3, '0')}`,
+    restaurantId: targetId,
+    name: `Plat ${targetId} ${String(i).padStart(3, '0')}`,
+    description: `Description synthétique longue du plat ${i} — ${'ingrédients locaux, préparation soignée et informations de recette. '.repeat(18)}`.slice(0, 1900),
+    priceXof: 1000 + i,
+    available: i % 5 !== 0,
+    archived: i % 11 === 0,
+    version: 0,
+    categoryId: 'cat-web-064',
+    optionGroups: [{ id: `group-${i}`, name: 'Accompagnement', minSelections: 1, maxSelections: 1, options: [{ id: `option-${i}`, name: 'Riz', priceXof: 0, available: true }] }],
+    audit: [],
+  }));
+  await db.collection('menu_items').insertMany([
+    ...restaurants.filter(r => r.id !== targetId).flatMap(r => [false, true].map(archived => ({ id: `${r.id}-${archived ? 'archive' : 'plat'}`, restaurantId: r.id, name: `${archived ? 'Archive' : 'Plat'} ${r.id}`, description: 'Fixture uniquement', priceXof: 1000, available: !archived, archived, version: 0, audit: [] }))),
+    ...targetItems,
+  ]);
   api = app.listen(0, '127.0.0.1'); await once(api, 'listening');
   const apiUrl = `http://127.0.0.1:${api.address().port}/graphql`;
   await writeFile(fixture, JSON.stringify({ restaurantId: 'z-web-restaurant-064' }), { mode: 0o600 });
@@ -97,6 +120,13 @@ try {
   console.log('4/4 — Contrôles finaux Mongo et absence de fournisseur');
   const persisted = JSON.parse(await readFile(result, 'utf8')); assert.equal(persisted.restaurantId, 'z-web-restaurant-064');
   const saved = await db.collection('restaurants').findOne({ id: persisted.restaurantId }); assert.equal(saved.open, false); assert.equal(saved.version, 1);
+  const edited = await db.collection('menu_items').findOne({ id: `${persisted.restaurantId}-item-001` });
+  assert.equal(edited.version, 1); assert.equal(edited.categoryId, 'cat-web-064'); assert.equal(edited.optionGroups[0].name, 'Accompagnement'); assert.equal(edited.name, 'Plat 064 modifié');
+  const restored = await db.collection('menu_items').findOne({ id: `${persisted.restaurantId}-item-002` });
+  assert.equal(restored.archived, false); assert.equal(restored.version, 2);
+  const lost = await db.collection('menu_items').findOne({ id: `${persisted.restaurantId}-item-003` });
+  assert.equal(lost.archived, true); assert.equal(lost.version, 1);
+  assert.equal(await db.collection('menu_items').countDocuments({ restaurantId: persisted.restaurantId }), 131);
   assert.equal(await db.collection('orders').countDocuments(), 0);
   assert.equal(await db.collection('payment_sessions').countDocuments(), 0);
   console.log('SUCCÈS — catalogue restaurants Web isolé, pagination, détail vérifié et permissions; aucun appel externe ni commande.');

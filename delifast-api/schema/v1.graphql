@@ -15,6 +15,8 @@ type Query {
   operationsRestaurants: [Restaurant!]!
   operationsRestaurantSummaries(limit: Int = 20, after: ID, restaurantId: ID): RestaurantSummaryPage!
   operationsRestaurant(id: ID!): Restaurant
+  operationsMenuItemSummaries(restaurantId: ID!, limit: Int = 20, after: ID, menuItemId: ID): MenuItemSummaryPage!
+  operationsMenuItem(restaurantId: ID!, id: ID!): MenuItem
   availableRiders: [StaffUser!]!
   operationsRiderSummaries(limit: Int = 20, after: ID, riderId: ID): RiderSummaryPage!
   operationsRider(id: ID!): StaffUser
@@ -82,6 +84,8 @@ type RestaurantSummary { id: ID!, name: String!, open: Boolean!, version: Int! }
 type RestaurantSummaryPage { items: [RestaurantSummary!]!, nextCursor: String }
 type RiderSummary { id: ID!, name: String! }
 type RiderSummaryPage { items: [RiderSummary!]!, nextCursor: String }
+type MenuItemSummary { id: ID!, name: String!, priceXof: Int!, available: Boolean!, archived: Boolean!, version: Int!, categoryId: ID }
+type MenuItemSummaryPage { items: [MenuItemSummary!]!, nextCursor: ID }
 type MenuCategory { id: ID!, name: String!, sortOrder: Int!, archived: Boolean!, version: Int! }
 type MenuItem { id: ID!, name: String!, description: String!, priceXof: Int!, available: Boolean!, version: Int!, archived: Boolean!, categoryId: ID, optionGroups: [MenuOptionGroup!]! }
 input MenuCategoryInput { name: String!, sortOrder: Int! }

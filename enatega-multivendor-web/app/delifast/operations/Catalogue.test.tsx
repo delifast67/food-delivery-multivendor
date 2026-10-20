@@ -55,6 +55,16 @@ const makeRestaurant = (overrides: Partial<Restaurant> = {}): Restaurant => ({
 let restaurants: any;
 let summaries: any;
 let details: any;
+let menuSummaries: any;
+const menuSummary = (m: any) => ({
+  id: m.id,
+  name: m.name,
+  priceXof: m.priceXof,
+  available: m.available,
+  archived: m.archived,
+  version: m.version,
+  categoryId: m.categoryId ?? null,
+});
 const summary = (r: Restaurant): RestaurantSummary => ({
   id: r.id,
   name: r.name,
@@ -71,6 +81,21 @@ beforeEach(() => {
   summaries = vi
     .spyOn(delifastApi, "operationsRestaurantSummaries")
     .mockResolvedValue({ items: [summary(adminRestaurant)], nextCursor: null });
+  menuSummaries = vi
+    .spyOn(delifastApi, "operationsMenuItemSummaries")
+    .mockImplementation(async (_token, id) => ({
+      items: (id === "r1" ? [item, archivedItem] : []).map(menuSummary),
+      nextCursor: null,
+    }));
+  vi.spyOn(delifastApi, "operationsMenuItem").mockImplementation(
+    async (_token, restaurantId, id) => {
+      const r =
+        restaurantId === "r1"
+          ? makeRestaurant()
+          : makeRestaurant({ id: restaurantId });
+      return r.menu.find((m) => m.id === id) ?? null;
+    },
+  );
   details = vi
     .spyOn(delifastApi, "operationsRestaurant")
     .mockImplementation(async (_token, id) =>
@@ -117,6 +142,10 @@ function configureAdmin(values: Restaurant[]) {
     async (_token: string, id: string) =>
       values.find((r) => r.id === id) ?? null,
   );
+  menuSummaries.mockImplementation(async (_token: string, id: string) => ({
+    items: (values.find((r) => r.id === id)?.menu ?? []).map(menuSummary),
+    nextCursor: null,
+  }));
 }
 function fill(name = "Poulet", description = "Poulet braisé", price = "2500") {
   fireEvent.change(screen.getByLabelText("Nom"), { target: { value: name } });
@@ -234,11 +263,19 @@ describe("Catalogue", () => {
     details.mockImplementation(async (_token, id) =>
       id === "r1" ? makeRestaurant() : second,
     );
+    menuSummaries.mockImplementation(async (_token, id) => ({
+      items: (id === "r1" ? makeRestaurant().menu : second.menu).map(
+        menuSummary,
+      ),
+      nextCursor: null,
+    }));
     await renderCatalogue(adminUser);
     fireEvent.click(screen.getByRole("button", { name: "Modifier" }));
-    expect(
-      screen.getByRole("button", { name: "Enregistrer (version 4)" }),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Enregistrer (version 4)" }),
+      ).toBeInTheDocument(),
+    );
     fireEvent.change(screen.getByLabelText("Choisir un restaurant"), {
       target: { value: "r2" },
     });
@@ -342,12 +379,22 @@ describe("Catalogue", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Fermer le restaurant" }),
     );
-    await screen.findByRole("alert");
-    expect(screen.getByRole("alert")).toHaveTextContent("Backend indisponible");
+    await screen.findByText("Backend indisponible", {
+      selector: "div[role=alert]",
+    });
+    expect(
+      screen.getByText("Backend indisponible", { selector: "div[role=alert]" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Restaurant fermé.")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Fermer le restaurant" }),
-    ).toBeEnabled();
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Actualiser" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Fermer le restaurant" }),
+      ).toBeEnabled(),
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Fermer le restaurant" }),
     );

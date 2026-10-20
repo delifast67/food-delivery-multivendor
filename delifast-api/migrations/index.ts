@@ -5,6 +5,10 @@ await db
   .createIndex({ idempotencyKey: 1 }, { unique: true });
 await db.collection("restaurants").createIndex({ id: 1 }, { unique: true });
 await db.collection("menu_items").createIndex({ id: 1 }, { unique: true });
+await db.collection("menu_items").createIndex(
+  { restaurantId: 1, id: 1 },
+  { name: "menu_items_restaurant_id" },
+);
 await db.collection("menu_categories").createIndex({ id: 1 }, { unique: true });
 await db.collection("delivery_zones").createIndex({ id: 1 }, { unique: true });
 await db
