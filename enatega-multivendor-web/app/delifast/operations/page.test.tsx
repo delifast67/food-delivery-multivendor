@@ -196,6 +196,31 @@ describe("connexion et session staff", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByText("Acceptée")).toBeInTheDocument();
   });
+
+  it("ignore la réponse d’une action lancée avant logout/relogin", async () => {
+    me.mockResolvedValue(admin);
+    order = makeOrder("ACCEPTED");
+    operationsOrders.mockResolvedValue([order]);
+    let resolveOldAction: (value: Order) => void = () => undefined;
+    vi.mocked(delifastApi.transitionOrder).mockImplementationOnce(
+      () => new Promise((resolve) => (resolveOldAction = resolve)),
+    );
+    await openOrder();
+    fireEvent.click(
+      screen.getByRole("button", { name: /Passer à « En préparation »/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Se déconnecter" }));
+    await screen.findByRole("heading", { name: "Connexion équipe" });
+    cleanup();
+    await login();
+    resolveOldAction(makeOrder("PREPARING"));
+    await waitFor(() => expect(screen.getByText("Acceptée")).toBeInTheDocument());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /#o1/ }));
+    expect(
+      screen.getByRole("button", { name: /Passer à « En préparation »/ }),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("permissions et mutations opérations", () => {
@@ -279,6 +304,21 @@ describe("permissions et mutations opérations", () => {
     expect(
       screen.queryByLabelText("Assigner un livreur"),
     ).not.toBeInTheDocument();
+  });
+
+  it("désactive une affectation existante et explique qu’elle est définitive", async () => {
+    me.mockResolvedValue(admin);
+    order = makeOrder("READY", rider.id);
+    operationsOrders.mockResolvedValue([order]);
+    await openOrder();
+    const select = screen.getByLabelText("Assigner un livreur");
+    expect(select).toBeDisabled();
+    expect(select).toHaveAttribute("aria-describedby", "assign-rider-help-o1");
+    expect(
+      screen.getByText(/Affectation définitive pour la démo.*réaffectation/),
+    ).toBeInTheDocument();
+    fireEvent.change(select, { target: { value: "other-rider" } });
+    expect(delifastApi.assignRider).not.toHaveBeenCalled();
   });
 
   it("ne modifie pas optimistement sur erreur et recharge sur conflit en gardant le message", async () => {

@@ -157,23 +157,29 @@ export default function OperationsPage() {
   };
   const refresh = () => token && void load(token);
   const act = async (kind: string, fn: () => Promise<Order>) => {
+    const session = sessionVersion.current;
+    const activeToken = activeTokenRef.current;
+    const isCurrent = () =>
+      session === sessionVersion.current && activeToken === activeTokenRef.current;
     setBusy(kind);
     setError("");
     setNotice("");
     try {
       const updated = await fn();
+      if (!isCurrent()) return;
       setOrders((current) =>
         current.map((o) => (o.id === updated.id ? updated : o)),
       );
     } catch (e) {
+      if (!isCurrent()) return;
       setError(
         isConflict(e)
           ? "La commande a changé. Actualisation en cours : vérifiez le nouveau statut avant de réessayer."
           : message(e),
       );
-      if (isConflict(e)) void load(token, false);
+      if (isConflict(e)) void load(activeToken, false);
     } finally {
-      setBusy("");
+      if (isCurrent()) setBusy("");
     }
   };
   const role = user?.role.toLowerCase() || "";
@@ -485,12 +491,16 @@ function OrderDetails({
       )}
       {role === "admin" &&
         ["ACCEPTED", "PREPARING", "READY"].includes(order.status) && (
-          <label className="df-assign">
-            Assigner un livreur
+          <div className="df-assign">
+            <label htmlFor={`assign-rider-${order.id}`}>Assigner un livreur</label>
             <select
+              id={`assign-rider-${order.id}`}
               value={order.riderId || ""}
               onChange={(e) => e.target.value && onAssign(e.target.value)}
-              disabled={busy !== ""}
+              disabled={busy !== "" || !!order.riderId}
+              aria-describedby={
+                order.riderId ? `assign-rider-help-${order.id}` : undefined
+              }
             >
               <option value="">Choisir…</option>
               {riders.map((r) => (
@@ -499,7 +509,13 @@ function OrderDetails({
                 </option>
               ))}
             </select>
-          </label>
+            {order.riderId && (
+              <p id={`assign-rider-help-${order.id}`} className="df-muted">
+                Affectation définitive pour la démo : l’API n’autorise pas la
+                réaffectation.
+              </p>
+            )}
+          </div>
         )}
       {rider && !canMove && !next[order.status] && (
         <p className="df-muted">Aucune transition disponible pour ce statut.</p>

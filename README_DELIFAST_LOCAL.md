@@ -350,3 +350,22 @@ Validations exécutées dans ce lot : **244 tests API, 136 tests web, 73 tests c
 Les trois nouveaux tests de page admin exécutent les vrais gestionnaires du composant avec un hôte de hooks minimal, sans nouveau paquet : connexion puis chargement, chargement échoué et erreur d’écriture avec relecture échouée. Ce ne sont pas des tests DOM ni une recette navigateur complète. Les tests catalogue utilisent le rendu React en DOM de test et consomment explicitement les réponses retardées avant leurs assertions. Les exports mobiles ne sont ni des APK/IPA signés ni des essais sur téléphone.
 
 Aucun achat, SMS réel, changement Orange, paiement réel, publication GitHub, fusion ou déploiement n’a été effectué. Le report de l’achat du pack SMS reste inchangé. Le projet global n’est pas terminé : validation des paiements et de l’authentification réels, notifications, GPS temps réel, fonctions financières, recette sur appareils et préparation de la production restent notamment à achever.
+
+## Recette visuelle locale — 20 octobre 2026
+
+Recette effectuée dans un navigateur desktop sur `127.0.0.1:3017`, avec une API sur `127.0.0.1:4017` et une base MongoDB entièrement jetable (`delifast_visual_20261020`, port 27027). Le simulateur de paiement local était activé ; Orange/SMS était explicitement désactivé. Aucun identifiant marchand ni compte client réel n’a été utilisé.
+
+Parcours réellement parcourus à l’écran :
+
+- **Client** : catalogue des deux restaurants, plat configurable (portion grande + sauce), refus du panier multi-restaurant, validation d’une adresse incomplète, saisie fictive, création en attente de paiement et total serveur de 1 950 XOF. Une seconde commande de riz gras affiche 3 200 XOF. Suivi livré retrouvé après rechargement complet de la page. La demande de connexion avec SMS désactivé affiche « La connexion réelle est momentanément indisponible », sans prétendre envoyer de code.
+- **Restaurant La Table du Faso** : connexion, lecture des options/prix figés, acceptation, préparation puis commande prête ; consultation du catalogue. Le second restaurant ne voit aucune des deux commandes visuelles du premier.
+- **Admin** : connexion, confirmation de paiement exclusivement simulée, consultation de l’historique, transitions et affectation du livreur. Le contrat existant permet aussi à l’admin les transitions de livraison ; la première commande a suivi ce chemin. La seconde a été affectée puis livrée par le rôle livreur.
+- **Livreur** : seule la seconde commande affectée apparaît ; passage de prête à récupérée puis livrée, retrouvé ensuite côté client avec les événements attribués à `RIDER`.
+
+Références jetables de cette recette : `4b5ef0b0-08e2-4ce0-869f-cfb1e4ab6d88` (options, chemin admin) et `6702d94e-750a-433f-9a38-23e24e79e7b0` (affectation et livraison par le livreur). Ces références ne sont pas des commandes commerciales et ne sont pas recréées par le seed.
+
+Correctifs de ce lot : chargement ESM du plugin Tailwind (le `require` faisait planter `next dev` sous Node 24), invalidation des réponses/actions opérations après changement de session, sélecteur d’affectation désactivé après affectation avec explication accessible de l’absence de réaffectation. Le test natif `node --test scripts/delifast-web-config.test.mjs` est ajouté à la CI ; il échoue avec l’ancien `require` et passe avec l’import ESM.
+
+Vérifications réussies : **283 tests API, 139 tests web, 76 tests client mobile**, test natif de configuration, **30 documents GraphQL**, builds API/web et **34 contrôles HTTP** (14 client, 9 opérations, 5 catalogue, 6 catégories/options) sur la base jetable. Les tests de composants utilisent des réponses injectées ; ils ne valident pas Orange. Une installation locale Next incomplète a été restaurée par `npm ci`, sans changement de lockfile.
+
+**Limites inchangées : produit complet non terminé.** Cette recette couvre les rôles dans le web local, pas l’exécution visuelle des applications natives restaurant/livreur/admin ni une validation sur téléphone Android/iOS. Aucun nouvel export mobile, APK/IPA, envoi SMS, achat de crédits, paiement/remboursement réel, push GitHub, fusion ou déploiement n’a été réalisé. Le carnet client authentifié n’est pas recetté à l’écran sans transport OTP autorisé ; ses tests automatisés ne remplacent pas une recette réelle. Les prérequis de pilote et travaux restants listés ci-dessus demeurent applicables.
