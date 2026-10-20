@@ -123,6 +123,8 @@ export type Order = {
   history?: OrderEvent[];
 };
 export type OrderEvent = { status: string; at: string; actorRole: string };
+export type PaymentChannel = "ORANGE_MONEY_BF" | "MOOV_MONEY_BF";
+export type PaymentSession = { orderId: string; phase: string; channel: PaymentChannel; mode: string; checkoutUrl?: string | null; providerStatus?: string | null; paymentStatus: string };
 export type StaffUser = {
   id: string;
   name: string;
@@ -171,6 +173,9 @@ const RESTAURANT = `query Restaurant($id: ID!) { restaurant(id: $id) { ${RESTAUR
 const CHECKOUT = `query CalculateCheckout($input: CartInput!) { calculateCheckout(input: $input) { currency subtotal deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } }`;
 const PLACE_ORDER = `mutation PlaceOrder($input: PlaceOrderInput!) { placeOrder(input: $input) { id accessToken status paymentStatus createdAt restaurantId checkout { currency subtotal deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } } }`;
 const ORDER = `query Order($id: ID!, $accessToken: String!) { order(id: $id, accessToken: $accessToken) { id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions point { latitude longitude } } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } } }`;
+const PAYMENT_SESSION = `query PaymentSession($orderId: ID!, $accessToken: String!) { paymentSession(orderId: $orderId, accessToken: $accessToken) { orderId phase channel mode checkoutUrl providerStatus paymentStatus } }`;
+const START_PAYMENT = `mutation StartPayment($input: StartPaymentInput!) { startPayment(input: $input) { orderId phase channel mode checkoutUrl providerStatus paymentStatus } }`;
+const REFRESH_PAYMENT = `mutation RefreshPayment($orderId: ID!, $accessToken: String!) { refreshPayment(orderId: $orderId, accessToken: $accessToken) { orderId phase channel mode checkoutUrl providerStatus paymentStatus } }`;
 const ORDER_OPERATIONS_FIELDS = `id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions point { latitude longitude } } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } }`;
 const STAFF_LOGIN = `mutation StaffLogin($email: String!, $password: String!) { staffLogin(email: $email, password: $password) { token user { id name role restaurantId } } }`;
 const OPERATIONS_ORDERS = `query OperationsOrders { operationsOrders { ${ORDER_OPERATIONS_FIELDS} } }`;
@@ -361,6 +366,9 @@ export const delifastApi = {
     request<{ order: Order | null }>(ORDER, { id, accessToken }).then(
       (data) => data.order,
     ),
+  paymentSession: (orderId: string, accessToken: string) => request<{ paymentSession: PaymentSession | null }>(PAYMENT_SESSION, { orderId, accessToken }).then((data) => data.paymentSession),
+  startPayment: (input: { orderId: string; accessToken: string; idempotencyKey: string; channel: PaymentChannel }) => request<{ startPayment: PaymentSession | null }>(START_PAYMENT, { input }).then((data) => data.startPayment),
+  refreshPayment: (orderId: string, accessToken: string) => request<{ refreshPayment: PaymentSession | null }>(REFRESH_PAYMENT, { orderId, accessToken }).then((data) => data.refreshPayment),
   staffLogin: (email: string, password: string) =>
     request<{ staffLogin: StaffSession }>(STAFF_LOGIN, {
       email,

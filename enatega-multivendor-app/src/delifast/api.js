@@ -18,6 +18,7 @@ const categoryFields = 'id name sortOrder archived version'
 const restaurantFields = `id name description open version categories { ${categoryFields} } menu { id name description priceXof available archived version categoryId optionGroups { ${groupFields} } }`
 const checkout = 'currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } }'
 const deliveryFields = 'delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo }'
+const paymentSessionFields = 'orderId phase channel mode checkoutUrl providerStatus paymentStatus'
 const orderFields = `id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions point { latitude longitude } } history { status at actorRole } checkout { ${checkout} ${deliveryFields} }`
 const customerFields = 'id phone'
 const sessionFields = `token customer { ${customerFields} }`
@@ -39,6 +40,9 @@ const documents = {
   restaurant: `query MobileRestaurant($id: ID!) { restaurant(id: $id) { ${restaurantFields} } }`,
   calculateCheckout: `query MobileCalculateCheckout($input: CartInput!) { calculateCheckout(input: $input) { ${checkout} ${deliveryFields} } }`,
   placeOrder: `mutation MobilePlaceOrder($input: PlaceOrderInput!) { placeOrder(input: $input) { ${orderFields} } }`,
+  paymentSession: `query MobilePaymentSession($orderId: ID!, $accessToken: String!) { paymentSession(orderId: $orderId, accessToken: $accessToken) { ${paymentSessionFields} } }`,
+  startPayment: `mutation MobileStartPayment($input: StartPaymentInput!) { startPayment(input: $input) { ${paymentSessionFields} } }`,
+  refreshPayment: `mutation MobileRefreshPayment($orderId: ID!, $accessToken: String!) { refreshPayment(orderId: $orderId, accessToken: $accessToken) { ${paymentSessionFields} } }`,
   order: `query MobileOrder($id: ID!, $accessToken: String!) { order(id: $id, accessToken: $accessToken) { ${orderFields} } }`,
   customerMe: `query CustomerMe { customerMe { ${customerFields} } }`,
   customerAddresses: `query CustomerAddresses { customerAddresses { ${addressFields} } }`,
@@ -125,6 +129,9 @@ function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetc
     restaurant: (id) => field('restaurant', { id }),
     calculateCheckout: (input) => field('calculateCheckout', { input }),
     placeOrder: (input) => field('placeOrder', { input }),
+    paymentSession: (orderId, accessToken) => field('paymentSession', { orderId, accessToken }),
+    startPayment: (input) => field('startPayment', { input }),
+    refreshPayment: (orderId, accessToken) => field('refreshPayment', { orderId, accessToken }),
     order: (id, accessToken) => field('order', { id, accessToken }),
     setCustomerToken(token) { customerToken = token || null },
     customerMe: () => field('customerMe', {}, true),

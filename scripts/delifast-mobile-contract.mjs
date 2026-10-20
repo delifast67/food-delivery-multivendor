@@ -10,7 +10,8 @@ const schema = buildSchema(readFileSync(new URL('../delifast-api/schema/v1.graph
 const required = ['calculateCheckout', 'order', 'placeOrder', 'restaurant', 'restaurants',
   'requestCustomerOtp', 'resendCustomerOtp', 'verifyCustomerOtp', 'customerLogout',
   'customerMe', 'customerAddresses', 'createCustomerAddress', 'updateCustomerAddress', 'deleteCustomerAddress',
-  'customerSupportTickets', 'customerSupportTicket', 'createSupportTicket'];
+  'customerSupportTickets', 'customerSupportTicket', 'createSupportTicket',
+  'paymentSession', 'startPayment', 'refreshPayment'];
 assert.deepEqual(Object.keys(documents).sort(), required.sort());
 for (const [name, document] of Object.entries(documents)) {
   const ast = parse(document);
@@ -22,4 +23,4 @@ for (const [name, document] of Object.entries(documents)) {
   assert.doesNotMatch(document, /simulateDemoPayment|staffLogin|transitionOrder|assignRider|paymentMethod/i);
   console.log(`OK — mobile ${name} compatible avec le contrat Delifast`);
 }
-console.log(`SUCCÈS — ${required.length} documents GraphQL mobiles validés ; aucune mutation de paiement/personnel.`);
+console.log(`SUCCÈS — ${required.length} documents GraphQL mobiles validés ; paiement neutre, sans simulation ni mutation personnel.`);

@@ -22,6 +22,7 @@ import {
 } from "@/lib/delifast/api";
 import "./delifast.css";
 import CustomerAccount from "./CustomerAccount";
+import PaymentPanel from "./PaymentPanel";
 
 const emptyAddress: DeliveryAddress = {
   recipientName: "",
@@ -474,6 +475,7 @@ export default function DelifastPage() {
             {statusLabel[order.status] || order.status} · paiement{" "}
             {order.paymentStatus}
           </p>
+          <PaymentPanel key={order.id} order={order} />
           {notice && (
             <div className="df-notice" role="status">
               {notice}

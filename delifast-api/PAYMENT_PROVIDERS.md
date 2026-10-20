@@ -10,7 +10,9 @@
 
 Les statuts normalisés sont `pending`, `authorized`, `completed`, `failed`, `canceled`, `expired`. Seul un `completed` **revérifié côté serveur en mode live** peut confirmer atomiquement la commande en `PAID`. Un succès de création, une autorisation, un retour navigateur ou une IPN ne suffisent pas. Une confirmation test ne devient jamais un encaissement réel.
 
-Le contrat client reste celui existant : `startPayment`, `paymentSession`, `refreshPayment`, canaux `ORANGE_MONEY_BF` / `MOOV_MONEY_BF` et réponse `PaymentSession`. Aucune clé marchand ne va dans Next.js ou Expo. Les interfaces web/mobile ne sont pas encore raccordées au checkout.
+Le contrat client reste celui existant : `startPayment`, `paymentSession`, `refreshPayment`, canaux `ORANGE_MONEY_BF` / `MOOV_MONEY_BF` et réponse `PaymentSession`. Aucune clé marchand ne va dans Next.js ou Expo. Les interfaces Delifast web et Expo sont raccordées à ce contrat neutre : lecture de la tentative, création explicite et vérification serveur, puis ouverture manuelle du checkout HTTPS. Elles n’appellent pas directement le fournisseur.
+
+Le montant affiché provient du snapshot de commande serveur ; aucun montant n’est envoyé à `startPayment`. Une clé persistée avant l’envoi et la relecture de `paymentSession` permettent la reprise sans seconde création. Une tentative incertaine reste bloquée et nécessite un rapprochement ; les échecs terminaux ne réinitialisent pas silencieusement la tentative. Les retours de navigateur/app ne valent jamais confirmation. Sans configuration active, l’interface affiche **paiement indisponible**, pas une simulation réussie. Le résultat sandbox est identifié comme non réel.
 
 ## Changer de prestataire sans changer les applications
 
@@ -67,6 +69,8 @@ Une capacité absente est refusée avant tout appel. Une réponse inattendue apr
 ## Vérification et erreurs
 
 Dans `delifast-api` : `npm run typecheck`, `npm run build`, `npm test`. Les tests utilisent des transports mémoire et MongoDB éphémère : sélection, bascule, anciennes tentatives, propriété, concurrence, montants, confirmation serveur, faux messages IPN, absence de double effet et refus fermé. Les fixtures live ne représentent aucune transaction réelle.
+
+La recette `node scripts/delifast-payment-smoke.mjs` (après compilation de l’API) exerce le contrat GraphQL par HTTP et MongoDB éphémère, uniquement avec un adaptateur local : montant serveur, concurrence, reprise, erreurs, attente, sandbox non payant et indisponibilité. Elle ferme ses serveurs et connexions avant de terminer ; aucun accès marchand ni appel PayDunya n’est nécessaire. Elle est incluse dans la CI locale.
 
 Les erreurs publiques restent neutres : `PAYMENT_DISABLED` (création indisponible), `PAYMENT_NOT_ALLOWED`, `IDEMPOTENCY_CONFLICT`, `PAYMENT_IN_PROGRESS`, `PAYMENT_REVIEW_REQUIRED`, `PAYMENT_UNAVAILABLE`, `INVALID_IPN`. Les erreurs du transport n’exposent ni clés ni réponse fournisseur brute. La route PayDunya conserve 400 pour IPN invalide, 503 pour confirmation indisponible, 415 pour mauvais format.
 

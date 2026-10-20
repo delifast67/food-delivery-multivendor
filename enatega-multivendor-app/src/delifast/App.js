@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import * as SecureStore from 'expo-secure-store'
 import * as Crypto from 'expo-crypto'
-import { ActivityIndicator, Button, FlatList, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { ActivityIndicator, AppState, Button, FlatList, KeyboardAvoidingView, Linking, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import { createClient } from './api'
 import { createController } from './controller'
 import { createSecureStorage } from './secure-storage'
@@ -89,6 +89,16 @@ function App({ api, storage }) {
     const timer = setInterval(() => setOtpNow(Date.now()), 250)
     return () => clearInterval(timer)
   }, [challenge])
+
+  useEffect(() => {
+    if (screen !== 'tracking' || !state?.order || !controller.loadPaymentSession) return undefined
+    controller.loadPaymentSession().catch(() => {})
+    if (!AppState || typeof AppState.addEventListener !== 'function') return undefined
+    const subscription = AppState.addEventListener('change', next => {
+      if (next === 'active') controller.refreshPayment().catch(() => {})
+    })
+    return () => subscription && subscription.remove()
+  }, [controller, screen, state?.order?.id])
 
   useEffect(() => {
     Promise.allSettled([controller.loadRestaurants(), controller.restoreAttempt(), controller.restoreCustomer()])
@@ -555,6 +565,24 @@ function App({ api, storage }) {
   }
 
   const order = state.order || lastOrder
+  const payment = state.payment
+  const paymentPaid = order?.paymentStatus === 'PAID' || payment?.status === 'paid'
+  const paymentLabels = { pending: 'En attente de confirmation serveur', authorized: 'Autorisé, non réglé', failure: 'Paiement échoué, annulé ou expiré', not_started: 'Aucune tentative', error: 'Vérification indisponible', review: 'Rapprochement requis', unavailable: 'Indisponible', sandbox: 'Test non réel', paid: 'Confirmé par le serveur' }
+  const openCheckout = async() => {
+    const url = payment?.session?.checkoutUrl
+    let parsed
+    try { parsed = new URL(url) } catch { parsed = null }
+    if (!parsed || parsed.protocol !== 'https:' || parsed.username || parsed.password) { setLocalError('Lien de paiement HTTPS indisponible.'); return }
+    try { if (await Linking.canOpenURL(url)) await Linking.openURL(url); else setLocalError('Impossible d’ouvrir le checkout sécurisé.') } catch (error) { setLocalError(errorText(error)) }
+  }
+  const beginPayment = async(channel) => {
+    setLocalError('')
+    try { await controller.startPayment(channel) } catch (error) { setLocalError(errorText(error)) }
+  }
+  const confirmPayment = async() => {
+    setLocalError('')
+    try { await controller.refreshPayment() } catch (error) { setLocalError(errorText(error)) }
+  }
   return (
     <SafeAreaView style={styles.safe}>
       <Header
@@ -576,6 +604,18 @@ function App({ api, storage }) {
               {order.status || 'En attente'} — {order.paymentStatus || 'PENDING'}
             </Text>
             {order.checkout && <Text style={styles.total}>Total serveur : {money(order.checkout.total)}</Text>}
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Paiement Delifast</Text>
+              <Text>État serveur : {paymentPaid ? 'Confirmé par le serveur' : paymentLabels[payment?.status] || 'Vérification en cours'}</Text>
+              {payment?.status === 'unavailable' && <Text style={styles.warning}>Paiement indisponible pour le moment.</Text>}
+              {payment?.status === 'review' && <Text style={styles.warning}>Tentative incertaine : ne repayez pas. Vérifiez l’état serveur.</Text>}
+              {payment?.status === 'failure' && <Text style={styles.warning}>Ne créez pas une autre tentative : contactez le marchand pour le rapprochement.</Text>}
+              {payment?.status === 'sandbox' && <Text style={styles.warning}>Résultat sandbox reçu : il ne confirme pas un paiement réel.</Text>}
+              {payment?.session?.checkoutUrl && !paymentPaid && payment.status === 'pending' && <Button title='Ouvrir le checkout sécurisé' onPress={openCheckout} disabled={state.paymentBusy} />}
+              {!paymentPaid && payment?.status === 'not_started' && !payment?.session && <>{(!payment.channel || payment.channel === 'ORANGE_MONEY_BF') && <Button title='Payer avec Orange Money' onPress={() => beginPayment('ORANGE_MONEY_BF')} disabled={state.paymentBusy || state.busy} />}{(!payment.channel || payment.channel === 'MOOV_MONEY_BF') && <Button title='Payer avec Moov Money' onPress={() => beginPayment('MOOV_MONEY_BF')} disabled={state.paymentBusy || state.busy} />}</>}
+              {!paymentPaid && <Button title='Vérifier le statut serveur' onPress={confirmPayment} disabled={state.paymentBusy} />}
+              {paymentPaid && <Text style={styles.total}>Paiement confirmé par le serveur.</Text>}
+            </View>
             <Text style={styles.sectionTitle}>Historique</Text>
             {(order.history || []).map((entry, index) => (
               <Text style={styles.history} key={`${entry.at}-${index}`}>

@@ -4,6 +4,7 @@ const ATTEMPT_KEY = 'delifast-order-attempt'
 const LAST_ORDER_KEY = 'delifast-last-order'
 const CUSTOMER_TOKEN_KEY = 'delifast-customer-token'
 const SUPPORT_ATTEMPT_KEY = 'delifast-support-attempt'
+const PAYMENT_ATTEMPT_KEY = 'delifast-payment-attempt'
 const clone = (value) => (value == null ? value : JSON.parse(JSON.stringify(value)))
 const errorView = (error) => ({ message: error?.message || String(error), kind: error?.kind || 'unknown', code: error?.code })
 const validQuote = (quote) => quote && quote.currency === 'XOF' && Number.isSafeInteger(quote.total) && quote.total >= 0 && Array.isArray(quote.items)
@@ -34,9 +35,13 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
     supportLoading: false,
     supportBusy: false,
     supportError: null,
-    supportPending: null
+    supportPending: null,
+    payment: null,
+    paymentBusy: false
   }
   let inFlight = null
+  let paymentInFlight = null
+  let paymentEpoch = 0
   let restorePromise = null
   let pollTimer = null
   let trackingRequest = 0
@@ -55,6 +60,7 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
   }
   const authExclusive = (work) => {
     if (authInFlight) return Promise.reject(new Error('Une opération du compte est déjà en cours.'))
+    invalidatePayment()
     set({ authBusy: true, error: null })
     authInFlight = Promise.resolve().then(work).finally(() => { authInFlight = null; set({ authBusy: false }) })
     return authInFlight
@@ -62,6 +68,7 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
   async function clearCustomerSession() {
     ++supportRequest
     ++authEpoch
+    invalidatePayment()
     customerSessionToken = null
     if (api.setCustomerToken) api.setCustomerToken(null)
     set({ customer: null, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null })
@@ -159,6 +166,7 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       if (!validReference(result) || !validQuote(result.checkout)) throw new Error('Réponse de commande incomplète ; reprendre la même tentative')
       const reference = { id: result.id, accessToken: result.accessToken }
       // Le succès serveur reste visible même si une écriture locale échoue.
+      invalidatePayment()
       set({ order: clone(result), lastOrder: reference, cart: { restaurantId: null, items: [] }, quote: null, quoteVersion: state.quoteVersion + 1 })
       try {
         await storage.setItem(LAST_ORDER_KEY, JSON.stringify(reference))
@@ -305,9 +313,92 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
     supportInFlight = work
     return work
   }
+  const paymentView = (session, extra = {}) => {
+    if (!session) return { status: 'not_started', session: null, ...extra }
+    let status = 'pending'
+    if (session.paymentStatus === 'PAID' && session.mode === 'live') status = 'paid'
+    else if (session.paymentStatus === 'FAILED' || ['failed', 'canceled', 'expired'].includes(session.providerStatus)) status = 'failure'
+    else if (session.phase === 'UNKNOWN' || session.phase === 'CREATING') status = 'review'
+    else if (session.providerStatus === 'completed') status = 'sandbox'
+    return { status, session: clone(session), ...extra }
+  }
+  const validCheckoutUrl = (value) => {
+    if (typeof value !== 'string' || !value) return false
+    try {
+      const url = new URL(value)
+      return url.protocol === 'https:' && !url.username && !url.password
+    } catch { return false }
+  }
+  const validPaymentSession = (value, orderId) => value == null || (
+    String(value.orderId) === String(orderId) &&
+    ['CREATING', 'READY', 'UNKNOWN'].includes(value.phase) && ['ORANGE_MONEY_BF', 'MOOV_MONEY_BF'].includes(value.channel) &&
+    ['test', 'live'].includes(value.mode) && typeof value.paymentStatus === 'string' &&
+    (value.checkoutUrl == null || validCheckoutUrl(value.checkoutUrl))
+  )
+  function invalidatePayment() {
+    ++paymentEpoch
+    paymentInFlight = null
+    set({ payment: null, paymentBusy: false })
+  }
+  function paymentOperation(kind, channel) {
+    if (paymentInFlight) return paymentInFlight
+    const order = state.order || state.lastOrder
+    if (!validReference(order) || !api.paymentSession) return Promise.reject(new Error('Référence de paiement indisponible'))
+    if (kind === 'start' && (!api.startPayment || !['ORANGE_MONEY_BF', 'MOOV_MONEY_BF'].includes(channel))) return Promise.reject(new Error('Canal de paiement invalide'))
+    const epoch = ++paymentEpoch
+    const current = () => epoch === paymentEpoch
+    set({ paymentBusy: true, error: null })
+    const work = Promise.resolve().then(async() => {
+      let value = await api.paymentSession(order.id, order.accessToken)
+      if (!current()) return null
+      if (!validPaymentSession(value, order.id)) throw new Error('Réponse de paiement incomplète')
+      if (kind === 'start' && !value) {
+        const stored = await readJSON(PAYMENT_ATTEMPT_KEY)
+        if (!current()) return null
+        if (stored && (!/^[a-zA-Z0-9_-]{8,128}$/.test(stored.idempotencyKey) || !['ORANGE_MONEY_BF', 'MOOV_MONEY_BF'].includes(stored.channel) || typeof stored.orderId !== 'string')) throw new Error('Tentative de paiement locale invalide')
+        const saved = stored && stored.orderId === order.id ? stored : null
+        if (saved && saved.channel !== channel) throw Object.assign(new Error('Le canal de paiement est déjà fixé pour cette tentative'), { code: 'PAYMENT_CHANNEL_LOCKED' })
+        const attempt = saved || { orderId: order.id, idempotencyKey: makeIdempotencyKey(random), channel }
+        storageReady()
+        await storage.setItem(PAYMENT_ATTEMPT_KEY, JSON.stringify(attempt))
+        if (!current()) return null
+        value = await api.startPayment({ orderId: order.id, accessToken: order.accessToken, idempotencyKey: attempt.idempotencyKey, channel: attempt.channel })
+        if (!current()) return null
+        if (!value || !validPaymentSession(value, order.id)) throw new Error('Réponse de paiement incomplète')
+      } else if (kind === 'refresh' && value && value.phase === 'READY') {
+        if (!api.refreshPayment) throw new Error('Confirmation serveur indisponible')
+        value = await api.refreshPayment(order.id, order.accessToken)
+        if (!current()) return null
+        if (!value || !validPaymentSession(value, order.id)) throw new Error('Réponse de paiement incomplète')
+      }
+      let localChannel = null
+      if (!value) {
+        const saved = await readJSON(PAYMENT_ATTEMPT_KEY)
+        if (!current()) return null
+        if (saved?.orderId === order.id) localChannel = saved.channel
+      }
+      set({ payment: paymentView(value, localChannel ? { channel: localChannel } : {}) })
+      return clone(value)
+    }).catch(error => {
+      if (current()) {
+        const previous = state.payment
+        const payment = previous?.status === 'paid' ? previous : error?.code === 'PAYMENT_DISABLED' ? { status: 'unavailable', session: null } : { status: error?.code === 'PAYMENT_REVIEW_REQUIRED' ? 'review' : 'error', session: previous?.session || null }
+        set({ payment, error: errorView(error) })
+      }
+      throw error
+    }).finally(() => {
+      if (paymentInFlight === work) paymentInFlight = null
+      if (current()) set({ paymentBusy: false })
+    })
+    paymentInFlight = work
+    return work
+  }
   const actions = {
     getState: () => clone(state),
     restoreAttempt,
+    startPayment: channel => paymentOperation('start', channel),
+    refreshPayment: () => paymentOperation('refresh'),
+    loadPaymentSession: () => paymentOperation('load'),
     async loadRestaurants(point = state.deliveryPoint) {
       const request = ++discoveryRequest
       const checked = validatePoint(point)
@@ -362,8 +453,10 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       mutate({ restaurantId: null, items: [] })
     },
     resetForNewOrder() {
+      ++trackingRequest
+      invalidatePayment()
       mutate({ restaurantId: null, items: [] })
-      set({ order: null })
+      set({ order: null, payment: null, paymentBusy: false })
     },
     refreshQuote,
     submit(address) {
@@ -412,6 +505,9 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
     },
     async track(id, accessToken) {
       const request = ++trackingRequest
+      const reference = state.order || state.lastOrder
+      const changed = !reference || reference.id !== id || reference.accessToken !== accessToken
+      if (changed) invalidatePayment()
       try {
         const order = await api.order(id, accessToken)
         if (request !== trackingRequest) return null
@@ -432,6 +528,7 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       if (!api.customerMe || !api.setCustomerToken) return null
       if (authInFlight) throw new Error('Une opération du compte est déjà en cours.')
       const epoch = ++authEpoch
+      invalidatePayment()
       ++supportRequest
       customerSessionToken = null
       api.setCustomerToken(null)
@@ -526,6 +623,8 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
       })
     },
     async logoutCustomer() {
+      ++paymentEpoch
+      set({ payment: null, paymentBusy: false })
       customerSessionToken = null
       ++authEpoch
       ++supportRequest
@@ -618,10 +717,11 @@ function createController({ api, storage = {}, random, fingerprintSession, onCha
     },
     stopPolling() {
       ++trackingRequest
+      invalidatePayment()
       if (pollTimer) clearInterval(pollTimer)
       pollTimer = null
     }
   }
   return actions
 }
-module.exports = { createController, ATTEMPT_KEY, LAST_ORDER_KEY, CUSTOMER_TOKEN_KEY, SUPPORT_ATTEMPT_KEY }
+module.exports = { createController, ATTEMPT_KEY, LAST_ORDER_KEY, CUSTOMER_TOKEN_KEY, SUPPORT_ATTEMPT_KEY, PAYMENT_ATTEMPT_KEY }

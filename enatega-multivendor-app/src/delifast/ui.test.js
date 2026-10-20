@@ -297,3 +297,39 @@ test('support : aucune création optimiste pendant une réponse serveur en atten
   assert.match(treeText(tree), /Sujet confirmé par API/)
   await unmount(tree)
 })
+
+// Paiement : fixtures locales uniquement, jamais de prestataire externe.
+const paymentFixture = extra => ({ orderId: order.id, phase: 'READY', channel: 'ORANGE_MONEY_BF', mode: 'live', paymentStatus: 'PENDING', providerStatus: 'pending', checkoutUrl: 'https://fixture.local/checkout', ...extra })
+async function mountTracking(client) {
+  const storage = memory()
+  await storage.setItem('delifast-last-order', JSON.stringify({ id: order.id, accessToken: order.accessToken }))
+  const tree = await mount(client, storage)
+  await press(tree, 'Actualiser le suivi')
+  return tree
+}
+test('paiement mobile indisponible : aucun bouton payer ni faux succès', async () => {
+  const tree = await mountTracking(api({ paymentSession: async () => { throw Object.assign(new Error('Paiement indisponible'), { code: 'PAYMENT_DISABLED' }) } }))
+  assert.match(treeText(tree), /Paiement indisponible/)
+  assert.equal(tree.root.findAllByType('Button').some(n => /^Payer avec/.test(n.props.title)), false)
+  assert.doesNotMatch(treeText(tree), /Paiement confirmé par le serveur/)
+  await unmount(tree)
+})
+test('paiement mobile sandbox complété : avertissement non réel et aucun nouveau paiement', async () => {
+  const tree = await mountTracking(api({ paymentSession: async () => paymentFixture({ mode: 'test', providerStatus: 'completed', checkoutUrl: null }) }))
+  assert.match(treeText(tree), /il ne confirme pas un paiement réel/)
+  assert.doesNotMatch(treeText(tree), /Paiement confirmé par le serveur/)
+  assert.equal(tree.root.findAllByType('Button').some(n => /^Payer avec/.test(n.props.title)), false)
+  await unmount(tree)
+})
+test('paiement mobile ouverture explicite seulement puis confirmation par le serveur', async () => {
+  const opened = []
+  native.Linking = { canOpenURL: async () => true, openURL: async url => { opened.push(url) } }
+  const tree = await mountTracking(api({ paymentSession: async () => paymentFixture(), refreshPayment: async () => paymentFixture({ paymentStatus: 'PAID', providerStatus: 'completed', checkoutUrl: null }) }))
+  assert.equal(opened.length, 0)
+  await press(tree, 'Ouvrir le checkout sécurisé')
+  assert.deepEqual(opened, ['https://fixture.local/checkout'])
+  assert.doesNotMatch(treeText(tree), /Paiement confirmé par le serveur/)
+  await press(tree, 'Vérifier le statut serveur')
+  assert.match(treeText(tree), /Paiement confirmé par le serveur/)
+  await unmount(tree)
+})
