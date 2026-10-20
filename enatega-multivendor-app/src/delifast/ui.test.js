@@ -7,10 +7,12 @@ const React = require('react')
 const renderer = require('react-test-renderer')
 const babel = require('@babel/core')
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
-const native = Object.fromEntries(['ActivityIndicator', 'Button', 'FlatList', 'KeyboardAvoidingView', 'SafeAreaView', 'ScrollView', 'Text', 'TextInput', 'TouchableOpacity', 'View'].map(name => [name, name]))
+const native = Object.fromEntries(['ActivityIndicator', 'Button', 'FlatList', 'KeyboardAvoidingView', 'Modal', 'SafeAreaView', 'ScrollView', 'Text', 'TextInput', 'TouchableOpacity', 'View'].map(name => [name, name]))
 // Le renderer JS ne fournit pas de moteur natif : la liste expose ses lignes
 // pour exercer les vrais handlers et hooks, sans prétendre tester iOS/Android.
 native.FlatList = ({ data = [], renderItem, ListEmptyComponent }) => React.createElement('FlatList', null, data.length ? data.map((item, index) => React.createElement(React.Fragment, { key: item.id || index }, renderItem({ item, index }))) : ListEmptyComponent)
+native.Dimensions = { get: () => ({ width: 390, height: 844 }) }
+native.Modal = ({ visible, children, ...props }) => visible ? React.createElement('Modal', props, children) : null
 native.Platform = { OS: 'ios' }
 native.StyleSheet = { create: x => x }
 const backListeners = new Set()
@@ -27,6 +29,9 @@ function loadLocal(file) {
   const requireMock = name => {
     if (name === 'react-native') return native
     if (name === 'react-native-safe-area-context') return { SafeAreaProvider: ({ children }) => React.createElement('SafeAreaProvider', null, children), SafeAreaView: 'SafeAreaView', useSafeAreaInsets: () => ({ top: 24, bottom: 20, left: 0, right: 0 }) }
+    if (name === '@expo/vector-icons/Ionicons') return 'Ionicons'
+    if (name === 'expo-font') return { useFonts: () => [true, null] }
+    if (name.endsWith('.ttf')) return 1
     if (name === 'expo-secure-store') return {}
     if (name === 'expo-crypto') return { randomUUID: () => require('node:crypto').randomUUID(), CryptoDigestAlgorithm: { SHA256: 'sha256' }, digestStringAsync: async (algorithm, value) => require('node:crypto').createHash(algorithm).update(value).digest('hex') }
     if (name.startsWith('.')) return loadLocal(require.resolve(path.resolve(path.dirname(file), name)))
@@ -567,4 +572,102 @@ test('retour Android : suivi vers Commandes sans appel de paiement ou nouvelle c
     assert.equal(submitted, 0)
     assert.equal(paid, 0)
   } finally { await unmount(tree); native.Platform.OS = 'ios' }
+})
+
+test('découverte : la recherche filtre réellement puis son effacement restaure la liste', async () => {
+  const second = { ...restaurant, id: 'r2', name: 'Chez Ouaga', description: 'Cuisine locale' }
+  const tree = await mount(api({ restaurants: async () => [restaurant, second] }))
+  const search = tree.root.findByProps({ accessibilityLabel: 'Rechercher un restaurant' })
+  await renderer.act(async () => { search.props.onChangeText('Ouaga') })
+  assert.match(treeText(tree), /Chez Ouaga/)
+  assert.doesNotMatch(treeText(tree), /Restaurant fictif/)
+  const clear = tree.root.findByProps({ accessibilityLabel: 'Effacer la recherche' })
+  await renderer.act(async () => { clear.props.onPress() })
+  assert.match(treeText(tree), /Restaurant fictif/)
+  assert.match(treeText(tree), /Chez Ouaga/)
+  assert.equal(tree.root.findByProps({ accessibilityLabel: 'Rechercher un restaurant' }).props.value, '')
+  await unmount(tree)
+})
+
+test('découverte : Ouverts exclut un restaurant fermé sans nouvel appel serveur', async () => {
+  let restaurantCalls = 0
+  const closed = { ...restaurant, id: 'closed', name: 'Fermé ce soir', open: false }
+  const tree = await mount(api({ restaurants: async () => { restaurantCalls++; return [restaurant, closed] } }))
+  assert.equal(restaurantCalls, 1)
+  assert.match(treeText(tree), /Fermé ce soir/)
+  await press(tree, 'Ouverts', 'TouchableOpacity')
+  assert.match(treeText(tree), /Restaurant fictif/)
+  assert.doesNotMatch(treeText(tree), /Fermé ce soir/)
+  assert.equal(restaurantCalls, 1)
+  await unmount(tree)
+})
+
+test('menu : les catégories rendent le plat dans sa catégorie et Autres séparément', async () => {
+  const categorized = { ...restaurant, categories: [{ id: 'cat', name: 'Repas', sortOrder: 0 }, { id: 'dessert', name: 'Desserts', sortOrder: 1 }], menu: [{ ...restaurant.menu[0] }, { id: 'dessert-1', name: 'Dessert test', description: 'Autre catégorie', priceXof: 800, available: true, categoryId: 'dessert', optionGroups: [] }, { id: 'other-1', name: 'Plat sans catégorie', description: 'Autres', priceXof: 700, available: true, categoryId: 'missing', optionGroups: [] }] }
+  const tree = await mount(api({ restaurants: async () => [categorized], restaurant: async () => categorized }))
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  assert.match(treeText(tree), /Repas/)
+  assert.match(treeText(tree), /Desserts/)
+  assert.match(treeText(tree), /Autres/)
+  await press(tree, 'Desserts', 'TouchableOpacity')
+  assert.match(treeText(tree), /Dessert test/)
+  assert.doesNotMatch(treeText(tree), /Riz test|Plat sans catégorie/)
+  await press(tree, 'Tout le menu', 'TouchableOpacity')
+  await press(tree, 'Autres', 'TouchableOpacity')
+  assert.match(treeText(tree), /Plat sans catégorie/)
+  assert.doesNotMatch(treeText(tree), /Riz test|Dessert test/)
+  await unmount(tree)
+})
+
+test('personnalisation : fermeture native sans ajout, options checked et erreur de validation visibles', async () => {
+  let addQuoteCalls = 0
+  const configurable = { ...restaurant, menu: [{ ...restaurant.menu[0], optionGroups: [{ id: 'format', name: 'Format', minSelections: 1, maxSelections: 1, options: [{ id: 'grand', name: 'Grand format', priceXof: 250, available: true }] }] }] }
+  const tree = await mount(api({ restaurants: async () => [configurable], restaurant: async () => configurable, calculateCheckout: async () => { addQuoteCalls++; return checkout } }))
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  await press(tree, 'Riz test', 'TouchableOpacity')
+  const modal = tree.root.findByType('Modal')
+  assert.ok(modal)
+  assert.equal(tree.root.findByProps({ accessibilityLabel: 'Grand format' }).props.accessibilityState.checked, false)
+  await renderer.act(async () => { await modal.props.onRequestClose() })
+  assert.equal(tree.root.findAllByType('Modal').length, 0)
+  assert.equal(addQuoteCalls, 0)
+  await press(tree, 'Riz test', 'TouchableOpacity')
+  await press(tree, 'Ajouter au panier')
+  assert.match(treeText(tree), /Choisissez 1 option\(s\) pour Format/)
+  assert.equal(addQuoteCalls, 0)
+  const option = tree.root.findByProps({ accessibilityLabel: 'Grand format' })
+  await renderer.act(async () => { await option.props.onPress() })
+  assert.equal(tree.root.findByProps({ accessibilityLabel: 'Grand format' }).props.accessibilityState.checked, true)
+  await unmount(tree)
+})
+
+test('panier : badge reflète la quantité et le devis survit au changement d’onglet', async () => {
+  const tree = await mount()
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  await press(tree, 'Riz test', 'TouchableOpacity')
+  await press(tree, 'Ajouter au panier')
+  await press(tree, 'Riz test', 'TouchableOpacity')
+  await press(tree, 'Ajouter au panier')
+  const cartTab = tabs(tree).find(node => node.props.accessibilityLabel === 'Panier')
+  assert.ok(cartTab.findAll(node => node.type === 'Text' && text(node) === '2').length > 0)
+  await selectTab(tree, 'Compte')
+  await selectTab(tree, 'Panier')
+  assert.match(treeText(tree), /Riz test/)
+  assert.match(treeText(tree).replace(/[\u202f\u00a0 ]/g, ''), /1700XOF/)
+  assert.match(treeText(tree), /Total serveur/)
+  await unmount(tree)
+})
+
+
+test('panier : l’action de livraison reste hors du contenu défilant', async () => {
+  const tree = await mount()
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  await press(tree, 'Riz test', 'TouchableOpacity')
+  await press(tree, 'Ajouter au panier')
+  await selectTab(tree, 'Panier')
+  assert.equal(tree.root.findByType('ScrollView').findAll(node => node.props.title === 'Livrer à cette adresse').length, 0)
+  assert.equal(buttons(tree).filter(node => node.props.title === 'Livrer à cette adresse').length, 1)
+  await press(tree, 'Livrer à cette adresse')
+  assert.equal(tree.root.findAllByType('TextInput').length, 8)
+  await unmount(tree)
 })
