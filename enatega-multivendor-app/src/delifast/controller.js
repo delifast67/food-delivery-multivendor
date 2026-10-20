@@ -69,6 +69,22 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
   let customerSessionToken = null
   let authEpoch = 0
   let authInFlight = null
+  // All private persistence mutations share one FIFO.  SecureStore writes are
+  // asynchronous; without this queue a logout purge can complete before an
+  // in-flight submit/payment write and resurrect the previous session's data.
+  let privateStorageTail = Promise.resolve()
+  const privateIO = work => {
+    const result = privateStorageTail.then(work)
+    privateStorageTail = result.catch(() => {})
+    return result
+  }
+  const purgePrivateStorage = () => privateIO(async () => {
+    let failure
+    for (const key of [CUSTOMER_TOKEN_KEY, ATTEMPT_KEY, PAYMENT_ATTEMPT_KEY, LAST_ORDER_KEY]) {
+      try { await storage.removeItem(key) } catch (error) { failure = failure || error }
+    }
+    if (failure) throw failure
+  })
   let supportRequest = 0
   let supportInFlight = null
   let customerOrdersRequest = 0
@@ -111,6 +127,11 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
     return authInFlight
   }
   async function clearCustomerSession() {
+    ++discoveryRequest
+    ++restaurantRequest
+    ++menuRequest
+    ++categoryRequest
+    otpChallenge = null
     ++supportRequest
     ++authEpoch
     ++customerOrdersRequest
@@ -120,8 +141,8 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
     invalidatePayment()
     customerSessionToken = null
     if (api.setCustomerToken) api.setCustomerToken(null)
-    set({ customer: null, order: null, lastOrder: null, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null, customerOrders: [], customerOrdersNextCursor: null, customerOrdersLoading: false, customerOrdersError: null, customerOrder: null, customerOrderLoading: false })
-    try { if (storage.removeItem) { try { await storage.removeItem(CUSTOMER_TOKEN_KEY) } finally { await purgeSupportAttempt() } } } catch {}
+    set({ error: null, customer: null, order: null, lastOrder: null, pending: null, cart: { restaurantId: null, items: [] }, quote: null, quoteVersion: state.quoteVersion + 1, deliveryPoint: { latitude: 12.3714, longitude: -1.5197 }, loading: false, menuLoading: false, categoryLoading: false, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null, customerOrders: [], customerOrdersNextCursor: null, customerOrdersLoading: false, customerOrdersError: null, customerOrder: null, customerOrderLoading: false, customerSessionVersion: authEpoch })
+    try { if (storage.removeItem) { try { await purgePrivateStorage() } finally { await purgeSupportAttempt() } } } catch {}
   }
   const supportErrorView = error => ({ message: error?.message || String(error), kind: error?.kind || 'unknown', code: error?.code })
   const supportInput = input => {
@@ -198,6 +219,7 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
   }
   async function restoreAttempt() {
     if (restorePromise) return restorePromise
+    const epoch = authEpoch
     restorePromise = (async() => {
       try {
         storageReady()
@@ -205,10 +227,21 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
         checkAttempt(attempt)
         const last = await readJSON(LAST_ORDER_KEY)
         if (last && !validReference(last)) throw new Error('Référence de suivi locale invalide')
-        set({ pending: attempt, lastOrder: last, restored: true })
-        return clone(attempt)
+        // A customer draft is private to the customer session and cannot be
+        // exposed during the anonymous mount phase (restoreCustomer may still
+        // be validating the token). It is resumed only after that validation.
+        const token = await storage.getItem(CUSTOMER_TOKEN_KEY)
+        if (epoch !== authEpoch) return null
+        const privateAttempt = attempt?.customerId != null
+        let expose = !privateAttempt && !token
+        if (privateAttempt && token && customerSessionToken === token && state.customer?.id === attempt.customerId && typeof fingerprintSession === 'function') {
+          expose = (await fingerprintSession(token)) === attempt.sessionScope
+        }
+        if (epoch !== authEpoch) return null
+        set({ pending: expose ? attempt : null, lastOrder: token ? null : last, restored: true })
+        return clone(expose ? attempt : null)
       } catch (error) {
-        set({ restored: false, error: errorView(error) })
+        if (epoch === authEpoch) set({ restored: false, error: errorView(error) })
         throw error
       }
     })()
@@ -251,23 +284,26 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
       set({ order: clone(result), lastOrder: guestAttempt ? reference : null, cart: { restaurantId: null, items: [] }, quote: null, quoteVersion: state.quoteVersion + 1 })
       try {
         if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
-        if (guestAttempt) await storage.setItem(LAST_ORDER_KEY, JSON.stringify(reference))
-        else await storage.removeItem(LAST_ORDER_KEY)
+        if (guestAttempt) await privateIO(() => storage.setItem(LAST_ORDER_KEY, JSON.stringify(reference)))
+        else await privateIO(() => storage.removeItem(LAST_ORDER_KEY))
         if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
-        await storage.removeItem(ATTEMPT_KEY)
+        await privateIO(() => storage.removeItem(ATTEMPT_KEY))
         if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
         set({ pending: null, error: null })
       } catch (error) {
+        if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
         set({ pending: clone(attempt), error: errorView(new Error(`Commande enregistrée ; reprise locale à terminer : ${error.message}`)) })
       }
       return clone(result)
     } catch (error) {
-      if (error.kind === 'stale') throw error
+      if (!current() || error.kind === 'stale') throw error
       if (error.kind === 'validation') {
         try {
-          await storage.removeItem(ATTEMPT_KEY)
+          await privateIO(() => storage.removeItem(ATTEMPT_KEY))
+          if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
           set({ pending: null, quote: null, quoteVersion: state.quoteVersion + 1, error: errorView(error) })
         } catch (storageError) {
+          if (!current()) throw storageError
           set({ pending: clone(attempt), error: errorView(storageError) })
         }
       } else set({ pending: clone(attempt), error: errorView(error) })
@@ -446,7 +482,7 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
         if (saved && saved.channel !== channel) throw Object.assign(new Error('Le canal de paiement est déjà fixé pour cette tentative'), { code: 'PAYMENT_CHANNEL_LOCKED' })
         const attempt = saved || { orderId: order.id, idempotencyKey: makeIdempotencyKey(random), channel }
         storageReady()
-        await storage.setItem(PAYMENT_ATTEMPT_KEY, JSON.stringify(attempt))
+        await privateIO(async () => { if (current()) await storage.setItem(PAYMENT_ATTEMPT_KEY, JSON.stringify(attempt)) })
         if (!current()) return null
         value = await api.startPayment({ orderId: order.id, accessToken: order.accessToken, idempotencyKey: attempt.idempotencyKey, channel: attempt.channel })
         if (!current()) return null
@@ -658,6 +694,8 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
         const epoch = authEpoch
         const owner = state.customer?.id || null
         return exclusive(async() => {
+          const current = () => epoch === authEpoch && (state.customer?.id || null) === owner
+          if (!current()) throw new Error('Commande annulée après changement de session')
           let attempt
           if (authenticated) {
             if (!customerSessionToken || typeof fingerprintSession !== 'function') throw new Error('Session client sécurisée indisponible')
@@ -671,16 +709,21 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
           try {
             // Une tentative durable jamais exposée à l’état ne doit pas être écrasée.
             const existing = await readJSON(ATTEMPT_KEY)
+            if (!current()) throw new Error('Commande annulée après changement de session')
             if (existing) {
               checkAttempt(existing)
-              set({ pending: existing })
+              if (!existing.customerId || (existing.customerId === owner && existing.sessionScope === attempt.sessionScope)) set({ pending: existing })
               throw new Error('Une tentative précédente doit être reprise')
             }
             if (version !== state.quoteVersion) throw new Error('Le devis a changé, commande non envoyée')
-            await storage.setItem(ATTEMPT_KEY, JSON.stringify(attempt))
+            await privateIO(async () => {
+              if (!current()) throw new Error('Commande annulée après changement de session')
+              await storage.setItem(ATTEMPT_KEY, JSON.stringify(attempt))
+            })
+            if (!current()) throw new Error('Commande annulée après changement de session')
             set({ pending: clone(attempt) })
           } catch (error) {
-            set({ error: errorView(error) })
+            if (current()) set({ error: errorView(error) })
             throw error
           }
           return sendAttempt(attempt, { epoch, customerId: owner, scope: attempt.sessionScope })
@@ -738,11 +781,16 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
       ++customerOrdersRequest
       ++customerOrderListRequest
       ++customerOrderDetailRequest
-      set({ customer: null, customerSessionVersion: epoch, addresses: [], supportTickets: [], supportPending: null, supportBusy: false, supportLoading: false, supportError: null, customerOrders: [], customerOrdersNextCursor: null, customerOrdersLoading: false, customerOrdersError: null, customerOrder: null, customerOrderLoading: false })
+      set({ error: null, customer: null, order: null, lastOrder: null, pending: null, cart: { restaurantId: null, items: [] }, quote: null, quoteVersion: state.quoteVersion + 1, deliveryPoint: { latitude: 12.3714, longitude: -1.5197 }, customerSessionVersion: epoch, addresses: [], supportTickets: [], supportPending: null, supportBusy: false, supportLoading: false, supportError: null, customerOrders: [], customerOrdersNextCursor: null, customerOrdersLoading: false, customerOrdersError: null, customerOrder: null, customerOrderLoading: false })
       storageReady()
       const token = await storage.getItem(CUSTOMER_TOKEN_KEY)
       if (epoch !== authEpoch) return null
-      if (!token) { await purgeSupportAttempt(); return null }
+      if (!token) {
+        await purgeSupportAttempt()
+        if (restorePromise) await restorePromise
+        if (epoch === authEpoch) await restoreAttempt()
+        return null
+      }
       api.setCustomerToken(token)
       let customer
       try {
@@ -752,7 +800,29 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
         customerSessionToken = token
         const addresses = api.customerAddresses ? await api.customerAddresses() : []
         if (epoch !== authEpoch) return null
-        set({ customer: clone(customer), addresses: clone(addresses) || [] })
+        await privateIO(() => storage.removeItem(LAST_ORDER_KEY))
+        if (epoch !== authEpoch) return null
+        set({ customer: clone(customer), lastOrder: null, addresses: clone(addresses) || [], restored: true })
+        // Re-open a durable order draft only for the exact validated session.
+        // A different login gets no payload and the stale local draft is
+        // discarded, never replayed against the new account.
+        try {
+          const attempt = await readJSON(ATTEMPT_KEY)
+          if (epoch !== authEpoch) return null
+          if (attempt?.customerId != null) {
+            const scope = typeof fingerprintSession === 'function' ? await fingerprintSession(token) : null
+            if (epoch !== authEpoch) return null
+            if (scope === attempt.sessionScope && attempt.customerId === customer.id) {
+              checkAttempt(attempt); set({ pending: clone(attempt) })
+            } else {
+              await privateIO(() => storage.removeItem(ATTEMPT_KEY))
+              if (epoch !== authEpoch) return null
+              set({ pending: null })
+            }
+          }
+        } catch (error) {
+          if (epoch === authEpoch && error?.message?.includes('illisibles')) throw error
+        }
         return clone(customer)
       } catch (error) {
         if (epoch !== authEpoch) return null
@@ -843,22 +913,29 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
       if (!otpChallenge || otpChallenge.id !== challengeId || Date.now() >= otpChallenge.deadline) throw new Error('Challenge OTP expiré')
       if (authInFlight) throw new Error('Une opération du compte est déjà en cours.')
       const epoch = ++authEpoch
+      ++discoveryRequest
+      ++restaurantRequest
+      ++menuRequest
+      ++categoryRequest
       stopTracking()
       customerSessionToken = null
       api.setCustomerToken(null)
       ++supportRequest
       ++customerOrderListRequest
       ++customerOrderDetailRequest
-      set({ customer: null, customerSessionVersion: epoch, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null, customerOrders: [], customerOrdersNextCursor: null, customerOrdersLoading: false, customerOrdersError: null, customerOrder: null, customerOrderLoading: false })
+      set({ error: null, customer: null, order: null, lastOrder: null, pending: null, cart: { restaurantId: null, items: [] }, quote: null, quoteVersion: state.quoteVersion + 1, deliveryPoint: { latitude: 12.3714, longitude: -1.5197 }, customerSessionVersion: epoch, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null, customerOrders: [], customerOrdersNextCursor: null, customerOrdersLoading: false, customerOrdersError: null, customerOrder: null, customerOrderLoading: false })
       return authExclusive(async() => {
         storageReady()
-        try { await storage.removeItem(CUSTOMER_TOKEN_KEY) } finally { await purgeSupportAttempt() }
+        try { await purgePrivateStorage() } finally { await purgeSupportAttempt() }
         if (epoch !== authEpoch) throw new Error('Connexion annulée')
         const session = await api.verifyCustomerOtp(challengeId, String(code))
         if (epoch !== authEpoch) throw new Error('Connexion annulée')
         if (!session || typeof session.token !== 'string' || !session.customer) throw new Error('Session client incomplète')
-        storageReady(); await storage.setItem(CUSTOMER_TOKEN_KEY, session.token)
-        if (epoch !== authEpoch) { await storage.removeItem(CUSTOMER_TOKEN_KEY); throw new Error('Connexion annulée') }
+        storageReady(); await privateIO(async () => {
+          if (epoch !== authEpoch) throw new Error('Connexion annulée')
+          await storage.setItem(CUSTOMER_TOKEN_KEY, session.token)
+        })
+        if (epoch !== authEpoch) throw new Error('Connexion annulée')
         customerSessionToken = session.token
         api.setCustomerToken(session.token)
         ++supportRequest
@@ -868,7 +945,7 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
           if (epoch === authEpoch && error?.kind === 'auth') await clearCustomerSession()
           throw error
         }
-        if (epoch !== authEpoch) { api.setCustomerToken(null); await storage.removeItem(CUSTOMER_TOKEN_KEY); throw new Error('Connexion annulée') }
+        if (epoch !== authEpoch) throw new Error('Connexion annulée')
         set({ customer: clone(session.customer), addresses: clone(addresses) || [] })
         otpChallenge = null
         return clone(session.customer)
@@ -879,6 +956,10 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
       set({ payment: null, paymentBusy: false })
       customerSessionToken = null
       ++authEpoch
+      ++discoveryRequest
+      ++restaurantRequest
+      ++menuRequest
+      ++categoryRequest
       stopTracking()
       ++supportRequest
       ++customerOrdersRequest
@@ -889,8 +970,11 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
       let failure
       const revoked = (async() => { try { if (api.customerLogout) await api.customerLogout() } catch (error) { failure = error } })()
       if (api.setCustomerToken) api.setCustomerToken(null)
-      set({ customer: null, order: null, lastOrder: null, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null })
-      try { if (storage.removeItem) { try { await storage.removeItem(CUSTOMER_TOKEN_KEY) } finally { await purgeSupportAttempt() } } } finally { await revoked }
+      set({ error: null, customer: null, order: null, lastOrder: null, pending: null, cart: { restaurantId: null, items: [] }, quote: null, quoteVersion: state.quoteVersion + 1, deliveryPoint: { latitude: 12.3714, longitude: -1.5197 }, loading: false, menuLoading: false, categoryLoading: false, addresses: [], supportTickets: [], supportPage: 0, supportHasMore: false, supportLoading: false, supportBusy: false, supportPending: null, supportError: null, customerSessionVersion: authEpoch, customerOrders: [], customerOrdersNextCursor: null, customerOrdersLoading: false, customerOrdersError: null, customerOrder: null, customerOrderLoading: false })
+      // Purge all authenticated drafts through the same FIFO as submit/payment
+      // writes.  This is deliberately local-only: no order or payment API is
+      // called during logout, and a late old-session write cannot resurrect it.
+      try { if (storage.removeItem) { try { await purgePrivateStorage() } finally { await purgeSupportAttempt() } } } finally { await revoked }
       if (failure) throw failure
       return true
     },

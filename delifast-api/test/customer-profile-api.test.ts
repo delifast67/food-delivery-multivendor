@@ -52,7 +52,7 @@ beforeAll(async () => {
 }, 60_000);
 beforeEach(async () => {
   Object.assign(config, { customerOtpIpMax: 1000, customerOtpPhoneMax: 1000 });
-  await Promise.all(["customers", "customer_sessions", "customer_otp_challenges", "customer_otp_rate_limits", "customer_otp_phone_locks", "staff_users", "staff_sessions"].map((n) => db.collection(n).deleteMany({})));
+  await Promise.all(["customers", "customer_sessions", "customer_otp_challenges", "customer_otp_rate_limits", "customer_otp_phone_locks", "staff_users", "staff_sessions", "orders"].map((n) => db.collection(n).deleteMany({})));
   provider.messages.clear();
   vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("external request forbidden"); }));
 });
@@ -139,5 +139,20 @@ describe("customer profile integration", () => {
     expect(view).not.toHaveProperty("customerId");
     expect(view).not.toHaveProperty("firstName");
     expect(view).not.toHaveProperty("email");
+  });
+
+  it("scopes authenticated customer order list and detail to the session customer", async () => {
+    const a = await login(PHONE_A), b = await login(PHONE_B);
+    const customerA = await db.collection<any>("customers").findOne({ phone: PHONE_A });
+    const customerB = await db.collection<any>("customers").findOne({ phone: PHONE_B });
+    await db.collection("orders").insertMany([
+      { id: "customer-a-order", customerId: customerA.id, idempotencyKey: "fixture-order-a", restaurantId: "r1", status: "CONFIRMED", paymentStatus: "PAID", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", history: [], checkout: { items: [], total: 1 }, deliveryAddress: { phone: PHONE_A } },
+      { id: "customer-b-order", customerId: customerB.id, idempotencyKey: "fixture-order-b", restaurantId: "r1", status: "CONFIRMED", paymentStatus: "PAID", createdAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z", history: [], checkout: { items: [], total: 1 }, deliveryAddress: { phone: PHONE_B } },
+    ]);
+    const query = "{customerOrders{items{id} nextCursor}}";
+    expect((await gql(query, {}, a)).body.data.customerOrders.items).toEqual([{ id: "customer-a-order" }]);
+    expect((await gql(query, {}, b)).body.data.customerOrders.items).toEqual([{ id: "customer-b-order" }]);
+    expect((await gql("query($id:ID!){customerOrder(id:$id){id}}", { id: "customer-b-order" }, a)).body.data.customerOrder).toBeNull();
+    expect((await gql("query($id:ID!){customerOrder(id:$id){id}}", { id: "customer-a-order" }, b)).body.data.customerOrder).toBeNull();
   });
 });

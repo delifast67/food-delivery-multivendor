@@ -152,6 +152,12 @@ function App({ api, storage, catalogueCache }) {
   const customerId = state?.customer?.id || null
   useEffect(() => {
     // A draft from a revoked account must not reappear in another account.
+    setAddress({ ...initialAddress, point: { ...initialAddress.point } })
+    setSelected(null)
+    setLocalError('')
+    setChallenge(null)
+    setOtp('')
+    setLoginPhone('+226 ')
     setAccountAddress({ ...initialAddress, point: { ...initialAddress.point } })
     setEditingAddressId(null)
     setDeleteAddressId(null)
@@ -224,6 +230,10 @@ function App({ api, storage, catalogueCache }) {
   const pending = state.pending
   const lastOrder = state.lastOrder
   const navigate = target => { setSelected(null); setLocalError(''); setSavedNotice(''); setDeleteAddressId(null); if (target === 'account') setAccountPage('overview'); setScreen(target) }
+  const currentSession = () => {
+    const live = controller.getState()
+    return live.customerSessionVersion === state.customerSessionVersion && (live.customer?.id || null) === customerId
+  }
 
   const openRestaurant = async(item) => {
     if (item.open === false && !discoveryStale) return
@@ -370,7 +380,7 @@ function App({ api, storage, catalogueCache }) {
     const profileBusy = state.authBusy || state.busy
     const saveProfile = async() => {
       setLocalError('')
-      try { await controller.updateCustomerProfile(profile); setSavedNotice('Profil enregistré.') } catch (error) { setLocalError(errorText(error)) }
+      try { await controller.updateCustomerProfile(profile); if (currentSession()) setSavedNotice('Profil enregistré.') } catch (error) { if (currentSession()) setLocalError(errorText(error)) }
     }
     const resetAddress = () => { setAccountAddress({ ...initialAddress }); setEditingAddressId(null) }
     const saveAddress = async() => {
@@ -381,8 +391,9 @@ function App({ api, storage, catalogueCache }) {
         if (!checked.ok) throw new Error(checked.message)
         if (editingAddressId) await controller.updateCustomerAddress(editingAddressId, checked.address)
         else await controller.createCustomerAddress(checked.address)
+        if (!currentSession()) return
         resetAddress(); setAccountPage('addresses'); setSavedNotice('Adresse enregistrée.')
-      } catch (error) { setLocalError(errorText(error)) }
+      } catch (error) { if (currentSession()) setLocalError(errorText(error)) }
     }
     const chooseAddress = async(item) => {
       // Guard before either local state mutation or network work: pending attempts are locked.
@@ -391,13 +402,13 @@ function App({ api, storage, catalogueCache }) {
       try {
         await controller.setDeliveryPoint(item.point)
         const live = controller.getState()
-        if (live.busy || live.pending) return
+        if (!currentSession() || live.busy || live.pending) return
         setAddress({ ...initialAddress, ...item, point: { ...item.point } })
         setScreen('cart')
-      } catch (error) { setLocalError(errorText(error)) }
+      } catch (error) { if (currentSession()) setLocalError(errorText(error)) }
     }
     const editAddress = (item) => { if (addressBusy) return; setAccountPage('addressForm'); setSavedNotice(''); setEditingAddressId(item.id); setAccountAddress({ ...initialAddress, ...item, point: { ...item.point } }) }
-    const removeAddress = async(id) => { if (addressBusy) return; setLocalError(''); try { if (await controller.deleteCustomerAddress(id)) { setDeleteAddressId(null); setSavedNotice('Adresse supprimée.') } else setLocalError('Suppression non confirmée par le serveur.') } catch (error) { setLocalError(errorText(error)) } }
+    const removeAddress = async(id) => { if (addressBusy) return; setLocalError(''); try { const removed = await controller.deleteCustomerAddress(id); if (!currentSession()) return; if (removed) { setDeleteAddressId(null); setSavedNotice('Adresse supprimée.') } else setLocalError('Suppression non confirmée par le serveur.') } catch (error) { if (currentSession()) setLocalError(errorText(error)) } }
     const requestOtp = async() => { setLocalError(''); setOtp(''); try { const value = await controller.requestCustomerOtp(loginPhone); const receivedAt = Date.now(); setChallenge({ ...value, receivedAt, expiresAt: receivedAt + Number(value.expiresIn || 0) * 1000, retryAt: receivedAt + Number(value.retryAfter || 0) * 1000 }) } catch (error) { setLocalError(errorText(error)) } }
     const verifyOtp = async() => { setLocalError(''); const submitted = otp; setOtp(''); try { await controller.verifyCustomerOtp(challenge.challengeId, submitted); setChallenge(null) } catch (error) { setLocalError(errorText(error)) } }
     const resendOtp = async() => { if (cooldown) return; setLocalError(''); try { const value = expired ? await controller.requestCustomerOtp(loginPhone) : await controller.resendCustomerOtp(challenge.challengeId); const receivedAt = Date.now(); setChallenge({ ...value, receivedAt, expiresAt: receivedAt + Number(value.expiresIn || 0) * 1000, retryAt: receivedAt + Number(value.retryAfter || 0) * 1000 }) } catch (error) { setLocalError(errorText(error)) } }
@@ -456,11 +467,10 @@ function App({ api, storage, catalogueCache }) {
     const locked = state.supportBusy || state.supportLoading || state.authBusy
     const attempt = state.supportPending
     const sendTicket = async(retry = false) => {
-      const owner = state.customer?.id
       try {
         const result = retry ? await controller.retrySupportTicket() : await controller.createSupportTicket({ subject: supportSubject, description: supportDescription })
         // Une réponse d’un ancien compte ne doit jamais modifier le nouveau brouillon.
-        if (result && controller.getState().customer?.id === owner) {
+        if (result && currentSession()) {
           setSupportSubject(''); setSupportDescription(''); setExpandedTicket(result.id)
         }
       } catch {} // L’erreur du contrôleur reste visible, sans annonce optimiste.

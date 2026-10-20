@@ -1156,3 +1156,74 @@ test('une coupure invalide le total déjà reçu et ferme les contrôles de devi
   assert.equal(orders, 0)
   await unmount(tree)
 })
+
+// Les identités et codes ci-dessous sont uniquement des fixtures en mémoire.
+test('livraison : adresse choisie par A effacée au logout puis connexion de B sans perdre le catalogue public', async () => {
+  const storage = memory()
+  await storage.setItem('delifast-customer-token', 'fixture-session-A')
+  let owner = 'A'
+  const privateAddress = { ...address, id: 'address-A', recipientName: 'Destinataire A privé', city: 'Ville privée A', instructions: 'Instruction privée A' }
+  const tree = await mount(api({
+    setCustomerToken: () => {},
+    customerMe: async () => ({ id: 'A', phone: '+22670000000' }),
+    customerAddresses: async () => owner === 'A' ? [privateAddress] : [],
+    customerLogout: async () => true,
+    requestCustomerOtp: async () => ({ challengeId: 'fixture-only', expiresIn: 60, retryAfter: 0 }),
+    verifyCustomerOtp: async () => { owner = 'B'; return { token: 'fixture-session-B', customer: { id: 'B', phone: '+22671111111' } } }
+  }), storage)
+  await press(tree, 'Compte', 'TouchableOpacity')
+  await press(tree, 'Carnet d’adresses')
+  await press(tree, 'Utiliser pour la livraison')
+  await press(tree, 'Compte', 'TouchableOpacity')
+  await press(tree, 'Se déconnecter')
+  await press(tree, 'Accueil', 'TouchableOpacity')
+  assert.match(treeText(tree), /Restaurant fictif/)
+  assert.doesNotMatch(treeText(tree), /Ville privée A|Destinataire A privé|Instruction privée A/)
+  await press(tree, 'Compte', 'TouchableOpacity')
+  await renderer.act(async () => { tree.root.findByType('TextInput').props.onChangeText('+22671111111') })
+  await press(tree, 'Demander un code')
+  await renderer.act(async () => { tree.root.findByProps({ accessibilityLabel: 'Code de vérification' }).props.onChangeText('123456') })
+  await press(tree, 'Valider le code')
+  await press(tree, 'Accueil', 'TouchableOpacity')
+  await press(tree, 'Restaurant fictif', 'TouchableOpacity')
+  await press(tree, 'Riz test', 'TouchableOpacity')
+  await press(tree, 'Ajouter au panier')
+  await press(tree, 'Panier', 'TouchableOpacity')
+  await press(tree, 'Livrer à cette adresse')
+  const inputs = tree.root.findAllByType('TextInput')
+  assert.equal(inputs[2].props.value, '')
+  assert.equal(inputs[3].props.value, '+226 ')
+  assert.equal(inputs[4].props.value, '')
+  assert.equal(inputs[7].props.value, '')
+  assert.doesNotMatch(treeText(tree), /Ville privée A|Destinataire A privé|Instruction privée A/)
+  await unmount(tree)
+})
+
+test('livraison : une sélection d’adresse de A encore en vol ne réinstalle rien après logout', async () => {
+  const storage = memory()
+  await storage.setItem('delifast-customer-token', 'fixture-session-A')
+  let resolveDiscovery
+  let calls = 0
+  const tree = await mount(api({
+    setCustomerToken: () => {},
+    customerMe: async () => ({ id: 'A', phone: '+22670000000' }),
+    customerAddresses: async () => [{ ...address, id: 'address-A', city: 'Ville privée tardive A' }],
+    customerLogout: async () => true,
+    publicRestaurantPage: async () => ++calls === 1 ? { items: [restaurant], nextCursor: null } : new Promise(resolve => { resolveDiscovery = resolve })
+  }), storage)
+  await press(tree, 'Compte', 'TouchableOpacity')
+  await press(tree, 'Carnet d’adresses')
+  let choosing
+  await renderer.act(async () => {
+    choosing = buttons(tree).find(node => node.props.title === 'Utiliser pour la livraison').props.onPress()
+    await settle()
+  })
+  await press(tree, 'Compte', 'TouchableOpacity')
+  await press(tree, 'Se déconnecter')
+  await renderer.act(async () => { resolveDiscovery({ items: [restaurant], nextCursor: null }); await choosing })
+  assert.match(treeText(tree), /Connexion par téléphone/)
+  assert.doesNotMatch(treeText(tree), /Ville privée tardive A/)
+  await press(tree, 'Accueil', 'TouchableOpacity')
+  assert.doesNotMatch(treeText(tree), /Ville privée tardive A/)
+  await unmount(tree)
+})

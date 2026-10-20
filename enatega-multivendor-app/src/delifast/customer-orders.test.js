@@ -92,8 +92,9 @@ test('refuse une tentative authentifiée pour un autre compte, fingerprint ou ap
     const api = authApi({ placeOrder: async () => { throw new Error('must not send') }, customerMe: async () => variant === 'owner' ? { id: 'customer-b', phone: session.phone } : session })
     const controller = createController({ api, storage: storage(db), fingerprintSession: async () => variant === 'scope' ? 'b'.repeat(64) : 'a'.repeat(64) })
     await controller.restoreAttempt(); await controller.restoreCustomer()
+    if (variant !== 'logout') assert.equal(controller.getState().pending, null)
     if (variant === 'logout') await controller.logoutCustomer()
-    await assert.rejects(controller.retryPending(), /session client|Connexion client requise/)
+    await assert.rejects(controller.retryPending(), /Aucune tentative restaurée à reprendre/)
   }
 })
 
