@@ -4,6 +4,12 @@ Le site local et le nouveau parcours mobile client permettent de consulter deux 
 
 **Aucun paiement ou remboursement réel, aucune livraison physique, aucun SMS ou push n’ont été déclenchés pendant ce développement.** Orange SMS BF est désormais raccordé mais désactivé par défaut : ne l’activer qu’après autorisation explicite de l’essai réel, du destinataire et du coût. Les comptes du personnel, restaurants, menus et frais du seed sont des données d’essai. Le paiement à la livraison n’existe pas dans le contrat. Ne pas exposer cette démonstration sur Internet avec des données personnelles réelles.
 
+## Back-office : commandes et Support
+
+Le back-office local dispose désormais d’espaces Commandes et Support. Recherche par référence/destinataire, filtres combinés, références complètes, confirmations de statut et affectation explicite améliorent la consultation des commandes. Le Support utilise les listes privées paginées, les détails et l’historique existants ; les changements suivent exclusivement `OPEN → IN_PROGRESS → RESOLVED`, avec version et note visible au créateur. Les conflits et réponses perdues ne sont jamais rejoués automatiquement. Les transitions commande transmettent aussi la révision affichée au serveur. Détails et recette reproductible : [guide admin local](enatega-multivendor-admin/DELIFAST_LOCAL.md).
+
+**L’admin reste partiel** : pas de pagination/recherche serveur des commandes ni recherche globale Support, d’assignation d’agents, de réouverture, de chat/pièces jointes/notifications/SLA, de rétention/audit de consultation, de finances/remboursements opérationnels, de comptes/permissions fines ou de GPS/disponibilité livreur. Ce lot ne modifie ni l’authentification ni le prestataire de paiement et ne rend pas le projet prêt pour la production.
+
 ## État réel du profil et des adresses client
 
 **La démonstration de commande fonctionne ; le projet complet n’est pas terminé.** L’authentification client par téléphone et le carnet personnel sont maintenant implémentés côté serveur et raccordés au web et au mobile. Le serveur génère, hache et vérifie les OTP ; Orange ne sert que de transport SMS. Aucun code fictif, compte client de démonstration ou fallback simulé n’est disponible. Sans activation et configuration serveur complète, la connexion réelle est annoncée momentanément indisponible, sans prétendre qu’un code a été envoyé.

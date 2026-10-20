@@ -205,6 +205,9 @@ async function pageHarness(client) {
   const compiledPage = ts.transpileModule(page, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const module = { exports: {} };
   const { DelifastError } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+  const workspaceSource = fs.readFileSync(new URL('../lib/delifast/order-workspace.ts', import.meta.url), 'utf8');
+  const workspaceJs = ts.transpileModule(workspaceSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
+  const workspace = await import(`data:text/javascript;base64,${Buffer.from(workspaceJs).toString('base64')}`);
   runInNewContext(compiledPage, {
     module, exports: module.exports,
     process: { env: { NEXT_PUBLIC_DELIFAST_LOCAL_MODE: 'true' } },
@@ -214,6 +217,8 @@ async function pageHarness(client) {
       if (name.endsWith('.css')) return {};
       if (name === '@/lib/delifast/zone-parsing') return { parsePolygonText, parseHoursText };
       if (name === './RestaurantSchedule') return { __esModule: true, default: () => null };
+      if (name === './SupportPanel') return { __esModule: true, default: () => null };
+      if (name === '@/lib/delifast/order-workspace') return workspace;
       return require(name);
     },
   });

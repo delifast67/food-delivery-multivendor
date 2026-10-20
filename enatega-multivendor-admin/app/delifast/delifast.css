@@ -1,3 +1,50 @@
 .df-shell{min-height:100vh;background:#f5f7f6;color:#17221d;padding:32px;max-width:1440px;margin:auto;font-family:Arial,sans-serif}.df-card{background:#fff;border:1px solid #dbe4de;border-radius:14px;box-shadow:0 8px 24px #1b35250d;padding:20px}.df-login{max-width:430px;margin:10vh auto}.df-kicker{color:#49745a;font-size:11px;font-weight:800;letter-spacing:.14em;margin:0 0 8px}.df-muted,small{color:#66736b;font-size:13px}.df-header{display:flex;justify-content:space-between;gap:20px;align-items:start;margin-bottom:20px}h1{font-size:32px;margin:0 0 6px}h2{font-size:20px;margin:0 0 14px}h3{font-size:14px;margin:20px 0 8px}.df-actions,.df-button-row{display:flex;gap:8px;flex-wrap:wrap}button{background:#277447;color:#fff;border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}.df-secondary{background:#e9f0eb;color:#234f34}.df-filters{display:flex;align-items:end;gap:14px;margin:0 0 16px;flex-wrap:wrap}.df-filters label,.df-detail label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700}input,select{border:1px solid #c8d5cc;border-radius:7px;padding:10px;background:#fff;font:inherit;color:inherit}.df-filters select{min-width:180px}.df-count{font-size:13px;color:#66736b}.df-grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;align-items:start}.df-table-wrap{overflow:auto;padding:0}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:14px 16px;border-bottom:1px solid #edf1ee;white-space:nowrap}th{background:#f8faf8;color:#66736b;font-size:11px;text-transform:uppercase;letter-spacing:.05em}tbody tr{cursor:pointer}tbody tr:hover,tbody tr.selected{background:#f0f7f1}td strong,td small{display:block}td small{margin-top:4px}.df-pill{background:#e8f2ea;color:#27603b;border-radius:99px;padding:4px 8px;font-size:11px}.df-empty{padding:35px;text-align:center;color:#66736b}.df-detail{position:sticky;top:16px}.df-detail-head{display:flex;justify-content:space-between}.df-icon{background:transparent;color:#17221d;font-size:24px;padding:0 6px}.df-detail ul{list-style:none;padding:0;margin:0}.df-detail li{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #edf1ee;font-size:13px}.df-total{font-weight:800;text-align:right}.df-history{padding-left:20px}.df-history li{padding:5px 0;font-size:13px}.df-history small{display:block;margin-top:3px}.df-restaurants{margin-top:16px}.df-restaurant-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.df-restaurant-list>div{border:1px solid #e4ebe6;border-radius:9px;padding:12px;display:flex;justify-content:space-between;align-items:center;gap:10px}.df-restaurant-list small{display:block;margin-top:4px}.df-banner{padding:12px 15px;border-radius:8px;margin-bottom:16px}.df-error{background:#fff0ef;color:#9b342d}.df-notice{background:#eaf6ed;color:#27603b}.df-login form{display:grid;gap:14px;margin-top:20px}.df-login label{display:grid;gap:5px;font-size:13px;font-weight:700}@media(max-width:900px){.df-shell{padding:18px}.df-grid{grid-template-columns:1fr}.df-detail{position:static}.df-header{flex-direction:column}}@media(max-width:560px){.df-header h1{font-size:26px}.df-actions button{width:100%}.df-table-wrap{margin:0 -20px;border-left:0;border-right:0;border-radius:0}th,td{padding:12px 10px}.df-filters label{width:100%}.df-filters select{width:100%}}
 .df-zones{margin-top:16px}.df-zone-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,430px);gap:20px;margin-top:16px}.df-zone-list{list-style:none;padding:0;margin:0}.df-zone-list li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:13px 0;border-bottom:1px solid #edf1ee}.df-zone-list small{display:block;margin-top:4px}.df-zone-form{display:grid;gap:10px;border:1px solid #e4ebe6;border-radius:9px;padding:16px}.df-zone-form label{display:grid;gap:5px;font-size:12px;font-weight:700}.df-zone-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}.df-check{display:flex!important;grid-template-columns:auto 1fr;align-items:center;gap:8px!important}.df-check input{width:auto}.df-zone-form small{font-weight:400}@media(max-width:900px){.df-zone-layout{grid-template-columns:1fr}}@media(max-width:560px){.df-zone-two{grid-template-columns:1fr}}
 .df-profile-form{display:grid;gap:10px;border:1px solid #e4ebe6;border-radius:9px;padding:16px;margin-top:16px}.df-profile-form label{display:grid;gap:5px;font-size:12px;font-weight:700}.df-profile-form textarea{border:1px solid #c8d5cc;border-radius:7px;padding:10px;background:#fff;font:inherit;color:inherit;resize:vertical}.df-profile-form fieldset{border:1px solid #e4ebe6;border-radius:8px;padding:12px}.df-profile-form legend{font-weight:700;font-size:12px}.df-zone-choice{display:flex!important;grid-template-columns:auto 1fr;align-items:start;gap:8px!important;padding:8px 0;border-top:1px solid #edf1ee}.df-zone-choice input{width:auto;margin-top:2px}.df-zone-choice small{display:block;margin-top:3px}.df-section-head{display:flex;justify-content:space-between;gap:14px;align-items:start}.df-section-head>span{font-size:12px;color:#66736b}
+/* Espaces opérationnels : mêmes tons papier / vert que les apps Delifast. */
+.df-shell{box-sizing:border-box;background:#f4f2e9;color:#17221e}
+.df-shell *{box-sizing:border-box}
+.df-card{background:#fffdf7;border-color:#d9ddd3}
+.df-shell button{min-height:44px;background:#2f6b4f}
+.df-shell .df-secondary{background:#e8eddf;color:#234f34}
+.df-shell .df-icon{background:transparent;min-width:44px}
+.df-shell :is(button,input,select,textarea):focus-visible{outline:3px solid #73933b;outline-offset:3px}
+.df-workspace-nav{display:flex;gap:8px;margin:0 0 24px;flex-wrap:wrap}
+.df-workspace-nav [aria-pressed=true]{box-shadow:inset 0 -3px #c8e86b}
+.df-shell .df-order-link{background:transparent;color:#234f34;text-decoration:underline;text-align:left;padding:0;white-space:normal;overflow-wrap:anywhere;max-width:260px;font:inherit;font-weight:700}
+.df-reference{font-size:17px;overflow-wrap:anywhere}
+.df-detail{min-width:0;overflow-wrap:anywhere;scroll-margin-top:16px}
+.df-detail li{flex-wrap:wrap;gap:6px}
+.df-detail-head>div{min-width:0}
+.df-confirm{margin:16px 0;padding:14px;border:1px solid #a6b78d;background:#f1f5e5;border-radius:9px;overflow-wrap:anywhere}
+.df-confirm button+button{margin:8px 0 0 8px}
+.df-rider-assignment{margin-top:18px}
+.df-filters input,.df-shell textarea{max-width:100%}
+.df-shell textarea{width:100%;border:1px solid #c8d5cc;border-radius:7px;padding:10px;background:#fff;font:inherit;color:inherit;resize:vertical}
+.df-support{margin-top:12px;min-width:0}
+.df-support :is(p,li,h2,h3,strong,small){overflow-wrap:anywhere}
+.df-support label{display:grid;gap:6px;font-size:13px;font-weight:700}
+.df-support-list{list-style:none;margin:0;padding:0}
+.df-support-list li{padding:12px 0;border-bottom:1px solid #d9ddd3}
+.df-support-list button{width:100%;text-align:left;white-space:normal;overflow-wrap:anywhere}
+.df-support-history{padding-left:20px}
+.df-support-history li{padding:8px 0}
+.df-support-history p{white-space:pre-wrap}
+@media(max-width:560px){
+  .df-shell{padding:16px}
+  .df-shell h1{font-size:26px}
+  .df-shell .df-card{padding:16px;min-width:0}
+  .df-shell .df-table-wrap{padding:0;margin:0;max-width:100%;border:1px solid #d9ddd3;border-radius:10px}
+  .df-shell .df-filters :is(label,input,select){width:100%;min-width:0}
+  .df-shell .df-detail :is(button,select){max-width:100%}
+  .df-shell .df-button-row button{flex:1 1 150px}
+  .df-confirm button{width:100%}
+  .df-confirm button+button{margin:8px 0 0}
+  .df-shell .df-detail-head{gap:8px}
+  .df-shell .df-restaurant-list{grid-template-columns:minmax(0,1fr)}
+  .df-shell .df-zone-layout{grid-template-columns:minmax(0,1fr)}
+  .df-shell :is(.df-profile-form,.df-zone-form) input{min-width:0;width:100%}
+  .df-shell .df-check input,.df-shell .df-zone-choice input{width:auto}
+}
+
+@media(max-width:900px){.df-grid>.df-detail{grid-row:1}}

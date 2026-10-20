@@ -72,6 +72,27 @@ export type DelifastSnapshot = {
   restaurants: Restaurant[];
   riders: StaffUser[];
 };
+export type SupportStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED';
+export type SupportEvent = {
+  status: SupportStatus;
+  at: string;
+  actorRole: string;
+  note: string;
+};
+export type SupportTicket = {
+  id: string;
+  customerId: string | null;
+  creatorId: string;
+  creatorRole: string;
+  restaurantId: string | null;
+  subject: string;
+  description: string;
+  status: SupportStatus;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  history: SupportEvent[];
+};
 export type DelifastErrorCode =
   | 'UNAUTHENTICATED'
   | 'FORBIDDEN'
@@ -92,6 +113,7 @@ const SESSION_KEY = 'delifast-local-session';
 const ME_QUERY = 'query Me { me { id name role restaurantId } }';
 const RESTAURANT_FIELDS = 'id name description open deliveryZoneIds version weeklySchedule { day startMinute endMinute }';
 const OPERATIONS_QUERY = `query Operations { operationsOrders { id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity baseUnitPrice unitPrice selectedOptions { groupName name priceXof } total } } } operationsRestaurants { ${RESTAURANT_FIELDS} } availableRiders { id name role restaurantId } }`;
+const SUPPORT_FIELDS = 'id customerId creatorId creatorRole restaurantId subject description status version createdAt updatedAt history { status at actorRole note }';
 function storageGet(key: string) {
   try {
     return typeof window !== 'undefined'
@@ -214,11 +236,43 @@ export class DelifastClient {
       riders: data.availableRiders,
     };
   }
-  async transition(orderId: string, status: string, expectedStatus: string) {
+  async operationsSupportTickets(limit = 20, offset = 0): Promise<SupportTicket[]> {
+    const data = await this.request<{ operationsSupportTickets: SupportTicket[] }>(
+      `query OperationsSupportTickets($limit: Int, $offset: Int) { operationsSupportTickets(limit: $limit, offset: $offset) { ${SUPPORT_FIELDS} } }`,
+      { limit, offset }
+    );
+    return data.operationsSupportTickets;
+  }
+  async operationsSupportTicket(id: string): Promise<SupportTicket | null> {
+    const data = await this.request<{ operationsSupportTicket: SupportTicket | null }>(
+      `query OperationsSupportTicket($id: ID!) { operationsSupportTicket(id: $id) { ${SUPPORT_FIELDS} } }`,
+      { id }
+    );
+    return data.operationsSupportTicket;
+  }
+  async transitionSupportTicket(
+    id: string,
+    expectedVersion: number,
+    status: SupportStatus,
+    note: string
+  ): Promise<SupportTicket> {
+    const data = await this.request<{ transitionSupportTicket: SupportTicket }>(
+      `mutation TransitionSupportTicket($id: ID!, $expectedVersion: Int!, $status: SupportStatus!, $note: String!) { transitionSupportTicket(id: $id, expectedVersion: $expectedVersion, status: $status, note: $note) { ${SUPPORT_FIELDS} } }`,
+      { id, expectedVersion, status, note }
+    );
+    return data.transitionSupportTicket;
+  }
+  async transition(orderId: string, status: string, expectedStatus: string, expectedUpdatedAt?: string) {
+    const variables = {
+      orderId,
+      status,
+      expectedStatus,
+      ...(expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt }),
+    };
     return this.mutate<Order>(
       'transitionOrder',
-      { orderId, status, expectedStatus },
-      'transitionOrder(orderId: $orderId, status: $status, expectedStatus: $expectedStatus)'
+      variables,
+      `transitionOrder(orderId: $orderId, status: $status, expectedStatus: $expectedStatus${expectedUpdatedAt === undefined ? '' : ', expectedUpdatedAt: $expectedUpdatedAt'})`
     );
   }
   async assignRider(orderId: string, riderId: string, expectedStatus: string) {
@@ -302,7 +356,7 @@ export class DelifastClient {
     const variableDefs = Object.keys(variables)
       .map(
         (key) =>
-          `$${key}: ${typeof variables[key] === 'boolean' ? 'Boolean!' : typeof variables[key] === 'number' ? 'Int!' : key === 'status' || key === 'expectedStatus' ? 'String!' : 'ID!'}`
+          `$${key}: ${typeof variables[key] === 'boolean' ? 'Boolean!' : typeof variables[key] === 'number' ? 'Int!' : key === 'status' || key === 'expectedStatus' || key === 'expectedUpdatedAt' ? 'String!' : 'ID!'}`
       )
       .join(', ');
     const fields =
