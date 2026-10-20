@@ -389,6 +389,10 @@ export async function customerLogout(db: Db, ctx: CustomerContext) {
       { id: ctx.customerSessionId, revokedAt: { $exists: false } },
       { $set: { revokedAt: new Date() } },
     );
+  // Later fields in the same serial GraphQL mutation share this context.
+  // Revoking storage alone would still let them use the authenticated identity.
+  delete ctx.customer;
+  delete ctx.customerSessionId;
   return true;
 }
 export async function listAddresses(db: Db, ctx: CustomerContext) {

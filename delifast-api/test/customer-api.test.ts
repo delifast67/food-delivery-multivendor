@@ -12,6 +12,7 @@ import { MongoMemoryServer } from "mongodb-memory-server";
 import type { Db } from "mongodb";
 import { config } from "../src/config.js";
 import type { SmsProvider } from "../src/sms-provider.js";
+import crypto from "node:crypto";
 
 const PHONE_A = "+22670123456";
 const PHONE_B = "+22670123457";
@@ -101,6 +102,8 @@ beforeEach(async () => {
       "customer_otp_rate_limits",
       "customer_otp_phone_locks",
       "customer_addresses",
+      "staff_users",
+      "staff_sessions",
     ].map((n) => db.collection(n).deleteMany({})),
   );
   sendCalls = 0;
@@ -218,6 +221,64 @@ describe("customer GraphQL authentication", () => {
         )
       ).body.data.deleteCustomerAddress,
     ).toBe(true);
+  });
+
+  it.each(["create", "update", "delete"])("rejects %s after logout in the same mutation, including fragments", async (action) => {
+    const token = await login(PHONE_A);
+    const created = await gql(
+      "mutation($i:DeliveryAddressInput!){createCustomerAddress(input:$i){id}}",
+      { i: address("owner") }, token,
+    );
+    const id = created.body.data.createCustomerAddress.id;
+    const before = await db.collection("customer_addresses").find({}).toArray();
+    const field = action === "create"
+      ? "createCustomerAddress(input:$i){id}"
+      : action === "update"
+        ? "updateCustomerAddress(id:$id,input:$i){id}"
+        : "deleteCustomerAddress(id:$id)";
+    const definitions = action === "create" ? "$i:DeliveryAddressInput!"
+      : action === "update" ? "$id:ID!,$i:DeliveryAddressInput!" : "$id:ID!";
+    const response = await gql(
+      `mutation(${definitions}){bye:customerLogout ...Later} fragment Later on Mutation { denied:${field} }`,
+      { id, i: address("changed") }, token,
+    );
+    expect(errorCode(response)).toBe("UNAUTHENTICATED");
+    expect(await db.collection("customer_addresses").find({}).toArray()).toEqual(before);
+    expect(errorCode(await gql("{customerAddresses{id}}", {}, token))).toBe("UNAUTHENTICATED");
+  });
+
+  it.each(["ADMIN", "RESTAURANT", "RIDER"])("never grants customer address access to a %s session", async (role) => {
+    const ownerToken = await login(PHONE_A);
+    const created = await gql(
+      "mutation($i:DeliveryAddressInput!){createCustomerAddress(input:$i){id}}",
+      { i: address("owner") }, ownerToken,
+    );
+    const id = created.body.data.createCustomerAddress.id;
+    const token = crypto.randomBytes(32).toString("base64url");
+    await db.collection("staff_users").insertOne({ id: role, name: role, role, active: true, restaurantId: "r1" });
+    await db.collection("staff_sessions").insertOne({ id: `session-${role}`, userId: role,
+      tokenHash: crypto.createHash("sha256").update(token).digest("hex"), expiresAt: new Date(Date.now() + 60_000) });
+    expect((await gql("{me{role} customerMe{id}}", {}, token)).body.data).toEqual({ me: { role }, customerMe: null });
+    const before = await db.collection("customer_addresses").find({}).toArray();
+    for (const query of [
+      "{customerAddresses{id}}",
+      "mutation($i:DeliveryAddressInput!){createCustomerAddress(input:$i){id}}",
+      "mutation($id:ID!,$i:DeliveryAddressInput!){updateCustomerAddress(id:$id,input:$i){id}}",
+      "mutation($id:ID!){deleteCustomerAddress(id:$id)}",
+    ]) expect(errorCode(await gql(query, { id, i: address("staff") }, token))).toBe("UNAUTHENTICATED");
+    expect(await db.collection("customer_addresses").find({}).toArray()).toEqual(before);
+  });
+
+  it("never grants staff command permissions to a customer session", async () => {
+    const token = await login(PHONE_A);
+    expect((await gql("{me{id} customerMe{phone}}", {}, token)).body.data).toEqual({ me: null, customerMe: { phone: PHONE_A } });
+    for (const query of [
+      "{operationsOrders{id deliveryAddress{phone}}}",
+      "{availableRiders{id}}",
+      'mutation{transitionOrder(orderId:"foreign",status:"ACCEPTED",expectedStatus:"CONFIRMED"){id}}',
+      'mutation{assignRider(orderId:"foreign",riderId:"rider",expectedStatus:"READY"){id}}',
+      'mutation{simulateDemoPayment(orderId:"foreign"){id}}',
+    ]) expect(errorCode(await gql(query, {}, token))).toBe("UNAUTHENTICATED");
   });
 
   it("requires and validates delivery coordinates", async () => {

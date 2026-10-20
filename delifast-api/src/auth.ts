@@ -149,5 +149,9 @@ export async function logout(db: Db, ctx: AuthContext) {
       { id: ctx.sessionId, revokedAt: { $exists: false } },
       { $set: { revokedAt: new Date() } },
     );
+  // GraphQL mutation fields execute serially with the same context. Later
+  // fields must not retain permissions after this logout has completed.
+  delete ctx.user;
+  delete ctx.sessionId;
   return true;
 }

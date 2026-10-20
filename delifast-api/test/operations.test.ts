@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import request from "supertest";
 import { passwordHash } from "../src/auth.js";
@@ -99,6 +99,9 @@ describe("contrat opérations", () => {
     await (await import("../src/db.js")).closeDb();
     await mongo.stop();
   });
+  afterEach(async () => {
+    await db.collection("orders").deleteMany({ id: /^logout-/ });
+  });
 
   it("refuse anonymous et login invalide, puis révoque une session valide", async () => {
     expect(
@@ -117,6 +120,30 @@ describe("contrat opérations", () => {
       (await gql("{operationsOrders{id}}", {}, admin.token)).errors[0]
         .extensions.code,
     ).toBe("UNAUTHENTICATED");
+  });
+
+  it.each([
+    ["admin@x", "Admin!123", "CONFIRMED", "ACCEPTED"],
+    ["rest@x", "Rest!123", "CONFIRMED", "ACCEPTED"],
+    ["rider@x", "Rider!123", "READY", "PICKED_UP"],
+  ])("refuse une transition après déconnexion de %s dans la même mutation", async (email, password, from, to) => {
+    const session = await login(email, password);
+    const id = `logout-${email}`;
+    await db.collection("orders").insertOne({
+      id, idempotencyKey: id, restaurantId: "r1", riderId: "rider", status: from,
+      paymentStatus: "PAID", deliveryAddress: orderInput("unused-key").deliveryAddress,
+      checkout: { currency: "XOF", subtotal: 1000, deliveryFee: 500, serviceFee: 0, tax: 0, discount: 0, total: 1500, items: [] },
+      history: [], createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const before = await db.collection("orders").findOne({ id });
+    const response = await gql(
+      "mutation($id:ID!,$from:String!,$to:String!){bye:staffLogout ...Later} fragment Later on Mutation { denied:transitionOrder(orderId:$id,status:$to,expectedStatus:$from){id} }",
+      { id, from, to }, session.token,
+    );
+    expect(response.errors?.[0]?.extensions.code).toBe("UNAUTHENTICATED");
+    expect(await db.collection("orders").findOne({ id })).toEqual(before);
+    expect((await gql("{operationsOrders{id}}", {}, session.token)).errors[0].extensions.code).toBe("UNAUTHENTICATED");
+    await db.collection("orders").deleteOne({ id });
   });
 
   it("applique paiement, portée, CAS et parcours nominal strict", async () => {

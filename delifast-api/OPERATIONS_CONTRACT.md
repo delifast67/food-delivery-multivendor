@@ -23,6 +23,8 @@ Chaque mutation opérationnelle porte `expectedStatus` et utilise une mise à jo
 
 Le client récupère une commande avec son `accessToken`. Le rejeu d'une clé d'idempotence identique retourne le même jeton client ; les réponses staff ne retournent jamais ce jeton. Les documents historiques sans `history` reçoivent une valeur par défaut compatible et les formes `accessToken`/`accessTokenHash` sont acceptées.
 
+Après révocation persistée, `staffLogout` et `customerLogout` retirent aussi immédiatement l’identité du contexte GraphQL courant. Un champ sensible placé après la déconnexion dans la même mutation, même via un alias ou un fragment, est refusé avec `UNAUTHENTICATED` sans modifier les adresses ou commandes. Cette garantie ne prétend pas interrompre une autre requête déjà en cours. Une session du personnel, même admin, ne donne pas accès au carnet client ; une session client ne donne aucun droit d’opération du personnel.
+
 ## API et paiement
 
 Le schéma public est [`schema/v1.graphql`](schema/v1.graphql) : `operationsOrders`, `availableRiders`, `me`, `staffLogin`, `staffLogout`, `simulateDemoPayment`, `transitionOrder` et `assignRider`. `PaymentProvider` est une abstraction locale dans `src/payment.ts`; seul `DemoPaymentProvider` est construit avec `DELIFAST_DEMO_PAYMENTS=true`. Aucun webhook ou fournisseur réel n'est simulé.
