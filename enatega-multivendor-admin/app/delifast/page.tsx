@@ -11,6 +11,7 @@ import {
 } from '@/lib/delifast/client';
 import './delifast.css';
 import { parseHoursText, parsePolygonText } from '@/lib/delifast/zone-parsing';
+import RestaurantSchedule from './RestaurantSchedule';
 
 const client = new DelifastClient();
 const statuses = [
@@ -310,6 +311,7 @@ export default function DelifastPage() {
         )}
       </section>
       <RestaurantProfilesPanel snapshot={snapshot} busy={busy} run={run} refreshSnapshot={refresh} />
+      <RestaurantSchedule restaurants={snapshot.restaurants} busy={busy} save={async (id, version, schedule) => (await run(() => client.setRestaurantSchedule(id, version, schedule), 'Horaires restaurant enregistrés')).ok} />
       <DeliveryZonesPanel snapshot={snapshot} busy={busy} refresh={refresh} />
     </main>
   );

@@ -4,7 +4,7 @@
 
 `operationsRestaurants: [Restaurant!]!` est réservé aux rôles `ADMIN` et `RESTAURANT`. ADMIN reçoit tous les restaurants; RESTAURANT reçoit uniquement son restaurant. Le catalogue public (`restaurants`, `restaurant`) ne renvoie pas les plats `archived=true`. Le champ `menu` d'un résultat `operationsRestaurants` inclut les plats archivés.
 
-`Restaurant` expose `open` et `version`; les documents historiques sans ces champs sont lus comme `open=true` et `version=0`. `MenuItem` expose `version` et `archived`; les documents historiques sont lus comme `version=0`, `archived=false`.
+`Restaurant` expose `open`, `version` et `weeklySchedule`. Dans les vues publiques, `open` est l’ouverture effective (interrupteur manuel ET horaires) ; dans `operationsRestaurants` et les retours de mutations, `open` reste l’interrupteur manuel. Les documents historiques sans ces champs sont lus comme manuellement ouverts, sans restriction horaire et `version=0`. `MenuItem` expose `version` et `archived`; les documents historiques sont lus comme `version=0`, `archived=false`.
 
 Mutations réservées à ADMIN/RESTAURANT, avec portée au restaurant propre pour RESTAURANT:
 
@@ -12,8 +12,17 @@ Mutations réservées à ADMIN/RESTAURANT, avec portée au restaurant propre pou
 - `updateMenuItem(id, expectedVersion, input)`
 - `setMenuItemArchived(id, expectedVersion, archived)`
 - `setRestaurantOpen(id, expectedVersion, open)`
+- `setRestaurantSchedule(id, expectedVersion, weeklySchedule)`
 
 `MenuItemInput` impose name/description non vides et trimés, prix entier XOF `0..2147483647`, et `available` booléen. Les textes sont bornés (nom 160, description 2000). Il n'existe aucune suppression ni déplacement de restaurant.
+
+## Horaires restaurant
+
+`weeklySchedule: [RestaurantHours!]` est nullable. `null` (ou champ absent dans un document historique) signifie sans restriction horaire ; `[]` signifie fermé toute la semaine. La mutation reçoit `[RestaurantHoursInput!]` avec `{day,startMinute,endMinute}` : dimanche `0` à samedi `6`, minutes entières depuis minuit, début `0..1439`, fin `1..1440`, début strictement inférieur à fin. Maximum 28 créneaux, tri canonique jour/début/fin, aucun chevauchement sur un jour ; les créneaux adjacents sont acceptés. Une nuit se représente par deux créneaux sur les jours correspondants.
+
+L’évaluation utilise l’heure UTC serveur (Ouagadougou), début inclus et fin exclue, sans conversion depuis le fuseau du navigateur. L’interrupteur manuel fermé reste prioritaire. Les zones conservent leurs propres horaires et frais. `deliveryEligibility`, `calculateCheckout` et une nouvelle `placeOrder` refusent un établissement fermé avec `RESTAURANT_CLOSED`. `restaurants(point)` l’exclut ; sans point, la liste publique peut encore le présenter avec `open=false`. Les lectures opérationnelles et les commandes déjà créées restent disponibles. Le rejeu idempotent exact d’une commande renvoie son snapshot avant tout nouveau calcul d’ouverture.
+
+La version est commune avec profil, ouverture et rattachements de zones ; une édition concurrente est refusée par CAS. Le journal borné enregistre `RESTAURANT_SCHEDULE_UPDATED`. Les mutations de profil existantes n’écrasent pas les horaires. Aucun horaire réel, fermeture exceptionnelle, calendrier de jours fériés, fuseau configurable ou planification anticipée de commande n’est introduit. Les établissements sans horaires gardent leur comportement historique, sans migration destructive.
 
 ## Concurrence et commandes
 

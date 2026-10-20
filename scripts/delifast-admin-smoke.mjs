@@ -63,7 +63,7 @@ const transitionMutation = 'mutation($id:ID!,$status:String!,$expected:String!){
 const assignMutation = 'mutation($id:ID!,$rider:ID!,$expected:String!){assignRider(orderId:$id,riderId:$rider,expectedStatus:$expected){id riderId status}}';
 try {
   mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'delifast_admin_smoke' } });
-  env = { ...process.env, NODE_ENV: 'development', MONGODB_URI: mongo.getUri(), HOST: '127.0.0.1', PORT: String(apiPort), DELIFAST_DEMO_PAYMENTS: 'false', PAYMENT_PROVIDER: '', PAYDUNYA_ENABLED: 'false', PAYDUNYA_LIVE_AUTHORIZED: 'false', RATE_LIMIT_MAX: '1000', DELIFAST_LOCAL_MODE: 'true', DELIFAST_API_URL: `http://127.0.0.1:${apiPort}/graphql`, NEXT_TELEMETRY_DISABLED: '1' };
+  env = { ...process.env, NODE_ENV: 'development', MONGODB_URI: mongo.getUri(), HOST: '127.0.0.1', PORT: String(apiPort), DELIFAST_DEMO_PAYMENTS: 'false', PAYMENT_PROVIDER: '', PAYDUNYA_ENABLED: 'false', PAYDUNYA_LIVE_AUTHORIZED: 'false', ORANGE_SMS_ENABLED: 'false', RATE_LIMIT_MAX: '1000', DELIFAST_LOCAL_MODE: 'true', DELIFAST_API_URL: `http://127.0.0.1:${apiPort}/graphql`, NEXT_TELEMETRY_DISABLED: '1' };
   await cli('dist/migrations/index.js');
   await cli('dist/migrations/seed.js');
   const server = start(['dist/src/server.js'], `${root}delifast-api`);
@@ -114,6 +114,22 @@ try {
   await rejected(openMutation, { id: own.id, version: closed.version, open: true }, rider.token, 'FORBIDDEN');
   await client.setRestaurantOpen(own.id, closed.version, true);
   ok('restaurants : ouverture versionnée, concurrence et cloisonnement vérifiés');
+  const scheduleMutation = 'mutation($id:ID!,$v:Int!,$s:[RestaurantHoursInput!]){setRestaurantSchedule(id:$id,expectedVersion:$v,weeklySchedule:$s){id version weeklySchedule{day startMinute endMinute}}}';
+  const scheduledOwn = (await client.snapshot()).restaurants.find(r => r.id === own.id);
+  assert.equal(scheduledOwn.weeklySchedule, null);
+  for (const [staff, code] of [[undefined, 'UNAUTHENTICATED'], [other, 'FORBIDDEN'], [rider, 'FORBIDDEN']]) {
+    await rejected(scheduleMutation, { id: own.id, v: scheduledOwn.version, s: [] }, staff?.token, code);
+  }
+  const scheduledClosed = await client.setRestaurantSchedule(own.id, scheduledOwn.version, []);
+  assert.equal(scheduledClosed.open, true, 'Les opérations conservent l’interrupteur manuel');
+  assert.deepEqual(scheduledClosed.weeklySchedule, []);
+  assert.equal((await gql('query($id:ID!){restaurant(id:$id){open}}', { id: own.id })).restaurant.open, false);
+  await rejected('query($r:ID!,$p:DeliveryPointInput!){deliveryEligibility(restaurantId:$r,point:$p){zoneId}}', { r: own.id, p: zoneInput.center }, undefined, 'RESTAURANT_CLOSED');
+  await assert.rejects(client.setRestaurantSchedule(own.id, scheduledOwn.version, null), e => e.code === 'CONCURRENT_MODIFICATION');
+  const scheduledOpen = (await gql(scheduleMutation, { id: own.id, v: scheduledClosed.version, s: null }, restaurant.token)).setRestaurantSchedule;
+  assert.equal(scheduledOpen.weeklySchedule, null);
+  assert.equal((await gql('query($id:ID!){restaurant(id:$id){open}}', { id: own.id })).restaurant.open, true);
+  ok('horaires restaurant : null/vide, ouverture effective, droits propriétaire, refus hors horaires et CAS via le vrai proxy');
   // Profils exclusivement fictifs dans la base jetable, sans création de compte.
   const profileInput = { name: 'Profil restaurant fictif — ne pas livrer', description: 'Fixture de recette sans activité commerciale', open: false, deliveryZoneIds: [zone.id] };
   const profileMutation = 'mutation($input:RestaurantProfileInput!){createRestaurantProfile(input:$input){id version deliveryZoneIds}}';
@@ -135,10 +151,11 @@ try {
   const persistedProfile = (await client.snapshot()).restaurants.find(r => r.id === profile.id);
   assert.equal(persistedProfile.name, 'Profil fictif modifié');
   assert.deepEqual(persistedProfile.deliveryZoneIds, [linked.id]);
+  const openedProfile = await client.setRestaurantOpen(profile.id, updatedProfile.version, true);
   const attachedEligibility = (await gql('query($r:ID!,$p:DeliveryPointInput!){deliveryEligibility(restaurantId:$r,point:$p){zoneId deliveryFee}}', { r: profile.id, p: zoneInput.center })).deliveryEligibility;
   assert.equal(attachedEligibility.zoneId, linked.id);
   assert.equal(attachedEligibility.deliveryFee, linked.feeXof);
-  await client.updateRestaurantProfile(profile.id, updatedProfile.version, { ...profileInput, deliveryZoneIds: [] });
+  await client.updateRestaurantProfile(profile.id, openedProfile.version, { ...profileInput, open: true, deliveryZoneIds: [] });
   await rejected('query($r:ID!,$p:DeliveryPointInput!){deliveryEligibility(restaurantId:$r,point:$p){zoneId}}', { r: profile.id, p: zoneInput.center }, undefined, 'OUT_OF_DELIVERY_ZONE');
   ok('profils restaurant : création/modification via proxy, droits, validation, zone inconnue, rattachement sans déplacement, persistance et conflit');
   async function place() {

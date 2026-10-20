@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { Db } from "mongodb";
 import type { Staff } from "./auth.js";
 import { fail, assertIntAmount } from "./validation.js";
+import { isRestaurantOpen, resolvedRestaurantSchedule } from "./restaurant-hours.js";
 
 const MAX_NAME = 160;
 const MAX_DESCRIPTION = 2000;
@@ -63,10 +64,11 @@ function viewMenu(item: any) {
     optionGroups: Array.isArray(item.optionGroups) ? item.optionGroups : [],
   };
 }
-function viewRestaurant(r: any) {
+function viewRestaurant(r: any, effectiveOpen = false) {
   return {
     ...r,
-    open: r.open !== false,
+    open: effectiveOpen ? isRestaurantOpen(r) : r.open !== false,
+    weeklySchedule: resolvedRestaurantSchedule(r),
     version: Number.isInteger(r.version) ? r.version : 0,
   };
 }
@@ -82,13 +84,11 @@ function includeArchived(parent: any) {
 }
 
 export async function publicRestaurants(db: Db) {
-  return (await db.collection("restaurants").find({}).toArray()).map(
-    viewRestaurant,
-  );
+  return (await db.collection("restaurants").find({}).toArray()).map((r) => viewRestaurant(r, true));
 }
 export async function publicRestaurant(db: Db, id: string) {
   const r = await db.collection("restaurants").findOne({ id });
-  return r ? viewRestaurant(r) : null;
+  return r ? viewRestaurant(r, true) : null;
 }
 export async function operationsRestaurants(db: Db, user: Staff) {
   const q = user.role === "ADMIN" ? {} : { id: user.restaurantId };

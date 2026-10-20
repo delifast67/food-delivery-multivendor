@@ -2,6 +2,7 @@ import { eligibility } from "./zones.js";
 import type { Db } from "mongodb";
 import { config } from "./config.js";
 import { assertIntAmount, Cart, fail } from "./validation.js";
+import { isRestaurantOpen } from "./restaurant-hours.js";
 export type SelectedMenuOption = {
   groupId: string;
   groupName: string;
@@ -34,7 +35,7 @@ export async function calculateCheckout(db: Db, cart: Cart): Promise<Checkout> {
     .collection("restaurants")
     .findOne({ id: cart.restaurantId });
   if (!restaurant) fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
-  if (restaurant.open === false) fail("RESTAURANT_CLOSED", "Restaurant fermé");
+  if (!isRestaurantOpen(restaurant)) fail("RESTAURANT_CLOSED", "Restaurant fermé");
   const menu = await db
     .collection<any>("menu_items")
     .find({ id: { $in: cart.items.map((x) => x.menuItemId) } })

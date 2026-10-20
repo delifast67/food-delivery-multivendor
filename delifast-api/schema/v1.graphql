@@ -29,6 +29,7 @@ type Mutation {
   updateMenuItem(id: ID!, expectedVersion: Int!, input: MenuItemInput!): MenuItem!
   setMenuItemArchived(id: ID!, expectedVersion: Int!, archived: Boolean!): MenuItem!
   setRestaurantOpen(id: ID!, expectedVersion: Int!, open: Boolean!): Restaurant!
+  setRestaurantSchedule(id: ID!, expectedVersion: Int!, weeklySchedule: [RestaurantHoursInput!]): Restaurant!
   createRestaurantProfile(input: RestaurantProfileInput!): Restaurant!
   updateRestaurantProfile(id: ID!, expectedVersion: Int!, input: RestaurantProfileInput!): Restaurant!
   createMenuCategory(restaurantId: ID!, input: MenuCategoryInput!): MenuCategory!
@@ -49,7 +50,9 @@ type CustomerOtpChallenge { challengeId: ID!, expiresIn: Int!, retryAfter: Int! 
 type CustomerAddress { id: ID!, recipientName: String!, phone: String!, city: String!, neighborhood: String!, landmark: String!, instructions: String!, point: Point! }
 input DeliveryPointInput { latitude: Float!, longitude: Float! }
 input RestaurantProfileInput { name: String!, description: String!, open: Boolean!, deliveryZoneIds: [ID!]! }
-type Restaurant { id: ID!, name: String!, description: String!, open: Boolean!, version: Int!, deliveryZoneIds: [ID!]!, categories: [MenuCategory!]!, menu: [MenuItem!]! }
+input RestaurantHoursInput { day: Int!, startMinute: Int!, endMinute: Int! }
+type RestaurantHours { day: Int!, startMinute: Int!, endMinute: Int! }
+type Restaurant { id: ID!, name: String!, description: String!, open: Boolean!, version: Int!, weeklySchedule: [RestaurantHours!], deliveryZoneIds: [ID!]!, categories: [MenuCategory!]!, menu: [MenuItem!]! }
 type MenuCategory { id: ID!, name: String!, sortOrder: Int!, archived: Boolean!, version: Int! }
 type MenuItem { id: ID!, name: String!, description: String!, priceXof: Int!, available: Boolean!, version: Int!, archived: Boolean!, categoryId: ID, optionGroups: [MenuOptionGroup!]! }
 input MenuCategoryInput { name: String!, sortOrder: Int! }

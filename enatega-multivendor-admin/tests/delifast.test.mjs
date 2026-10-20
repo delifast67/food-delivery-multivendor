@@ -213,6 +213,7 @@ async function pageHarness(client) {
       if (name === '@/lib/delifast/client') return { DelifastClient: class { constructor() { return client; } }, DelifastError };
       if (name.endsWith('.css')) return {};
       if (name === '@/lib/delifast/zone-parsing') return { parsePolygonText, parseHoursText };
+      if (name === './RestaurantSchedule') return { __esModule: true, default: () => null };
       return require(name);
     },
   });
@@ -275,4 +276,112 @@ test('une écriture et une relecture échouées ne sont pas annoncées comme ét
   const screen = harness.render();
   assert.match(harness.text(screen), /Actualisation impossible ; résultat incertain/);
   assert.doesNotMatch(harness.text(screen), /État serveur relu/);
+});
+
+
+test('les horaires nullable, vides ou définis sont transmis avec CAS sans rejeu', async () => {
+  storage(token);
+  const calls = transport(({ variables }) => response({ setRestaurantSchedule: { id: variables.id, version: variables.expectedVersion + 1, weeklySchedule: variables.weeklySchedule } }));
+  const client = new DelifastClient();
+  const schedule = [{ day: 1, startMinute: 720, endMinute: 840 }];
+  for (const value of [null, [], schedule]) {
+    const result = await client.setRestaurantSchedule('restaurant-fictif', 9, value);
+    assert.deepEqual(result.weeklySchedule, value);
+  }
+  assert.deepEqual(calls.map(call => call.variables), [null, [], schedule].map(weeklySchedule => ({ id: 'restaurant-fictif', expectedVersion: 9, weeklySchedule })));
+  assert.ok(calls.every(call => call.headers.authorization === `Bearer ${token}`));
+  const failed = transport(() => { throw new Error('Réponse perdue'); });
+  await assert.rejects(client.setRestaurantSchedule('restaurant-fictif', 9, []), /Réponse perdue/);
+  assert.equal(failed.length, 1);
+});
+
+async function scheduleHarness(props) {
+  const { createRequire } = await import('node:module');
+  const { runInNewContext } = await import('node:vm');
+  const require = createRequire(import.meta.url);
+  const React = require('react');
+  const states = [];
+  let cursor = 0;
+  const hooks = {
+    useState(initial) {
+      const index = cursor++;
+      if (!(index in states)) states[index] = typeof initial === 'function' ? initial() : initial;
+      return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }];
+    },
+    useRef(initial) {
+      const index = cursor++;
+      if (!(index in states)) states[index] = { current: initial };
+      return states[index];
+    },
+  };
+  const source = fs.readFileSync(new URL('../app/delifast/RestaurantSchedule.tsx', import.meta.url), 'utf8');
+  const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+  const module = { exports: {} };
+  runInNewContext(js, { module, exports: module.exports, require(name) { return name === 'react' ? hooks : require(name); } });
+  const children = node => React.Children.toArray(node?.props?.children);
+  const text = node => typeof node === 'string' || typeof node === 'number' ? String(node) : children(node).map(text).join(' ');
+  const find = (node, predicate) => !node || typeof node !== 'object' ? null : predicate(node) ? node : children(node).map(child => find(child, predicate)).find(Boolean) ?? null;
+  return { render: () => { cursor = 0; return module.exports.default(props); }, find, text, states, parse: module.exports.parseScheduleRows, settle: () => new Promise(resolve => setImmediate(resolve)) };
+}
+const scheduleRestaurant = schedule => ({ id: 'restaurant-fictif', name: 'Fictif', version: 4, open: true, weeklySchedule: schedule });
+const buttonWith = (h, tree, label) => h.find(tree, node => node.type === 'button' && h.text(node) === label);
+
+test('le formulaire horaires capture la version et garde le sens null / fermé toute semaine', async () => {
+  const calls = [];
+  const props = { restaurants: [scheduleRestaurant(null)], busy: false, save: async (...args) => { calls.push(args); return true; } };
+  const h = await scheduleHarness(props);
+  buttonWith(h, h.render(), 'Modifier les horaires').props.onClick();
+  props.restaurants = [{ ...scheduleRestaurant(null), version: 7 }];
+  h.find(h.render(), node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  await h.settle();
+  assert.deepEqual(calls[0], ['restaurant-fictif', 4, null]);
+  buttonWith(h, h.render(), 'Modifier les horaires').props.onClick();
+  h.find(h.render(), node => node.type === 'input' && node.props.type === 'checkbox').props.onChange({ target: { checked: true } });
+  h.find(h.render(), node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  await h.settle();
+  assert.equal(calls[1][1], 7);
+  assert.equal(calls[1][2].length, 0);
+});
+
+test('échec ou résultat ambigu bloque tout rejeu jusqu’au rechargement explicite du brouillon', async () => {
+  let calls = 0;
+  const props = { restaurants: [scheduleRestaurant([])], busy: false, save: async () => { calls++; return false; } };
+  const h = await scheduleHarness(props);
+  buttonWith(h, h.render(), 'Modifier les horaires').props.onClick();
+  h.find(h.render(), node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  await h.settle();
+  assert.equal(buttonWith(h, h.render(), 'Enregistrer les horaires').props.disabled, true);
+  h.find(h.render(), node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  await h.settle();
+  assert.equal(calls, 1);
+  assert.match(h.text(h.render()), /brouillon reste visible/);
+  buttonWith(h, h.render(), 'Recharger les horaires affichés').props.onClick();
+  assert.equal(buttonWith(h, h.render(), 'Enregistrer les horaires').props.disabled, false);
+});
+
+test('le formulaire refuse chevauchements et valeurs invalides, mais accepte minuit et créneaux adjacents', async () => {
+  const calls = [];
+  const overlap = [{ day: 1, startMinute: 720, endMinute: 840 }, { day: 1, startMinute: 800, endMinute: 900 }];
+  const h = await scheduleHarness({ restaurants: [scheduleRestaurant(overlap)], busy: false, save: async (...args) => { calls.push(args); return true; } });
+  buttonWith(h, h.render(), 'Modifier les horaires').props.onClick();
+  h.find(h.render(), node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  await h.settle();
+  assert.equal(calls.length, 0);
+  assert.match(h.text(h.render()), /chevauchent/);
+  for (const row of [{ day: 7, startMinute: 0, endMinute: 1 }, { day: 1, startMinute: NaN, endMinute: 2 }, { day: 1, startMinute: 1440, endMinute: 1440 }]) {
+    assert.throws(() => h.parse([row]), /créneau/);
+  }
+  assert.throws(() => h.parse(Array(29).fill({ day: 1, startMinute: 0, endMinute: 1 })), /28/);
+  const valid = h.parse([{ day: 6, startMinute: 720, endMinute: 1440 }, { day: 6, startMinute: 0, endMinute: 720 }]);
+  assert.equal(valid[0].startMinute, 0); assert.equal(valid[1].endMinute, 1440);
+});
+
+test('la garde synchrone empêche deux enregistrements dans le même tour', async () => {
+  let calls = 0, resolve;
+  const h = await scheduleHarness({ restaurants: [scheduleRestaurant(null)], busy: false, save: () => { calls++; return new Promise(r => { resolve = r; }); } });
+  buttonWith(h, h.render(), 'Modifier les horaires').props.onClick();
+  const submit = h.find(h.render(), node => node.type === 'form').props.onSubmit;
+  submit({ preventDefault() {} }); submit({ preventDefault() {} });
+  assert.equal(calls, 1); resolve(true); await h.settle();
+  assert.equal(h.find(h.render(), node => node.type === 'form'), null);
 });

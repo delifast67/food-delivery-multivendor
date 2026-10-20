@@ -22,7 +22,15 @@ Se connecter avec un compte staff existant reconnu `ADMIN` par le serveur, consu
 
 Les transitions nécessitent un paiement déjà confirmé et transmettent `expectedStatus`. L’affectation est possible uniquement aux états `ACCEPTED`, `PREPARING`, `READY`, sans remplacer un livreur déjà affecté. L’ouverture transmet `expectedVersion`. En cas de conflit ou de réponse incertaine, relire l’état serveur avant toute nouvelle décision : aucune mutation n’est rejouée automatiquement.
 
-L’admin ne propose aucun encaissement, simulateur de paiement ou remboursement effectif. `REFUND_PENDING` signifie uniquement « remboursement à traiter ». Il ne crée ni comptes, ni mots de passe, ni clients permanents. Il permet désormais de créer et modifier les profils restaurant (nom, description, état ouvert/fermé et références vers des zones existantes). Les tarifs, périmètres, commissions, finances, horaires, validation de restaurants et permissions fines ne sont pas pris en charge par cette interface.
+L’admin ne propose aucun encaissement, simulateur de paiement ou remboursement effectif. `REFUND_PENDING` signifie uniquement « remboursement à traiter ». Il ne crée ni comptes, ni mots de passe, ni clients permanents. Il permet de créer et modifier les profils restaurant (nom, description, état ouvert/fermé et références vers des zones existantes), les zones et leurs tarifs de démonstration, ainsi que les horaires hebdomadaires propres aux restaurants. Commissions, finances, validation de restaurants et permissions fines restent absentes.
+
+### Horaires propres au restaurant
+
+Le panneau « Disponibilité hebdomadaire » permet de choisir un restaurant puis de définir jusqu’à 28 créneaux, sans chevauchement. Les heures sont UTC / Ouagadougou, début inclus et fin exclue. Le service de nuit doit être séparé en deux créneaux sur les jours correspondants ; la case « Fin à minuit » représente 24:00. Aucun horaire commercial réel n’est imposé. Sans restriction horaire (`weeklySchedule: null`), le comportement historique est conservé ; restriction cochée avec zéro créneau (`[]`) signifie fermé toute la semaine.
+
+L’interrupteur manuel reste prioritaire : un créneau ne rouvre pas un restaurant fermé manuellement. Les horaires des zones constituent une contrainte supplémentaire. L’API vérifie l’ouverture effective pour la découverte livrable, l’éligibilité, le devis et une nouvelle commande. Le champ `open` des vues publiques représente cette ouverture effective ; dans les opérations et les retours de mutations, il représente l’interrupteur manuel.
+
+La version est capturée au début de l’édition et partagée avec le profil, l’ouverture et les rattachements de zones. Après échec ou réponse ambiguë, le brouillon reste affiché mais verrouillé ; actualiser les opérations puis cliquer « Recharger les horaires affichés » recharge explicitement les données et la version, en remplaçant le brouillon. Aucune mutation n’est rejouée automatiquement. La modification des horaires ne change ni les commandes existantes ni une reprise idempotente exacte.
 
 ## Sessions et requêtes
 
@@ -56,6 +64,8 @@ await client.transition(orderId, 'ACCEPTED', 'CONFIRMED');
 await client.assignRider(orderId, riderId, 'ACCEPTED');
 await client.updateRestaurantProfile(restaurantId, version, { name, description, open: false, deliveryZoneIds });
 await client.createRestaurantProfile({ name, description, open: false, deliveryZoneIds });
+// Exemple technique fictif : lundi midi, pas un horaire commercial validé.
+await client.setRestaurantSchedule(restaurantId, version, [{ day: 1, startMinute: 720, endMinute: 840 }]);
 await client.logout();
 ```
 

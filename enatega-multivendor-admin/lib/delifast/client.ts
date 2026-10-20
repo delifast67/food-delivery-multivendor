@@ -50,11 +50,13 @@ export type Order = {
 export type DeliveryPoint = { latitude: number; longitude: number };
 export type DeliveryZone = { id: string; restaurantId: string; name: string; shape: 'CIRCLE' | 'POLYGON'; center: DeliveryPoint | null; radiusMeters: number | null; polygon: DeliveryPoint[] | null; enabled: boolean; feeXof: number; minimumOrderXof: number; estimatedMinutes: number; priority: number; demo: boolean; hours: { day: number; startMinute: number; endMinute: number }[]; version: number };
 export type DeliveryZoneInput = Omit<DeliveryZone, 'id' | 'restaurantId' | 'version'>;
+export type RestaurantHours = { day: number; startMinute: number; endMinute: number };
 export type Restaurant = {
   id: string;
   name: string;
   description: string;
   open: boolean;
+  weeklySchedule: RestaurantHours[] | null;
   deliveryZoneIds: string[];
   version: number;
 };
@@ -88,8 +90,8 @@ export class DelifastError extends Error {
 }
 const SESSION_KEY = 'delifast-local-session';
 const ME_QUERY = 'query Me { me { id name role restaurantId } }';
-const RESTAURANT_FIELDS = 'id name description open deliveryZoneIds version';
-const OPERATIONS_QUERY = `query Operations { operationsOrders { id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity baseUnitPrice unitPrice selectedOptions { groupName name priceXof } total } } } operationsRestaurants { id name description open deliveryZoneIds version } availableRiders { id name role restaurantId } }`;
+const RESTAURANT_FIELDS = 'id name description open deliveryZoneIds version weeklySchedule { day startMinute endMinute }';
+const OPERATIONS_QUERY = `query Operations { operationsOrders { id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity baseUnitPrice unitPrice selectedOptions { groupName name priceXof } total } } } operationsRestaurants { ${RESTAURANT_FIELDS} } availableRiders { id name role restaurantId } }`;
 function storageGet(key: string) {
   try {
     return typeof window !== 'undefined'
@@ -260,6 +262,13 @@ export class DelifastClient {
       { id, expectedVersion, input }
     );
     return data.updateRestaurantProfile;
+  }
+  async setRestaurantSchedule(id: string, expectedVersion: number, weeklySchedule: RestaurantHours[] | null) {
+    const data = await this.request<{ setRestaurantSchedule: Restaurant }>(
+      `mutation SetRestaurantSchedule($id: ID!, $expectedVersion: Int!, $weeklySchedule: [RestaurantHoursInput!]) { setRestaurantSchedule(id: $id, expectedVersion: $expectedVersion, weeklySchedule: $weeklySchedule) { ${RESTAURANT_FIELDS} } }`,
+      { id, expectedVersion, weeklySchedule }
+    );
+    return data.setRestaurantSchedule;
   }
   async setRestaurantOpen(id: string, expectedVersion: number, open: boolean) {
     return this.mutate<Restaurant>(

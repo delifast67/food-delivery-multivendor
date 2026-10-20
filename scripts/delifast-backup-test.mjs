@@ -21,7 +21,7 @@ try {
   await source.collection('orders').insertOne(order);
   await source.collection('staff_users').insertOne({ id: 'test-admin', passwordHash: 'fictional-test-hash' });
   await source.collection('staff_sessions').insertOne({ tokenHash: 'should-not-survive', expiresAt: new Date() });
-  await source.collection('restaurants').insertOne({ id: 'test-restaurant', open: false, version: 4, audit: [{ actor: { id: 'test-admin', role: 'ADMIN' }, action: 'RESTAURANT_CLOSED', version: 4, at: new Date().toISOString() }] });
+  await source.collection('restaurants').insertOne({ id: 'test-restaurant', open: false, weeklySchedule: [{ day: 1, startMinute: 720, endMinute: 1440 }], version: 4, audit: [{ actor: { id: 'test-admin', role: 'ADMIN' }, action: 'RESTAURANT_CLOSED', version: 4, at: new Date().toISOString() }] });
   await source.collection('menu_items').insertOne({ id: 'test-item', restaurantId: 'test-restaurant', name: 'Plat fictif', description: 'Test', categoryId: 'test-category', optionGroups: [{id:'format',name:'Format fictif',minSelections:0,maxSelections:1,options:[{id:'grand',name:'Grand fictif',priceXof:100,available:true}]}], priceXof: 2300, available: false, archived: true, version: 7, audit: [{ actor: { id: 'test-admin', role: 'ADMIN' }, action: 'MENU_ITEM_ARCHIVED', version: 7, at: new Date().toISOString() }] });
   await source.collection('menu_categories').createIndex({id:1},{unique:true});
   await source.collection('menu_categories').insertOne({id:'test-category',restaurantId:'test-restaurant',name:'Catégorie fictive',sortOrder:2,archived:true,version:3});

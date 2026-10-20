@@ -3,6 +3,7 @@ import type { Db } from "mongodb";
 import type { Staff } from "./auth.js";
 import { fail } from "./validation.js";
 import { restaurantZoneIds } from "./restaurant.js";
+import { isRestaurantOpen } from "./restaurant-hours.js";
 
 export type Point = { latitude: number; longitude: number };
 export type DeliveryPointInput = Point;
@@ -139,6 +140,7 @@ export async function eligibility(db:Db,restaurantIdRaw:unknown,p:unknown,subtot
   const restaurantId=id(restaurantIdRaw,"restaurantId"); if(p===undefined||p===null) fail("DELIVERY_POINT_REQUIRED","Point de livraison requis"); const pointValue=normalizePoint(p); const subtotalValue=subtotal==null?undefined:subtotal; if(subtotalValue!==undefined&&(!Number.isInteger(subtotalValue)||(subtotalValue as number)<0)) fail("INVALID_INPUT","Sous-total invalide");
   const restaurant = await db.collection<any>("restaurants").findOne({id:restaurantId});
   if (!restaurant) fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
+  if (!isRestaurantOpen(restaurant, now)) fail("RESTAURANT_CLOSED", "Restaurant fermé");
   const zoneIds = await restaurantZoneIds(db, restaurant);
   const zones=await db.collection<any>("delivery_zones").find({id:{$in:zoneIds},enabled:true}).toArray(); const matched=zones.map(view).filter(z=>active(Array.isArray(z.hours)?z.hours:[],now)&& (z.shape==="CIRCLE"?distance(pointValue,z.center)<=z.radiusMeters+1e-7: z.shape==="POLYGON"&&insidePolygon(pointValue,z.polygon))).sort((a,b)=>(a.priority??0)-(b.priority??0)||String(a.id).localeCompare(String(b.id)));
   if(!matched.length) fail("OUT_OF_DELIVERY_ZONE","Point hors zone de livraison"); const z=matched[0]; if(subtotalValue!==undefined&&(subtotalValue as number)<z.minimumOrderXof) fail("MINIMUM_ORDER_NOT_MET","Minimum de commande non atteint"); return {zoneId:z.id,zoneName:z.name,zoneVersion:Number.isInteger(z.version)?z.version:0,deliveryFee:z.feeXof,minimumOrderXof:z.minimumOrderXof,estimatedMinutes:z.estimatedMinutes,demo:z.demo===true};

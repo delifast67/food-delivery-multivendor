@@ -38,6 +38,8 @@ import {
 } from "./catalog.js";
 import { normalizePoint, eligibility, listDeliveryZones, createDeliveryZone, updateDeliveryZone } from "./zones.js";
 import { createRestaurantProfile, updateRestaurantProfile, restaurantZoneIds } from "./restaurant.js";
+import { setRestaurantSchedule } from "./restaurant.js";
+import { isRestaurantOpen } from "./restaurant-hours.js";
 const typeDefs = await readFile(
   new URL("../schema/v1.graphql", import.meta.url),
   "utf8",
@@ -118,7 +120,7 @@ const resolvers: any = {
       if (point == null) return restaurants;
       const location = normalizePoint(point);
       const matches = await Promise.all(restaurants.map(async (r: any) => {
-        if (r.open === false) return null;
+        if (!isRestaurantOpen(r)) return null;
         try { await eligibility(getDb(), r.id, location); return r; }
         catch (error: any) {
           if (["OUT_OF_DELIVERY_ZONE"].includes(error?.extensions?.code)) return null;
@@ -242,6 +244,14 @@ const resolvers: any = {
         id,
         expectedVersion,
         open,
+      ),
+    setRestaurantSchedule: (_: any, { id, expectedVersion, weeklySchedule }: any, ctx: any) =>
+      setRestaurantSchedule(
+        getDb(),
+        requireRole(ctx, ["ADMIN", "RESTAURANT"]),
+        id,
+        expectedVersion,
+        weeklySchedule,
       ),
     createMenuCategory: (_: any, { restaurantId, input }: any, ctx: any) =>
       createMenuCategory(
