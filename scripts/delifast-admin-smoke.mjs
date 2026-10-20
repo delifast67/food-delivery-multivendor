@@ -65,6 +65,7 @@ try {
   mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'delifast_admin_smoke' } });
   env = { ...process.env, NODE_ENV: 'development', MONGODB_URI: mongo.getUri(), HOST: '127.0.0.1', PORT: String(apiPort), DELIFAST_DEMO_PAYMENTS: 'false', PAYMENT_PROVIDER: '', PAYDUNYA_ENABLED: 'false', PAYDUNYA_LIVE_AUTHORIZED: 'false', ORANGE_SMS_ENABLED: 'false', RATE_LIMIT_MAX: '1000', DELIFAST_LOCAL_MODE: 'true', DELIFAST_API_URL: `http://127.0.0.1:${apiPort}/graphql`, NEXT_TELEMETRY_DISABLED: '1' };
   await cli('dist/migrations/index.js');
+  await cli('dist/migrations/index.js'); // Re-running the index migration must be safe.
   await cli('dist/migrations/seed.js');
   const server = start(['dist/src/server.js'], `${root}delifast-api`);
   await ready(`http://127.0.0.1:${apiPort}/health`, server);
@@ -197,9 +198,9 @@ try {
     idempotencyKey: `fixture-${randomUUID()}`,
     payloadFingerprint: 'fixture-only',
   });
-  const summariesQuery = 'query($id:ID){operationsSupportTicketSummaries(limit:20,offset:0,ticketId:$id){id subject creatorRole status version createdAt updatedAt}}';
+  const summariesQuery = 'query($id:ID,$status:SupportStatus){operationsSupportTicketSummaries(limit:20,offset:0,ticketId:$id,status:$status){id subject creatorRole status version createdAt updatedAt}}';
   for (const [token, code] of [[undefined, 'UNAUTHENTICATED'], [restaurant.token, 'FORBIDDEN'], [rider.token, 'FORBIDDEN']]) {
-    await rejected(summariesQuery, { id: supportTicketId }, token, code);
+    await rejected(summariesQuery, { id: supportTicketId, status: 'RESOLVED' }, token, code);
   }
   const summaries = await client.operationsSupportTicketSummaries(20, 0, supportTicketId);
   assert.equal(summaries.length, 1);
@@ -213,6 +214,16 @@ try {
   const forbiddenSummaryField = await raw('{operationsSupportTicketSummaries{description}}', {}, admin.token);
   assert.ok(forbiddenSummaryField.errors?.length, 'Le résumé ne doit pas exposer les messages');
   ok('résumés Support : recherche exacte, projection minimale, bornes et refus hors ADMIN via le vrai proxy');
+  const supportIndexes = await db.collection('support_tickets').indexes();
+  assert.deepEqual(supportIndexes.find(index => index.name === 'support_status_created')?.key, { status: 1, createdAt: 1, id: 1 });
+  for (const status of ['OPEN', 'IN_PROGRESS', 'RESOLVED']) {
+    const filtered = await client.operationsSupportTicketSummaries(20, 0, supportTicketId, status);
+    assert.deepEqual(filtered.map(row => row.id), status === 'RESOLVED' ? [supportTicketId] : []);
+    const server = (await gql(summariesQuery, { id: supportTicketId, status }, admin.token)).operationsSupportTicketSummaries;
+    assert.deepEqual(server, filtered);
+  }
+  await rejected(summariesQuery, { status: 'UNKNOWN' }, admin.token, 'INVALID_INPUT');
+  ok('statuts Support côté serveur : trois valeurs, combinaison identifiant/statut, index migré et enum invalide refusé');
   const supportBefore = await client.operationsSupportTicket(supportTicketId);
   assert.equal(supportBefore.status, 'RESOLVED');
   assert.equal(supportBefore.version, 2);

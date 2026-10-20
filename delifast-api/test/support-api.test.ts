@@ -45,6 +45,7 @@ async function seedCustomer(id: string, phone: string, raw: string) {
 
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
+  process.env.RATE_LIMIT_MAX = "1000"; // High-volume synthetic pagination only.
   mongod = await MongoMemoryServer.create();
   process.env.MONGODB_URI = mongod.getUri();
   const dbModule = await import("../src/db.js");
@@ -256,6 +257,103 @@ describe("support API", () => {
       expect(exact.executionStats.totalDocsExamined).toBeLessThanOrEqual(1);
       expect(exact.executionStats.nReturned).toBeLessThanOrEqual(1);
     }
+  });
+
+  it("keeps filtered pages stable, private and ADMIN-only across all bounds", async () => {
+    const statuses = ["OPEN", "IN_PROGRESS", "RESOLVED"] as const;
+    const at = "2020-01-01T00:00:00.000Z";
+    const fixtures = Array.from({ length: 81 }, (_, i) => ({
+      id: `filtered-${String(i).padStart(3, "0")}`, subject: `Sujet synthétique ${i}`,
+      creatorId: "private-rider", creatorRole: "RIDER", scopeTenant: "", customerId: null,
+      restaurantId: null, description: "DESCRIPTION_PRIVEE", idempotencyKey: `filtered-key-${i}`,
+      payloadFingerprint: "EMPREINTE_PRIVEE", history: [{ actorId: "ACTEUR_PRIVE", note: "NOTE_PRIVEE" }],
+      status: statuses[i % 3], version: 0, createdAt: at, updatedAt: at,
+    }));
+    await db.collection("support_tickets").insertMany(fixtures);
+    const query = "query($status:SupportStatus,$limit:Int,$offset:Int,$ticketId:ID){operationsSupportTicketSummaries(status:$status,limit:$limit,offset:$offset,ticketId:$ticketId){id subject creatorRole status version createdAt updatedAt}}";
+    const read = async (variables: any) => {
+      const result = await gql(query, variables, staffTokens.ADMIN);
+      expect(result.body.errors).toBeUndefined();
+      return result.body.data.operationsSupportTicketSummaries;
+    };
+    for (const [token, expected] of [[undefined, "UNAUTHENTICATED"], [aToken, "UNAUTHENTICATED"], [staffTokens.RESTAURANT, "FORBIDDEN"], [staffTokens.RIDER, "FORBIDDEN"]]) {
+      expect(code(await gql(query, { status: "OPEN" }, token))).toBe(expected);
+    }
+    const projection = { _id: 0, id: 1, subject: 1, creatorRole: 1, status: 1, version: 1, createdAt: 1, updatedAt: 1 };
+    for (const status of statuses) {
+      const expected = fixtures.filter(row => row.status === status).map(row => row.id);
+      const first = await read({ status, limit: 20, offset: 0 });
+      const second = await read({ status, limit: 20, offset: 20 });
+      expect([...first, ...second].map(row => row.id)).toEqual(expected);
+      expect(first).toHaveLength(20);
+      expect(second).toHaveLength(7);
+      expect(await read({ status, limit: 20, offset: 27 })).toEqual([]);
+      expect(await read({ status, limit: 50, offset: 10000 })).toEqual([]);
+      for (const offset of [0, 20, 10000]) {
+        const plan = await db.collection("support_tickets").find({ status }).project(projection)
+          .sort({ createdAt: 1, id: 1 }).hint("support_status_created")
+          .skip(offset).limit(20).maxTimeMS(2000).explain("executionStats");
+        const stages = explainStages(plan.queryPlanner.winningPlan);
+        expect(stages.some(stage => ["SORT", "COLLSCAN"].includes(stage.stage))).toBe(false);
+        expect(stages.some(stage => stage.indexName === "support_status_created")).toBe(true);
+        expect(plan.executionStats.totalDocsExamined).toBeLessThanOrEqual(offset + 20);
+        expect(plan.executionStats.totalKeysExamined).toBeLessThanOrEqual(offset + 21);
+      }
+      for (const row of [...first, ...second]) expect(Object.keys(row).sort()).toEqual(Object.keys(projection).filter(k => k !== "_id").sort());
+      expect(await read({ status, ticketId: expected[26] })).toHaveLength(1);
+      expect(await read({ status, ticketId: expected[26], offset: 1 })).toEqual([]);
+      expect(await read({ status, ticketId: "filtered-absent" })).toEqual([]);
+      const mismatch = fixtures.find(row => row.status !== status)!.id;
+      expect(await read({ status, ticketId: mismatch })).toEqual([]);
+    }
+    expect(await read({ status: null, limit: 50 })).toHaveLength(50);
+    for (const variables of [{ status: "UNKNOWN" }, { status: "open" }, { status: "" }]) {
+      expect(code(await gql(query, variables, staffTokens.ADMIN))).toBe("INVALID_INPUT");
+    }
+    for (const variables of [{ limit: 0 }, { limit: 51 }, { offset: -1 }, { offset: 10001 }]) {
+      expect(code(await gql(query, { status: "OPEN", ...variables }, staffTokens.ADMIN))).toBe("INVALID_INPUT");
+    }
+    const { operationsSupportTicketSummaries } = await import("../src/support.js");
+    for (const role of ["RESTAURANT", "RIDER"] as const) {
+      await expect(operationsSupportTicketSummaries({} as Db, { id: "forbidden", name: "Refus", role }, 20, 0, undefined, "OPEN"))
+        .rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    }
+    for (const field of ["description", "history", "creatorId", "customerId", "restaurantId", "idempotencyKey", "payloadFingerprint"]) {
+      const result = await gql(`{operationsSupportTicketSummaries(status:OPEN){${field}}}`, {}, staffTokens.ADMIN);
+      expect(code(result)).toBe("GRAPHQL_VALIDATION_FAILED");
+      expect(result.body.data).toBeUndefined();
+    }
+  });
+
+  it("filters every status with bounded indexed plans and rejects invalid direct status", async () => {
+    const ids: string[] = [];
+    for (const status of ["OPEN", "IN_PROGRESS", "RESOLVED"] as const) {
+      const id = (await create(aToken, `status-${status.toLowerCase()}-12345678`, status)).body.data.createSupportTicket.id;
+      ids.push(id);
+      if (status !== "OPEN") {
+        await gql("mutation($id:ID!,$v:Int!,$s:SupportStatus!,$n:String!){transitionSupportTicket(id:$id,expectedVersion:$v,status:$s,note:$n){id}}", { id, v: 0, s: "IN_PROGRESS", n: "" }, staffTokens.ADMIN);
+        if (status === "RESOLVED") await gql("mutation($id:ID!,$v:Int!,$s:SupportStatus!,$n:String!){transitionSupportTicket(id:$id,expectedVersion:$v,status:$s,note:$n){id}}", { id, v: 1, s: "RESOLVED", n: "done" }, staffTokens.ADMIN);
+      }
+    }
+    const query = "query($status:SupportStatus,$limit:Int,$offset:Int,$ticketId:ID){operationsSupportTicketSummaries(status:$status,limit:$limit,offset:$offset,ticketId:$ticketId){id status}}";
+    for (const status of ["OPEN", "IN_PROGRESS", "RESOLVED"] as const) {
+      const result = await gql(query, { status, limit: 1, offset: 0 }, staffTokens.ADMIN);
+      expect(result.body.errors).toBeUndefined();
+      expect(result.body.data.operationsSupportTicketSummaries).toHaveLength(1);
+      expect(result.body.data.operationsSupportTicketSummaries[0].status).toBe(status);
+      const plan = await db.collection("support_tickets").find({ status }).sort({ createdAt: 1, id: 1 }).hint("support_status_created").limit(1).explain("executionStats");
+      const stages = explainStages(plan.queryPlanner.winningPlan);
+      expect(stages.some((stage) => stage.stage === "COLLSCAN" || stage.stage === "SORT")).toBe(false);
+      expect(stages.some((stage) => stage.indexName === "support_status_created")).toBe(true);
+      expect(plan.executionStats.totalDocsExamined).toBeLessThanOrEqual(1);
+    }
+    const exactPlan = await db.collection("support_tickets").find({ id: ids[2], status: "RESOLVED" }).hint("id_1").limit(1).explain("executionStats");
+    const exactStages = explainStages(exactPlan.queryPlanner.winningPlan);
+    expect(exactStages.some((stage) => stage.stage === "COLLSCAN" || stage.stage === "SORT")).toBe(false);
+    expect(exactStages.some((stage) => stage.indexName === "id_1")).toBe(true);
+    expect(exactPlan.executionStats.totalDocsExamined).toBeLessThanOrEqual(1);
+    const { operationsSupportTicketSummaries } = await import("../src/support.js");
+    await expect(operationsSupportTicketSummaries(db, { id: "admin", name: "Admin", role: "ADMIN" }, 1, 0, undefined, "BROKEN" as any)).rejects.toMatchObject({ extensions: { code: "INVALID_INPUT" } });
   });
 });
 

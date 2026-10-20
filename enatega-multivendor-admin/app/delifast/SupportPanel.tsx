@@ -29,10 +29,12 @@ function errorText(error: unknown) {
 
 export default function SupportPanel({ client, onUnauthorized }: Props) {
   const [tickets, setTickets] = useState<SupportTicketSummary[]>([]);
+  const [pageHasNext, setPageHasNext] = useState(false);
   const [offset, setOffset] = useState(0);
   const [ticketIdInput, setTicketIdInput] = useState('');
   const [ticketIdFilter, setTicketIdFilter] = useState<string | undefined>();
   const [statusFilter, setStatusFilter] = useState<'ALL' | SupportStatus>('ALL');
+  const [statusInput, setStatusInput] = useState<'ALL' | SupportStatus>('ALL');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<SupportTicket | null>(null);
   const [note, setNote] = useState('');
@@ -61,6 +63,7 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
   const unauthorized = useCallback((errorValue: unknown) => {
     if (errorValue instanceof DelifastError && ['UNAUTHENTICATED', 'FORBIDDEN'].includes(errorValue.code)) {
       setTickets([]);
+      setPageHasNext(false);
       setDetail(null);
       setSelectedId(null);
       setNote('');
@@ -71,15 +74,16 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
     return false;
   }, []);
 
-  const loadPage = useCallback(async (pageOffset: number, filterOverride = ticketIdFilter) => {
+  const loadPage = useCallback(async (pageOffset: number, filterOverride = ticketIdFilter, statusOverride = statusFilter) => {
     if (mutationRef.current) return false;
     const id = ++requestId.current;
     setLoading(true);
     setError('');
     try {
-      const result = await client.operationsSupportTicketSummaries(LIMIT, pageOffset, filterOverride);
+      const result = await client.operationsSupportTicketSummaries(LIMIT, pageOffset, filterOverride, statusOverride === 'ALL' ? undefined : statusOverride);
       if (!mounted.current || id !== requestId.current) return false;
       setTickets(result);
+      setPageHasNext(result.length === LIMIT);
       setOffset(pageOffset);
       return true;
     } catch (e) {
@@ -89,7 +93,7 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
     } finally {
       if (mounted.current && id === requestId.current) setLoading(false);
     }
-  }, [client, ticketIdFilter, unauthorized]);
+  }, [client, ticketIdFilter, statusFilter, unauthorized]);
 
   const loadDetail = useCallback(async (id: string) => {
     if (mutationRef.current) return;
@@ -109,18 +113,22 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
         return;
       }
       setDetail(result);
-      setTickets(current => current.map(ticket => ticket.id === result.id ? {
-        id: result.id, subject: result.subject, creatorRole: result.creatorRole,
-        status: result.status, version: result.version, createdAt: result.createdAt,
-        updatedAt: result.updatedAt,
-      } : ticket));
+      setTickets(current => {
+        if (statusFilter !== 'ALL' && result.status !== statusFilter)
+          return current.filter(ticket => ticket.id !== result.id);
+        return current.map(ticket => ticket.id === result.id ? {
+          id: result.id, subject: result.subject, creatorRole: result.creatorRole,
+          status: result.status, version: result.version, createdAt: result.createdAt,
+          updatedAt: result.updatedAt,
+        } : ticket);
+      });
     } catch (e) {
       if (!mounted.current || request !== requestId.current) return;
       if (!unauthorized(e)) setError(errorText(e));
     } finally {
       if (mounted.current && request === requestId.current) setLoading(false);
     }
-  }, [client, unauthorized]);
+  }, [client, statusFilter, unauthorized]);
 
   useEffect(() => {
     void loadPage(0);
@@ -146,9 +154,10 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
       setDetail(updated);
       setNote('');
       setConfirmed(false);
-      const refreshed = await client.operationsSupportTicketSummaries(LIMIT, offset, ticketIdFilter);
+      const refreshed = await client.operationsSupportTicketSummaries(LIMIT, offset, ticketIdFilter, statusFilter === 'ALL' ? undefined : statusFilter);
       if (!mounted.current || selectedId !== selectedAtStart || requestId.current !== requestAtStart) return;
       setTickets(refreshed);
+      setPageHasNext(refreshed.length === LIMIT);
       setBlocked(false);
       setNotice('Statut du ticket mis à jour.');
     } catch (e) {
@@ -161,29 +170,37 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
     }
   };
 
-  const visibleTickets = statusFilter === 'ALL' ? tickets : tickets.filter(ticket => ticket.status === statusFilter);
-  const canNext = tickets.length === LIMIT;
-  const applyTicketId = () => {
+  const applyFilters = () => {
     const value = ticketIdInput.trim();
     if (value.length > 128) {
       setError('L’identifiant du ticket doit contenir au maximum 128 caractères.');
       return;
     }
-    setError('');
-    setTickets([]);
     const nextFilter = value || undefined;
-    setTicketIdFilter(nextFilter);
-    setOffset(0);
-    if (nextFilter === ticketIdFilter) void loadPage(0, nextFilter);
-  };
-  const resetTicketId = () => {
-    setTicketIdInput('');
+    const nextStatus = statusInput;
+    setError('');
     setTickets([]);
+    setPageHasNext(false);
+    setTicketIdFilter(nextFilter);
+    setStatusFilter(nextStatus);
+    setOffset(0);
+    if (nextFilter === ticketIdFilter && nextStatus === statusFilter)
+      void loadPage(0, nextFilter, nextStatus);
+  };
+  const resetFilters = () => {
+    setTicketIdInput('');
+    setStatusInput('ALL');
+    setTickets([]);
+    setPageHasNext(false);
     setTicketIdFilter(undefined);
+    setStatusFilter('ALL');
     setOffset(0);
     setError('');
-    if (ticketIdFilter === undefined) void loadPage(0, undefined);
+    if (ticketIdFilter === undefined && statusFilter === 'ALL') void loadPage(0, undefined, 'ALL');
   };
+  // A detail reread may remove a row that changed status. It must not erase the
+  // next-page capability learned from the last complete server page.
+  const canNext = pageHasNext;
   const canEdit = detail && statuses.includes(detail.status);
 
   return (
@@ -192,14 +209,14 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
         <div>
           <p className="df-kicker">SUPPORT ADMIN</p>
           <h2>Tickets support</h2>
-          <p className="df-muted">Page {Math.floor(offset / LIMIT) + 1} · {visibleTickets.length} ticket(s) affiché(s) sur cette page (filtre local)</p>
+          <p className="df-muted">Page {Math.floor(offset / LIMIT) + 1} · {tickets.length} ticket(s) affiché(s) sur cette page</p>
         </div>
         <button className="df-secondary" onClick={() => void loadPage(offset)} disabled={loading || mutating}>Relire la page</button>
       </div>
       {(error || notice) && <p className={error ? 'df-banner df-error' : 'df-banner df-notice'} role="status">{error || notice}</p>}
       <section className="df-filters" aria-label="Filtrer les tickets support">
         <label>Statut
-          <select aria-label="Statut des tickets de la page courante" value={statusFilter} onChange={event => setStatusFilter(event.target.value as 'ALL' | SupportStatus)}>
+          <select aria-label="Statut des tickets support" value={statusInput} onChange={event => setStatusInput(event.target.value as 'ALL' | SupportStatus)}>
             <option value="ALL">Tous les statuts</option>
             {statuses.map(status => <option key={status} value={status}>{status}</option>)}
           </select>
@@ -208,10 +225,10 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
           <input role="searchbox" aria-label="Identifiant exact du ticket" maxLength={128} value={ticketIdInput} onChange={event => setTicketIdInput(event.target.value)} disabled={loading || mutating} />
         </label>
         <div className="df-button-row">
-          <button className="df-secondary" onClick={applyTicketId} disabled={loading || mutating}>Rechercher le ticket</button>
-          <button className="df-secondary" onClick={resetTicketId} disabled={loading || mutating}>Effacer la recherche</button>
+          <button className="df-secondary" onClick={applyFilters} disabled={loading || mutating}>Rechercher le ticket</button>
+          <button className="df-secondary" onClick={resetFilters} disabled={loading || mutating}>Effacer la recherche</button>
         </div>
-        <small className="df-muted">Recherche appliquée uniquement avec le bouton ; le statut est un filtre local de la page courante.</small>
+        <small className="df-muted">Les filtres sont appliqués au serveur uniquement avec le bouton.</small>
         <div className="df-button-row">
           <button className="df-secondary" onClick={() => void loadPage(Math.max(0, offset - LIMIT))} disabled={loading || mutating || offset === 0}>Précédente</button>
           <button className="df-secondary" onClick={() => void loadPage(Math.min(MAX_OFFSET, offset + LIMIT))} disabled={loading || mutating || !canNext || offset >= MAX_OFFSET}>Suivante</button>
@@ -222,7 +239,7 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
           <table>
             <thead><tr><th>Sujet</th><th>Créateur</th><th>Statut</th><th>Créé</th></tr></thead>
             <tbody>
-              {visibleTickets.map(ticket => <tr key={ticket.id} className={ticket.id === selectedId ? 'selected' : ''}>
+              {tickets.map(ticket => <tr key={ticket.id} className={ticket.id === selectedId ? 'selected' : ''}>
                 <td><button className="df-order-link" onClick={() => void loadDetail(ticket.id)} disabled={loading || mutating}>{ticket.subject}</button><small>#{ticket.id}</small></td>
                 <td>{ticket.creatorRole}</td>
                 <td><span className="df-pill">{ticket.status}</span></td>
@@ -230,7 +247,7 @@ export default function SupportPanel({ client, onUnauthorized }: Props) {
               </tr>)}
             </tbody>
           </table>
-          {!visibleTickets.length && <p className="df-empty">Aucun ticket sur cette page pour ce filtre.</p>}
+          {!tickets.length && <p className="df-empty">Aucun ticket sur cette page pour ce filtre.</p>}
         </div>
         {detail && <aside ref={detailRef} tabIndex={-1} className="df-card df-detail" aria-label="Détail du ticket">
           <div className="df-detail-head"><div><p className="df-kicker">#{detail.id}</p><h3>{detail.subject}</h3></div><button className="df-secondary" onClick={() => void rereadDetail()} disabled={loading || mutating}>Relire le détail</button></div>

@@ -371,7 +371,8 @@ export class DelifastClient {
   async operationsSupportTicketSummaries(
     limit = 20,
     offset = 0,
-    ticketId?: string
+    ticketId?: string,
+    status?: SupportStatus
   ): Promise<SupportTicketSummary[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 50)
       throw new DelifastError('Limite support invalide', 'INVALID_ARGUMENT');
@@ -380,11 +381,13 @@ export class DelifastClient {
     const trimmed = ticketId === undefined ? undefined : ticketId.trim();
     if (trimmed !== undefined && (trimmed.length < 1 || trimmed.length > 128))
       throw new DelifastError('Identifiant de ticket invalide', 'INVALID_ARGUMENT');
+    if (status !== undefined && !(['OPEN', 'IN_PROGRESS', 'RESOLVED'] as SupportStatus[]).includes(status))
+      throw new DelifastError('Statut support invalide', 'INVALID_ARGUMENT');
     const data = await this.request<{
       operationsSupportTicketSummaries: SupportTicketSummary[];
     }>(
-      `query OperationsSupportTicketSummaries($limit: Int = 20, $offset: Int = 0, $ticketId: ID) { operationsSupportTicketSummaries(limit: $limit, offset: $offset, ticketId: $ticketId) { ${SUPPORT_SUMMARY_FIELDS} } }`,
-      { limit, offset, ...(trimmed === undefined ? {} : { ticketId: trimmed }) }
+      `query OperationsSupportTicketSummaries($limit: Int = 20, $offset: Int = 0, $ticketId: ID, $status: SupportStatus) { operationsSupportTicketSummaries(limit: $limit, offset: $offset, ticketId: $ticketId, status: $status) { ${SUPPORT_SUMMARY_FIELDS} } }`,
+      { limit, offset, ...(trimmed === undefined ? {} : { ticketId: trimmed }), ...(status === undefined ? {} : { status }) }
     );
     const summaries = data.operationsSupportTicketSummaries;
     if (!Array.isArray(summaries) || summaries.length > limit || summaries.some(summary =>

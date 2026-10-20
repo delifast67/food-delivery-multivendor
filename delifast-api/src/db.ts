@@ -125,6 +125,9 @@ export async function connect(
     .collection("support_tickets")
     .createIndex({ customerId: 1, createdAt: 1, id: 1 });
   await db.collection("support_tickets").createIndex({ createdAt: 1, id: 1 });
+  await db
+    .collection("support_tickets")
+    .createIndex({ status: 1, createdAt: 1, id: 1 }, { name: "support_status_created" });
   return db;
 }
 export function getDb() {

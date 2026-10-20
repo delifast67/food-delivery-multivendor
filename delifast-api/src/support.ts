@@ -70,6 +70,7 @@ function fingerprint(subject: string, description: string) {
 function sort() {
   return { createdAt: 1 as const, id: 1 as const };
 }
+const SUPPORT_STATUSES: readonly SupportStatus[] = ["OPEN", "IN_PROGRESS", "RESOLVED"];
 function output(doc: any) {
   // Legacy customer rows predate creator fields; project them without exposing
   // internal idempotency keys or fingerprints.
@@ -300,13 +301,29 @@ export async function operationsSupportTicketSummaries(
   limit: unknown,
   offset: unknown,
   ticketId: unknown,
+  status?: unknown,
 ) {
   if (staff.role !== "ADMIN") fail("FORBIDDEN", "Droits insuffisants");
   const p = page(limit, offset), id = summaryTicketId(ticketId);
-  const docs = await db.collection<Ticket>("support_tickets")
-    .find(id === undefined ? {} : { id })
+  let normalizedStatus: SupportStatus | undefined;
+  if (status != null) {
+    if (typeof status !== "string" || !SUPPORT_STATUSES.includes(status as SupportStatus))
+      fail("INVALID_INPUT", "Statut invalide");
+    normalizedStatus = status as SupportStatus;
+  }
+  const filter = {
+    ...(id === undefined ? {} : { id }),
+    ...(normalizedStatus === undefined ? {} : { status: normalizedStatus }),
+  };
+  let cursor = db.collection<Ticket>("support_tickets")
+    .find(filter)
     .project({ _id: 0, id: 1, subject: 1, creatorRole: 1, status: 1, version: 1, createdAt: 1, updatedAt: 1 })
-    .sort(sort()).skip(p.offset).limit(p.limit).maxTimeMS(2000).toArray();
+  if (id !== undefined) {
+    cursor = cursor.hint("id_1");
+  } else {
+    cursor = cursor.sort(sort()).hint(normalizedStatus === undefined ? "createdAt_1_id_1" : "support_status_created");
+  }
+  const docs = await cursor.skip(p.offset).limit(p.limit).maxTimeMS(2000).toArray();
   return docs.map(summaryOutput);
 }
 export async function operationsSupportTicket(

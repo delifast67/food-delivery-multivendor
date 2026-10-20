@@ -63,6 +63,9 @@ await db
   .createIndex({ customerId: 1, createdAt: 1, id: 1 });
 await db.collection("support_tickets").createIndex({ createdAt: 1, id: 1 });
 await db
+  .collection("support_tickets")
+  .createIndex({ status: 1, createdAt: 1, id: 1 }, { name: "support_status_created" });
+await db
   .collection("orders")
   .createIndex(
     { customerId: 1, createdAt: -1, id: -1 },

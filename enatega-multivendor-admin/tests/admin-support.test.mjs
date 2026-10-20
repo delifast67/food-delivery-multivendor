@@ -146,3 +146,33 @@ test('le panneau réserve la liste aux résumés et garde les verrous de recherc
   assert.match(panel, /if \(mutationRef\.current\) return false/);
   assert.match(panel, /setBlocked\(true\)/);
 });
+
+test('les résumés transmettent le statut avec la recherche exacte et bornent ses valeurs', async () => {
+  storage();
+  const summary = { id: 'ticket-1', subject: 'Aide', creatorRole: 'CUSTOMER', status: 'OPEN', version: 4, createdAt: ticket.createdAt, updatedAt: ticket.updatedAt };
+  const calls = transport(() => response({ operationsSupportTicketSummaries: [summary] }));
+  await new DelifastClient().operationsSupportTicketSummaries(20, 40, ' ticket-1 ', 'IN_PROGRESS');
+  assert.deepEqual(calls[0].variables, { limit: 20, offset: 40, ticketId: 'ticket-1', status: 'IN_PROGRESS' });
+  assert.match(calls[0].query, /\$status: SupportStatus/);
+  await assert.rejects(new DelifastClient().operationsSupportTicketSummaries(20, 0, undefined, 'CLOSED'), { code: 'INVALID_ARGUMENT' });
+});
+
+test('le panneau applique les deux filtres au serveur et repart à zéro sans filtrage local', () => {
+  const panel = fs.readFileSync(new URL('../app/delifast/SupportPanel.tsx', import.meta.url), 'utf8');
+  assert.match(panel, /aria-label="Statut des tickets support"/);
+  assert.match(panel, /operationsSupportTicketSummaries\(LIMIT, pageOffset, filterOverride, statusOverride/);
+  assert.match(panel, /setOffset\(0\)/);
+  assert.match(panel, /setTickets\(\[\]\)/);
+  assert.doesNotMatch(panel, /const visibleTickets/);
+  assert.doesNotMatch(panel, /tickets\.filter\(ticket => ticket\.status/);
+});
+
+test('la relecture du détail ne rajoute pas de ligne hors page ni ne perd la navigation suivante', () => {
+  const panel = fs.readFileSync(new URL('../app/delifast/SupportPanel.tsx', import.meta.url), 'utf8');
+  const detailRead = panel.slice(panel.indexOf('const loadDetail'), panel.indexOf('const rereadDetail'));
+  assert.match(detailRead, /current\.filter\(ticket => ticket\.id !== result\.id\)/);
+  assert.doesNotMatch(detailRead, /\.\.\.current/);
+  assert.match(panel, /setPageHasNext\(result\.length === LIMIT\)/);
+  assert.match(panel, /setPageHasNext\(refreshed\.length === LIMIT\)/);
+  assert.match(panel, /const canNext = pageHasNext/);
+});

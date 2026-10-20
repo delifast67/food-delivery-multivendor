@@ -23,7 +23,7 @@ type Query {
   staffSupportTicket(id: ID!): SupportTicket
   operationsSupportTickets(limit: Int = 20, offset: Int = 0): [SupportTicket!]!
   operationsSupportTicket(id: ID!): SupportTicket
-  operationsSupportTicketSummaries(limit: Int = 20, offset: Int = 0, ticketId: ID): [SupportTicketSummary!]!
+  operationsSupportTicketSummaries(limit: Int = 20, offset: Int = 0, ticketId: ID, status: SupportStatus): [SupportTicketSummary!]!
 }
 type Mutation {
   placeOrder(input: PlaceOrderInput!): Order!

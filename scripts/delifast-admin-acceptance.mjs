@@ -80,6 +80,17 @@ try {
   // Support tickets are inserted as test documents, never through a production provider.
   const now = new Date().toISOString();
   await db.collection('support_tickets').insertMany(['admin-ticket-a', 'admin-ticket-b', ...Array.from({length: 20}, (_, i) => `page-ticket-${i}`)].map((id, i) => ({ id, idempotencyKey: `fixture-${id}`, fingerprint: `fixture-${id}`, customerId: null, creatorId: i ? 'staff-rider' : 'staff-rest-1', creatorRole: i ? 'RIDER' : 'RESTAURANT', restaurantId: i ? null : 'rest-koudougou', scopeTenant: i ? '' : 'rest-koudougou', subject: `Recette support ${i + 1}`, description: 'Ticket fixture admin uniquement', status: 'OPEN', version: 0, createdAt: new Date(Date.parse(now) + i).toISOString(), updatedAt: now, history: [{ status: 'OPEN', at: now, actorRole: i ? 'RIDER' : 'RESTAURANT', note: '' }] })));
+  // Later timestamps preserve the existing first-page targets while ensuring that
+  // OPEN spans two filtered pages and the other statuses live beyond page one.
+  await db.collection('support_tickets').insertMany(Array.from({ length: 45 }, (_, i) => {
+    const id = `status-ticket-${String(i).padStart(2, '0')}`;
+    const status = ['OPEN', 'IN_PROGRESS', 'RESOLVED'][i % 3];
+    return { id, idempotencyKey: `fixture-${id}`, payloadFingerprint: 'fixture-only', customerId: null,
+      creatorId: 'staff-rider', creatorRole: 'RIDER', restaurantId: null, scopeTenant: '',
+      subject: `Statut synthétique ${i}`, description: 'Description privée synthétique hors liste', status, version: 0,
+      createdAt: new Date(Date.parse(now) + 100 + i).toISOString(), updatedAt: now,
+      history: [{ status, at: now, actorRole: 'RIDER', note: 'Note privée de fixture hors liste' }] };
+  }));
   web = launch(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--hostname', '127.0.0.1', '--port', String(webPort)], join(root, 'enatega-multivendor-admin'), { NODE_ENV: 'production', DELIFAST_API_URL: `http://127.0.0.1:${apiPort}/graphql` });
   await ready(`http://127.0.0.1:${webPort}/delifast`, web);
   const fixture = join(scratch, 'fixtures.json'); await writeFile(fixture, JSON.stringify({ orders: orders.map(x => x.id), paged: paged.map(x => x.id), support: ['admin-ticket-a', 'admin-ticket-b'], adminToken: admin.token, restaurantToken: restaurant.token, riderToken: rider.token }), { mode: 0o600 });

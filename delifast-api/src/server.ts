@@ -175,7 +175,7 @@ const resolvers: any = {
     staffSupportTicket: (_: any, { id }: any, ctx: any) => staffSupportTicket(getDb(), requireRole(ctx, ["RESTAURANT", "RIDER"]), id),
     operationsSupportTickets: (_: any, { limit, offset }: any, ctx: any) => operationsSupportTickets(getDb(), requireRole(ctx, ["ADMIN"]), limit, offset),
     operationsSupportTicket: (_: any, { id }: any, ctx: any) => operationsSupportTicket(getDb(), requireRole(ctx, ["ADMIN"]), id),
-    operationsSupportTicketSummaries: (_: any, { limit, offset, ticketId }: any, ctx: any) => operationsSupportTicketSummaries(getDb(), requireRole(ctx, ["ADMIN"]), limit, offset, ticketId),
+    operationsSupportTicketSummaries: (_: any, { limit, offset, ticketId, status }: any, ctx: any) => operationsSupportTicketSummaries(getDb(), requireRole(ctx, ["ADMIN"]), limit, offset, ticketId, status),
   },
   Restaurant: {
     deliveryZoneIds: (r: any) => restaurantZoneIds(getDb(), r),
