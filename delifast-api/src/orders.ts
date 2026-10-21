@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { Db } from "mongodb";
-import { calculateCheckout } from "./pricing.js";
+import { prepareCheckout } from "./pricing.js";
+import { assertCheckoutCurrent } from "./checkout-guard.js";
 import { type Address, type Cart, fail } from "./validation.js";
 import type { Staff } from "./auth.js";
 import { getPaymentProvider } from "./payment.js";
@@ -146,7 +147,7 @@ export async function placeOrder(
     return customerView(old, old.accessToken ?? "");
   }
   if (!address.point) fail("DELIVERY_POINT_REQUIRED", "Un point GPS de livraison est requis");
-  const checkout = await calculateCheckout(db, { ...cart, point: address.point });
+  const { checkout, guard } = await prepareCheckout(db, { ...cart, point: address.point });
   // Optional only for legacy consumers. Updated clients must send the exact
   // displayed quote; a mismatching quote never creates an order. Existing
   // idempotent attempts above still recover their immutable original snapshot.
@@ -175,6 +176,9 @@ export async function placeOrder(
     ...(customerId ? { customerId } : {}),
   };
   try {
+    // Final conditional state/version checks work on standalone MongoDB too.
+    // They narrow, but cannot atomically close, the check-to-insert window.
+    await assertCheckoutCurrent(db, guard);
     await orders.insertOne(order);
     return customerView(order, raw);
   } catch (error: any) {

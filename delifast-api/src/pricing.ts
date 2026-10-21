@@ -4,6 +4,7 @@ import type { Db } from "mongodb";
 import { config } from "./config.js";
 import { assertIntAmount, Cart, fail } from "./validation.js";
 import { isRestaurantOpen } from "./restaurant-hours.js";
+import { captureCheckoutGuard } from "./checkout-guard.js";
 export type SelectedMenuOption = {
   groupId: string;
   groupName: string;
@@ -33,6 +34,10 @@ export type Checkout = {
   delivery: Awaited<ReturnType<typeof eligibility>> | null;
 };
 export async function calculateCheckout(db: Db, cart: Cart): Promise<Checkout> {
+  return (await prepareCheckout(db, cart)).checkout;
+}
+/** Server-only expectations accompany the calculation, not the public quote. */
+export async function prepareCheckout(db: Db, cart: Cart) {
   const restaurant = await db
     .collection("restaurants")
     .findOne({ id: cart.restaurantId });
@@ -136,5 +141,8 @@ export async function calculateCheckout(db: Db, cart: Cart): Promise<Checkout> {
   const quoteHash = crypto.createHash("sha256").update(JSON.stringify({
     restaurantId: cart.restaurantId, point: cart.point ?? null, ...snapshot,
   })).digest("hex");
-  return { ...snapshot, quoteHash };
+  return {
+    checkout: { ...snapshot, quoteHash },
+    guard: captureCheckoutGuard(restaurant, menu),
+  };
 }

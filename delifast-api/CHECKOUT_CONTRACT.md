@@ -24,9 +24,34 @@ La mutation historique accepte encore l’omission de `expectedQuoteHash` pour l
 
 Les tests utilisent uniquement MongoDB jetable et des commandes synthétiques : changements de prix/options/frais/zone, point GPS, disponibilité, fermeture, portée restaurant, empreintes invalides, reprises historiques et envois concurrents. Ils vérifient le nombre de commandes et l’absence d’événements de paiement créés. La création de commande n’appelle aucun prestataire de paiement ni SMS.
 
-Les lectures catalogue et l’insertion ne constituent pas une transaction multi-documents : une modification concurrente après la lecture serveur peut encore survenir avant l’insertion. Il n’existe ni réservation de stock ni gel transactionnel des prix ou horaires. L’empreinte ferme la fenêtre devis-client → nouveau calcul serveur, pas toute concurrence catalogue → insertion. Une réservation/transaction cohérente et sa compatibilité avec MongoDB nécessitent un lot séparé.
+Les lectures catalogue et l’insertion ne constituent toujours pas une transaction multi-documents. Le contrôle conditionnel ci-dessous détecte un changement intervenu depuis le calcul et **déjà visible lors de son contrôle**, puis refuse l’insertion. Une modification après le contrôle d’un document peut encore survenir avant l’insertion : ce lot réduit la fenêtre, il ne résout pas intégralement le TOCTOU. Il n’existe ni réservation de stock ni gel transactionnel des prix ou horaires.
 
 Les tests JS, HTTP et bundles Expo ne remplacent pas une recette native sur appareils Android et iOS. Ce lot ne fusionne, ne déploie et n’active aucun paiement ni SMS réel.
+
+## Contrôle final compatible avec MongoDB autonome
+
+`prepareCheckout` conserve côté serveur les attentes exactes des documents lus pour le calcul, sans les ajouter au devis public ni au snapshot enregistré. Juste avant `orders.insertOne`, `assertCheckoutCurrent` exécute deux lectures conditionnelles : tous les plats du panier, puis le restaurant. Chaque lecture a une limite de deux secondes ; une erreur MongoDB interrompt la création, sans insertion de secours.
+
+Les prédicats comparent l’identité MongoDB `_id` (pour détecter une suppression/recréation), l’identifiant métier et la `version` brute, ainsi que les états utilisés :
+
+- Plats : restaurant de rattachement, nom, prix de base, disponibilité, archivage et groupes/options complets (prix, noms, disponibilité et contraintes de sélection).
+- Restaurant : ouverture, horaires hebdomadaires et références explicites de zones. L’ouverture horaire est aussi réévaluée avec l’heure UTC courante après les lectures, même sans écriture catalogue.
+
+L’absence d’un champ est distincte d’un champ présent à `null` ou à `0`. Les documents historiques sans version continuent de fonctionner. Une hausse de version est refusée même si les prix semblent inchangés ; un changement d’état sans hausse de version est également détecté. Le panier est déjà normalisé et borné par les validations existantes ; la requête finale ne porte que sur ses plats. Ce contrôle n’écrit rien dans les restaurants ou plats : pas de décrément de stock, pas de modification d’audit/version métier, pas de verrou abandonné après crash. Les champs d’audit et `updatedAt` seuls ne sont pas des attentes métier.
+
+Une attente non satisfaite renvoie `CHECKOUT_CHANGED` : actualisation et nouvelle confirmation manuelle sont requises, sans commande créée par cet appel. Le contrôle s’applique aussi aux nouvelles insertions legacy sans `expectedQuoteHash` ; il ne leur ajoute pas la protection contre un ancien prix affiché. Une commande déjà enregistrée est toujours récupérée avant calcul/contrôle, avec la même clé et le même payload, même si le catalogue est maintenant fermé. L’index unique et le traitement des insertions concurrentes restent inchangés.
+
+Ce n’est **pas un CAS multi-documents** : aucun `findOneAndUpdate` isolé ne peut rendre conditionnelle une insertion dans une autre collection. Une mutation après la lecture finale d’un plat, après celle du restaurant, ou un aller-retour d’état sans version observable peut échapper au contrôle. Le passage d’une limite horaire après l’évaluation finale reste également possible. Les zones sont revalidées dans le calcul serveur, mais leurs documents et les nouvelles zones concurrentes ne sont pas verrouillés ni couverts par cette garde finale ciblée produits/restaurant ; une modification de frais/zone après ce calcul conserve sa propre fenêtre résiduelle.
+
+Les tests `test/checkout-concurrency.test.ts` intercalent des mutations synthétiques après le calcul et avant la garde, avec un second client MongoDB sur une base autonome jetable. Ils vérifient le refus, l’absence d’insertion et la reprise idempotente ; ils ne constituent pas une preuve d’atomicité globale.
+
+## Topologie requise pour fermer la fenêtre
+
+Le dépôt ne prouve aucune capacité transactionnelle de production : `compose.delifast.yaml` lance `mongo:7.0` sans `--replSet`, `src/dev-db.ts` et les tests utilisent `MongoMemoryServer`, et le service MongoDB de `.github/workflows/delifast-local.yml` est autonome. Aucun chemin de transaction, bascule de topologie ou fallback silencieux n’est activé par ce lot.
+
+Une garantie forte nécessite d’abord un choix de déploiement explicite et testé : replica set MongoDB (ou cluster shardé compatible transactions), configuration de connexion et disponibilité adaptées, puis une recette dédiée en `MongoMemoryReplSet` et sur la topologie réellement exploitée. Une transaction qui ne fait que lire le catalogue en snapshot puis insérer la commande ne suffit pas à interdire les écritures concurrentes : elle peut lire un ancien snapshot sans conflit d’écriture.
+
+La solution à concevoir devra combiner la transaction avec des écritures conditionnelles de garde sur **toutes** les sources concernées (ou une révision commune par restaurant respectée par toutes les écritures catalogue/zones), afin de créer de vrais conflits d’écriture et un ordre de sérialisation. Elle devra définir les transitions horaires et la politique de validité au point de sérialisation, traiter les nouveaux documents/phantoms de zones, conserver l’index d’idempotence et gérer les conflits et commits ambigus. Les retries transactionnels doivent garder clé/payload et ne contenir aucun appel externe de paiement ou SMS ; aucune réservation/décrément de stock ne peut être ajouté sans sémantique métier autorisée. Tant que ces prérequis et tests ne sont pas établis, ne pas annoncer de prix/disponibilité atomiques au commit ni de préparation à la production.
 
 ## Consommateurs internes et exceptions explicites
 
