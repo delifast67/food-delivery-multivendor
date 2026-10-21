@@ -1,9 +1,16 @@
 import crypto from "node:crypto";
 import { fail } from "./validation.js";
 
-// Local-only process key: restart invalidates outstanding quotes, never accepted orders.
+// Optional server-only shared key; otherwise restart invalidates outstanding local quotes.
+// Accepted orders always recover their stored snapshot independently of this key.
 // Deliberately independent from public config, client timestamps and cursor keys.
-const key = crypto.randomBytes(32);
+const configuredKey = process.env.DELIFAST_QUOTE_SIGNING_KEY;
+if (configuredKey !== undefined && !/^[a-fA-F0-9]{64}$/.test(configuredKey)) {
+  throw new Error("DELIFAST_QUOTE_SIGNING_KEY must be exactly 64 hexadecimal characters");
+}
+const key = configuredKey === undefined
+  ? crypto.randomBytes(32)
+  : Buffer.from(configuredKey, "hex");
 export const QUOTE_TTL_MS = 5 * 60_000;
 const sign = (body: string) => crypto.createHmac("sha256", key)
   .update(`delifast-checkout-v1:${body}`).digest("base64url");

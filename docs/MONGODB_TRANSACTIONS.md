@@ -1,12 +1,12 @@
-# MongoDB : replica set local et limite du checkout
+# MongoDB : transactions locales et conditions d’exploitation
 
-## Ce qui est disponible
+## Ce qui fonctionne déjà
 
-Un **replica set MongoDB 7.0.24 réel**, à un membre et stockage WiredTiger, est disponible pour le développement et les tests. Il permet de tester commit, abort, conflit d’écriture et reprise après interruption sans simuler les transactions.
+Le checkout transactionnel applicatif est intégré derrière `DELIFAST_ALLOW_ATOMIC_CHECKOUT=true`, **fermé par défaut et réservé aux commandes fictives locales**. Il relit ses dépendances dans une session `snapshot`, acquiert les guards communs aux writers et insère la commande avec son idempotence dans la même transaction, avec `writeConcern: majority`. Aucun paiement, SMS ou effet externe n’est exécuté dans le callback rejouable.
 
-**Le chemin transactionnel applicatif est désormais intégré derrière un opt-in local distinct, fermé par défaut.** Tous les writers API concernés participent aux guards ; les neuf courses et les crashs du vrai checkout ont leurs tests sur replica set. Le chemin historique NONATOMIC conserve sa fenêtre de concurrence explicite. Un replica set seul ne suffit pas : voir le protocole applicatif. Aucune topologie de production n’a été inspectée ni validée, aucun déploiement effectué.
+Le [protocole applicatif](ATOMIC_CHECKOUT_PROTOCOL.md) décrit l’inventaire des writers, les zones partagées, la politique tarifaire persistante, l’admission horaire et les reprises. Le chemin historique `DELIFAST_ALLOW_NONATOMIC_CHECKOUT` conserve sa fenêtre entre contrôle final et insertion. Il n’est jamais un fallback du chemin atomique et ne convient pas aux commandes réelles.
 
-Le [protocole intégré et l’inventaire des writers](ATOMIC_CHECKOUT_PROTOCOL.md) détaillent les guards communs, les zones partagées, la politique tarifaire persistante, l’admission horaire et les reprises. Les preuves primitives et le prototype ci-dessous restent des tests distincts, sans être confondus avec les preuves du vrai `placeOrder`.
+Les tests utilisent de vrais replica sets MongoDB 7.0.24, à un membre et stockage WiredTiger, dans des bases jetables. Ils couvrent commit, abort, conflits d’écriture, concurrence entre vrais writers, idempotence et interruption de processus. Cela ne valide ni une topologie de production ni sa disponibilité. Aucun déploiement n’est effectué.
 
 ## Démarrer sans toucher à la base existante
 
@@ -17,7 +17,7 @@ npm ci --prefix delifast-api --ignore-scripts --no-audit --no-fund
 npm run dev:db:replset --prefix delifast-api
 ```
 
-Le processus écoute uniquement sur `127.0.0.1:27018`, sous le nom `delifast-dev-rs`. Ses données persistent dans `delifast-api/.local-data/mongo-replset` lorsque la commande npm ci-dessus est utilisée. Le premier démarrage peut télécharger le binaire de développement. Le programme attend un primaire inscriptible, effectue une vraie écriture transactionnelle puis l’annule avant d’annoncer qu’il est prêt. Il ne démarre aucune API.
+Le processus écoute uniquement sur `127.0.0.1:27018`, sous le nom `delifast-dev-rs`. Ses données persistent dans `delifast-api/.local-data/mongo-replset`. Le premier démarrage peut télécharger le binaire de développement. Le programme attend un primaire inscriptible, effectue une vraie écriture transactionnelle puis l’annule avant d’annoncer qu’il est prêt. Il ne démarre aucune API.
 
 Dans **chaque** terminal exécutant migration, seed ou API :
 
@@ -28,9 +28,9 @@ npm run seed --prefix delifast-api
 npm run dev --prefix delifast-api
 ```
 
-Le seed concerne des données fictives locales. Ne pas activer de fournisseur de paiement ou SMS. `Ctrl+C` arrête MongoDB proprement en conservant les données. Le redémarrage réutilise le même répertoire. Depuis l’intégration des writers, `dev:db` délègue au même lanceur replica set séparé et le Compose local démarre aussi un replica set. Les anciens répertoires standalone restent intacts. Le checkout est fermé par défaut ; voir le [protocole applicatif actuel](ATOMIC_CHECKOUT_PROTOCOL.md). Aucun volume existant n’est automatiquement converti, copié ou supprimé. Ne jamais mélanger les répertoires standalone et replica set.
+Le seed concerne exclusivement des données fictives locales. Ne pas activer de fournisseur de paiement ou SMS. `Ctrl+C` arrête MongoDB proprement en conservant les données. Le redémarrage réutilise le même répertoire. `dev:db` délègue au même lanceur replica set séparé et le Compose local démarre aussi un replica set. Aucun volume standalone existant n’est automatiquement converti, copié ou supprimé ; ne jamais mélanger leurs répertoires.
 
-**Réservé au développement** : un membre ne procure aucune haute disponibilité ; cette instance n’a pas d’authentification ni de TLS et ne doit jamais être exposée sur une interface publique, via un tunnel ou utilisée en production.
+**Réservé au développement** : un membre ne procure aucune haute disponibilité ; cette instance n’a pas d’authentification ni de TLS et ne doit jamais être exposée publiquement, via un tunnel ou utilisée en production.
 
 ## Vérifications reproductibles
 
@@ -42,28 +42,22 @@ npm run build --prefix delifast-api
 npm test --prefix delifast-api
 ```
 
-La suite transactionnelle lance son propre replica set jetable sur un port dynamique, avec clients indépendants. Elle n’utilise pas `MONGODB_URI` pour se connecter à une base utilisateur. Elle fait aussi partie de `npm test`. La recette de développement lance deux fois le vrai programme sur le port 27018 dans un répertoire temporaire et vérifie la persistance après arrêt ; ce port doit donc être libre. Elle ne modifie pas `.local-data` du dépôt.
+Les suites transactionnelles lancent leurs propres replica sets jetables sur des ports dynamiques. La recette de développement lance deux fois le vrai programme sur le port 27018 dans un répertoire temporaire et vérifie la persistance après arrêt ; ce port doit être libre. Elle ne modifie pas `.local-data` du dépôt.
 
-La CI exécute explicitement ces preuves avant les compilations et tests applicatifs. Les preuves transactionnelles synthétiques ne sont **pas** une implémentation du checkout : elles ne doivent pas être utilisées pour déclarer la course corrigée. Les interruptions de processus testent des écritures réellement committées/non committées, pas une panne matérielle du cluster ni une élection multi-membres.
+La CI exécute ces preuves avant les compilations et tests applicatifs. Les tests de primitives et les contre-exemples du prototype restent distincts des tests du vrai checkout. Les interruptions de processus ne sont pas des pannes matérielles, des élections multi-membres ou une injection réseau de résultat de commit inconnu.
 
-## Pourquoi une transaction naïve est insuffisante
+## Pourquoi une transaction naïve serait insuffisante
 
-L’isolation `snapshot` donne une vue cohérente mais peut être ancienne. Si une transaction lit un plat, qu’un autre client modifie son prix, puis que la transaction insère seulement une commande dans une autre collection, les deux écritures peuvent être committées. Une simple relecture dans le même snapshot ne voit pas nécessairement le nouveau prix. Le contre-exemple est volontairement conservé en test.
+L’isolation `snapshot` donne une vue cohérente mais potentiellement ancienne. Si une transaction lit un plat, qu’un autre client modifie son prix, puis que la transaction insère seulement une commande dans une autre collection, les deux écritures peuvent être committées. Une relecture dans le même snapshot ne voit pas nécessairement le nouveau prix. Ce contre-exemple est volontairement conservé en test.
 
-Une écriture conditionnelle **réelle**, par exemple un incrément de compteur de protection sur le document catalogue, peut provoquer un conflit avec une modification postérieure au snapshot. Une écriture sans modification (`$set` de la même valeur) ne constitue pas une preuve de verrouillage. Le test de conflit ne généralise pas cette garantie à tous les documents ou chemins de l’application.
+Le chemin atomique actuel ne s’arrête pas à cette relecture : checkout et writers incrémentent réellement les mêmes guards. Le CAS porte sur leur génération et révision, global puis restaurant. Une mutation participante postérieure au snapshot provoque un conflit, puis une reprise complète ou un refus. Une écriture directe MongoDB contournant les guards peut toujours violer ce contrat. Maintenance, import, seed et restauration doivent donc rester hors trafic et couvrir ensemble catalogue, zones, guards, politique et commandes.
 
-Dans le code actuel, `placeOrder` conserve l’unicité de `orders.idempotencyKey` et récupère le snapshot existant pour la même clé, le même client et le même panier. Mais `assertCheckoutCurrent` ne fait que des lectures conditionnelles du restaurant et des plats avant insertion. Il ne verrouille pas ces documents, ne réserve pas de stock et ne revalide pas explicitement les zones de livraison. Le calcul d’un devis dépend aussi des zones et de l’heure courante.
+## Ce qui manque avant une utilisation réelle
 
-## Prérequis bloquants avant toute migration atomique
+1. **Topologie et droits d’exploitation.** Confirmer sur une infrastructure expressément autorisée la version, les droits transactionnels, TLS/authentification, les sauvegardes cohérentes et une restauration opérée. Un URI contenant `replicaSet` ou une réponse `hello` ne prouve pas un commit multi-documents. Aucun test ne doit utiliser les commandes de production sans accord distinct.
+2. **Résilience et capacité.** Mesurer la contention du guard global, le débit et les latences ; tester élections, indisponibilité et commit au résultat réseau inconnu. Le pilote gère les reprises, mais ses garanties ne remplacent pas ces recettes d’exploitation.
+3. **Configuration cohérente entre workers.** Même politique statique persistée et mêmes frais ; signature des devis partagée si plusieurs processus servent les clients. Sans clé partagée, les devis sont volontairement propres au processus et invalidés après redémarrage. Toute rotation doit traiter les devis encore valides.
+4. **Paiements, authentification et exploitation.** Finaliser séparément les recettes autorisées des prestataires, le rapprochement des paiements incertains, les protections anti-abus distribuées et les procédures d’incident. Le verrou `NODE_ENV=production` reste intact. Ne pas le supprimer pour contourner ces conditions.
+5. **Recette native.** Les bundles JS/Hermes et les tests RN Web ne remplacent pas un build signé et une recette sur appareils Android/iOS.
 
-La décision de ce lot est de **différer la migration atomique**, plutôt que d’introduire un mode transactionnel non prouvé ou un repli silencieux vers standalone.
-
-Avant une future activation, il faut réunir les preuves suivantes :
-
-1. **Topologie et droits réels.** Un opérateur autorisé doit confirmer replica set ou cluster shardé compatible, primaire, version, droits transactionnels, TLS/authentification, sauvegarde/restauration et contraintes de disponibilité. Un simple URI contenant `replicaSet` ou une réponse `hello` n’est pas une preuve de commit multi-documents. Tester des écritures jetables avec commit et abort sur une base expressément autorisée, jamais sur les commandes de production.
-2. **Un protocole commun aux lecteurs et writers.** Revalidation finale des plats, options, restaurant, zones/frais et dépendances métier ; insertion de commande et persistance de l’idempotence dans la même session et transaction. Si l’idempotence reste intégrée au document commande, l’index unique doit rester présent. Définir la sémantique des horaires à la frontière de fermeture. Prouver des écritures conditionnelles effectives sur chaque dépendance, ou une époque commune que **tous** les writers concernés modifient atomiquement. Couvrir suppressions/recréations, changements sans incrément de version et nouveaux documents pouvant changer le choix de zone. Une preuve sur un seul plat n’est pas suffisante.
-3. **Erreurs et reprises bornées.** Utiliser le même `MongoClient`/`ClientSession` avec `readConcern: snapshot` et `writeConcern: majority`. Prouver les erreurs transitoires, résultats de commit inconnus, collision d’index unique, perte de réponse et crash avant/après commit. Même clé avec autre client ou autre panier doit échouer ; une reprise ne doit pas recalculer un snapshot déjà committé ni créer de doublon.
-4. **Aucun effet externe dans la transaction.** Paiement, SMS ou notification ne doivent jamais être déclenchés par un callback transactionnel susceptible d’être rejoué. Si nécessaire, préparer un outbox atomique avec consommation idempotente dans un lot séparément autorisé.
-5. **Refus par défaut du futur mode atomique.** Si ce mode est ensuite ajouté, une topologie inconnue/non compatible, un test transactionnel refusé ou un protocole incomplet doit empêcher son activation/démarrage, sans fallback vers l’ancien chemin. Les divergences catalogue doivent annuler la transaction avant toute insertion. Ce garde-fou est un prérequis futur, **pas une protection déjà implémentée**.
-
-Tant que ces critères et une CI couvrant le protocole applicatif complet ne sont pas satisfaits, ne pas présenter ce projet comme prêt pour les commandes ou paiements réels. Les vérifications sur appareils natifs restent également à effectuer. Ce lot ne fusionne pas la PR et ne déploie aucun service.
+Ces conditions ne sont pas satisfaites par une CI locale verte. La PR reste ouverte sans merge ni déploiement ; aucun paiement ou SMS supplémentaire n’est autorisé par ces travaux.

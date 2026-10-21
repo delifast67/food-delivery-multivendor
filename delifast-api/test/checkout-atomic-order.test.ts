@@ -22,6 +22,19 @@ async function pausedChild(mode: string, key: string) {
 }
 async function killAfterReady(mode: string, key: string) { const run = await pausedChild(mode, key); run.child.kill("SIGKILL"); await new Promise<void>((resolve) => run.child.once("exit", () => resolve())); return run.output; }
 describe("placeOrderAtomic — idempotence et transactions réelles", () => {
+ beforeAll(async () => {
+   await db.collection("orders").createIndex({ idempotencyKey: 1 }, { unique: true });
+ });
+ it("installe et exerce le véritable index unique d’idempotence", async () => {
+   const indexes = await db.collection("orders").listIndexes().toArray();
+   expect(indexes.some(index => index.unique === true &&
+     Object.keys(index.key).length === 1 && index.key.idempotencyKey === 1)).toBe(true);
+   const key = `index-proof-${crypto.randomUUID()}`;
+   await db.collection("orders").insertOne({ idempotencyKey: key, id: "index-proof-first" });
+   await expect(db.collection("orders").insertOne({ idempotencyKey: key, id: "index-proof-second" }))
+     .rejects.toMatchObject({ code: 11000 });
+   expect(await db.collection("orders").countDocuments({ idempotencyKey: key })).toBe(1);
+ });
  it("le même endpoint placeOrder sélectionne le chemin atomique uniquement par opt-in explicite", async () => {
    vi.stubEnv("DELIFAST_ALLOW_ATOMIC_CHECKOUT", "true"); vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", "false");
    try {
