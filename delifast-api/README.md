@@ -44,6 +44,18 @@ npm test
 
 La suite utilise MongoDB réel (MongoDB Memory Server) et Supertest pour couvrir authentification, portée, concurrence, CAS, transitions, affectation et compatibilité de persistance. Le serveur de démonstration ne doit pas être exposé comme un service de production.
 
+### Frontières d’autorisation
+
+`test/authorization-matrix-api.test.ts` exerce les requêtes privées par HTTP avec six identités synthétiques : anonyme, client, restaurant, livreur, admin et rôle inconnu. Le support reste un workflow réservé aux créateurs et à l’admin, pas un nouveau rôle `SUPPORT`. Les identifiants client/staff peuvent coïncider sans partager leurs sessions ni leurs tickets.
+
+- Catalogue public inchangé : restaurants, menus, catégories, horaires et identifiants de zones restent publics selon le schéma. Les zones explicitement partagées par l’admin sont intentionnelles ; leur propriétaire historique n’est pas une nouvelle restriction de rattachement.
+- Commandes authentifiées client : listes et détails filtrés par le client propriétaire. Commandes opérationnelles : restaurant de la session (hors paiements en attente), livreur affecté ou admin global ; aucun jeton client n’est renvoyé au staff. Les filtres et curseurs ne remplacent pas cette portée.
+- Accès invité et paiement : l’identifiant de commande **et son jeton de capacité** sont requis, indépendamment du rôle connecté. Un jeton d’une autre commande ne suffit pas. La reprise idempotente conserve son contrat existant : même propriétaire client ou invité, même clé et même panier/adresse.
+- Adresses : lecture, modification et suppression limitées au client propriétaire. Tickets : créateur client ou créateur staff avec rôle et restaurant d’origine ; traitement global réservé à l’admin.
+- REST : `/health` reste public et minimal ; les notifications de paiement ne sont pas des opérations staff. Elles gardent leurs contrôles propres au fournisseur et leur revérification, couverts aussi par les suites de paiement. Les proxys web/admin transmettent le bearer fourni, jamais une identité privilégiée, et refusent les redirections (`scripts/delifast-proxy-boundary.test.mjs` à la racine).
+
+Cette matrice utilise une base jetable, des sessions insérées comme fixtures, des fournisseurs désactivés et un transport SMS qui échoue si appelé. Elle ne remplace ni une recette native sur appareils ni une validation de production. L’audit n’a confirmé aucune nouvelle fuite intercompte/interrôle nécessitant une modification des permissions ; les tests verrouillent les frontières existantes sans rendre le catalogue privé.
+
 ## Livraison et zones
 
 Voir le [contrat des zones](DELIVERY_ZONES.md). Une nouvelle commande exige un point GPS, et le serveur vérifie géométrie, disponibilité, horaires et minimum avant insertion. Le tarif de livraison est lu dans la zone sélectionnée, jamais dans une variable globale ni un prix client. Le seed reste intégralement fictif et préserve les configurations éditées. Les anciennes commandes sans GPS restent lisibles et rejouables à l’identique.
