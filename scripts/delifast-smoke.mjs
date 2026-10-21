@@ -21,7 +21,7 @@ function data(result) {
   return result.data;
 }
 function rejected(result) { assert.ok(result.errors?.length, 'La requête aurait dû être refusée.'); }
-const fields = 'currency subtotal deliveryFee serviceFee tax discount total items {menuItemId name quantity unitPrice total}';
+const fields = 'quoteHash quoteToken quoteIssuedAt quoteExpiresAt currency subtotal deliveryFee serviceFee tax discount total items {menuItemId name quantity unitPrice total}';
 const restaurantsQuery = '{ restaurants { id name menu { id name priceXof available } } }';
 const restaurants = data(await request(restaurantsQuery)).restaurants;
 assert.ok(restaurants.length >= 2, 'Exécuter le seed de démonstration avant le smoke test.');
@@ -33,7 +33,7 @@ const otherItem = second.menu.find(item => item.available);
 ok('catalogue autonome : deux restaurants et menus');
 
 const cart = { restaurantId: first.id, items: [{ menuItemId: item.id, quantity: 2 }], point: { latitude: 12.3714, longitude: -1.5197 } };
-const quoteQuery = `query Quote($input: CartInput!) { calculateCheckout(input: $input) { quoteHash quoteToken ${fields} } }`;
+const quoteQuery = `query Quote($input: CartInput!) { calculateCheckout(input: $input) { ${fields} } }`;
 const quote = data(await request(quoteQuery, { input: cart })).calculateCheckout;
 assert.equal(quote.currency, 'XOF');
 for (const field of ['subtotal', 'deliveryFee', 'serviceFee', 'tax', 'discount', 'total']) {
