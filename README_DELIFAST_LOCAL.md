@@ -8,7 +8,7 @@ Le site local et le nouveau parcours mobile client permettent de consulter deux 
 
 ## Poursuite du checkout transactionnel
 
-Un [chemin préparatoire pour les écritures](docs/ATOMIC_CHECKOUT_PROTOCOL.md#participation-préparatoire-des-vrais-writers-sans-bascule-des-endpoints) permet maintenant de tester les vraies mutations de plats, ouverture, horaires, profils et zones dans la même transaction que leurs guards. **Les endpoints ne sont pas basculés** : les neuf contournements historiques restent reproduits, le checkout reste non atomique et fermé par défaut. La création des restaurants/guards, les seeds et tarifs, le vrai checkout transactionnel, ses reprises et la recette Android/iOS sur appareil restent à terminer. Aucun changement Orange/About, fusion ou déploiement n'est inclus.
+Les writers catalogue, restaurant et zones participent maintenant automatiquement au [protocole transactionnel](docs/ATOMIC_CHECKOUT_PROTOCOL.md) : guard global puis restaurant, lectures/CAS/audits dans la même session et rollback conjoint. Le vrai checkout transactionnel relit/valide toutes ses sources, puis insère commande et idempotence intégrée dans cette session. **La création reste fermée par défaut**, sans merge ni déploiement. L'opt-in atomique local est distinct et exige une couverture complète des neuf writers ; l'ancien opt-in `DELIFAST_ALLOW_NONATOMIC_CHECKOUT` reste explicitement à risque et limité aux recettes fictives. Les courses sont testées sur replica set réel et les crashs sur le vrai checkout. Cela n'autorise aucune commande/paiement/SMS réel ni ne remplace la recette native sur appareils. Aucun changement Orange/About n'est inclus.
 
 ## Back-office : commandes et Support
 
@@ -150,7 +150,7 @@ npm ci --prefix enatega-multivendor-web --ignore-scripts --no-audit --no-fund
 npm run dev:db --prefix delifast-api
 ```
 
-**Replica set optionnel, isolé :** `npm run dev:db:replset --prefix delifast-api` utilise le port 27018 et un autre répertoire de données. Exporter ensuite `MONGODB_URI='mongodb://127.0.0.1:27018/delifast?replicaSet=delifast-dev-rs'` dans chaque terminal API/migration/seed. Voir [les preuves transactionnelles et prérequis de production](docs/MONGODB_TRANSACTIONS.md). Le checkout reste non transactionnel : cette configuration ne ferme pas sa course catalogue → insertion et ne valide aucune topologie de production. Le mode standalone ci-dessus et Docker restent inchangés.
+**Replica set local obligatoire pour les writers :** `dev:db` et `dev:db:replset` utilisent maintenant le même lanceur, port 27018, données séparées dans `.local-data/mongo-replset`. Exporter `MONGODB_URI='mongodb://127.0.0.1:27018/delifast?replicaSet=delifast-dev-rs'` dans chaque terminal API/migration/seed (également dans `.env.example`). Aucun ancien répertoire standalone n'est converti ni supprimé. Le Compose local utilise lui aussi un replica set. Voir [le protocole et les limites](docs/ATOMIC_CHECKOUT_PROTOCOL.md). Aucune topologie de production n'est créée.
 
 Le premier lancement télécharge un binaire MongoDB réservé au développement. Dans un autre terminal :
 
@@ -215,12 +215,12 @@ Exemple pour l’installation Node, MongoDB restant démarré :
 
 ```bash
 # Arrêter l’API avec Ctrl-C avant ces commandes.
-MONGODB_URI=mongodb://127.0.0.1:27017/delifast node scripts/delifast-backup.mjs backup .local-data/backups/delifast.json --offline
+MONGODB_URI='mongodb://127.0.0.1:27018/delifast?replicaSet=delifast-dev-rs' node scripts/delifast-backup.mjs backup .local-data/backups/delifast.json --offline
 # Cible entièrement vierge : l’outil refuse d’écraser une base existante.
-MONGODB_URI=mongodb://127.0.0.1:27017/delifast_restored node scripts/delifast-backup.mjs restore .local-data/backups/delifast.json --offline
+MONGODB_URI='mongodb://127.0.0.1:27018/delifast_restored?replicaSet=delifast-dev-rs' node scripts/delifast-backup.mjs restore .local-data/backups/delifast.json --offline
 # Relancer les index/migrations, puis l’API sur la nouvelle base.
-MONGODB_URI=mongodb://127.0.0.1:27017/delifast_restored npm run migrate --prefix delifast-api
-MONGODB_URI=mongodb://127.0.0.1:27017/delifast_restored npm start --prefix delifast-api
+MONGODB_URI='mongodb://127.0.0.1:27018/delifast_restored?replicaSet=delifast-dev-rs' npm run migrate --prefix delifast-api
+MONGODB_URI='mongodb://127.0.0.1:27018/delifast_restored?replicaSet=delifast-dev-rs' npm start --prefix delifast-api
 ```
 
 Pour Docker, arrêter `api` et `web` avec Compose, garder `mongo` démarré et exécuter l’outil depuis l’hôte avec les dépendances API installées et le port MongoDB local publié. Ne pas recréer les conteneurs sur une base vide avant la restauration. Le test automatisé restaure dans une seconde base et vérifie données, types BSON, historique, index unique, refus d’écrasement et corruption détectée avant écriture.

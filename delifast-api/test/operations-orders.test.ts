@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
 import { passwordHash } from "../src/auth.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let db: any;
 let app: any;
 const tokens: Record<string, string> = {};
@@ -34,7 +35,7 @@ const order = (id: string, restaurantId: string, createdAt: string, riderId?: st
 
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
   db = await (await import("../src/db.js")).connect();
   await db.collection("restaurants").insertMany([
@@ -52,7 +53,8 @@ beforeAll(async () => {
   await db.collection("orders").insertMany(fixtures);
   app = await (await import("../src/server.js")).createApp();
   for (const [id] of staff) await login(id);
-}, 60000);
+
+  await initializeCheckoutFences(db, await db.collection("restaurants").distinct("id"));}, 60000);
 
 afterAll(async () => { await (await import("../src/db.js")).closeDb(); await mongo.stop(); });
 

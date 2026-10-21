@@ -1,15 +1,16 @@
 import { createHash, randomBytes } from "node:crypto";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "mongodb";
 import { CinetPayClient, loadCinetPayConfig, type CinetPayFetch } from "../src/cinetpay.js";
 import { cinetPayProvider } from "../src/cinetpay-provider.js";
 import { mongoCinetPayStore } from "../src/cinetpay-store.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 const access = "synthetic-customer-access-token";
 const orderId = "cinetpay-http-fixture";
 const notify = randomBytes(32).toString("hex");
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let db: Db;
 let app: any;
 let merchantId = "";
@@ -34,7 +35,7 @@ const fetcher: CinetPayFetch = async (url, init) => {
 };
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
   const database = await import("../src/db.js");
   const store = mongoCinetPayStore(database.getDb);
@@ -48,7 +49,8 @@ beforeAll(async () => {
   }), fetcher), store);
   app = await (await import("../src/server.js")).createApp(provider, undefined, []);
   db = database.getDb();
-}, 60_000);
+
+  await initializeCheckoutFences(db, []);}, 60_000);
 afterAll(async () => { await (await import("../src/db.js")).closeDb(); await mongo?.stop(); });
 beforeEach(async () => {
   for (const name of ["orders", "cinetpay_attempts", "customers"]) await db.collection(name).deleteMany({});

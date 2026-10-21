@@ -37,6 +37,10 @@ export const config = {
   isNonatomicCheckoutAllowed() {
     return process.env.DELIFAST_ALLOW_NONATOMIC_CHECKOUT === "true";
   },
+  // Opt-in atomique distinct, strict et local. Aucun fallback vers le mode à risque.
+  isAtomicCheckoutRequested() {
+    return process.env.DELIFAST_ALLOW_ATOMIC_CHECKOUT === "true";
+  },
   smsProvider: process.env.SMS_PROVIDER || "",
   orangeSmsEnabled: process.env.ORANGE_SMS_ENABLED === "true",
   orangeClientId: process.env.ORANGE_CLIENT_ID || "",

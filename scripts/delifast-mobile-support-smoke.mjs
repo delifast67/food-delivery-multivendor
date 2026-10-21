@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Recette support mobile isolée : MongoMemoryServer jetable, aucun SMS ni paiement.
+// Recette support mobile isolée : MongoMemoryReplSet jetable, aucun SMS ni paiement.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { createHash, randomUUID } from 'node:crypto';
@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(new URL('../delifast-api/package.json', import.meta.url));
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const { MongoClient } = require('mongodb');
 const { passwordHash } = require('../delifast-api/dist/src/auth.js');
 const appRequire = createRequire(new URL('../enatega-multivendor-app/package.json', import.meta.url));
@@ -59,7 +59,7 @@ async function ready(url) {
 }
 
 try {
-  mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'delifast_mobile_support_smoke' } });
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 }, instance: { ip: '127.0.0.1', dbName: 'delifast_mobile_support_smoke' } });
   dbClient = await MongoClient.connect(mongo.getUri());
   const db = dbClient.db();
   await seedSession(db, 'customer-a', tokenA, '+22670123456');
@@ -112,7 +112,7 @@ try {
   api.setCustomerToken(tokenA);
   ok('refus anonyme et isolation stricte entre deux comptes');
 
-  // Fixtures de pagination en DB de la MongoMemoryServer, sans détour UX ni création artificielle côté mobile.
+  // Fixtures de pagination en DB de la MongoMemoryReplSet, sans détour UX ni création artificielle côté mobile.
   const fixtures = Array.from({ length: 21 }, (_, index) => {
     const at = new Date(Date.now() + index + 1).toISOString();
     return { id: `fixture-ticket-${String(index).padStart(2, '0')}`, customerId: 'customer-a', subject: `Sujet ${index}`, description: `Fixture ${index}`, status: 'OPEN', version: 0, createdAt: at, updatedAt: at, history: [{ status: 'OPEN', at, actorRole: 'CUSTOMER', note: '' }], idempotencyKey: `fixture-key-${String(index).padStart(8, '0')}`, payloadFingerprint: `fixture-${index}` };

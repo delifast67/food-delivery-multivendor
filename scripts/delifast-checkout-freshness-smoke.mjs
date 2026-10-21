@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
 const require = createRequire(new URL('../delifast-api/package.json', import.meta.url))
-const { MongoMemoryServer } = require('mongodb-memory-server')
+const { MongoMemoryReplSet } = require('mongodb-memory-server')
 const { MongoClient } = require('mongodb')
 const appRequire = createRequire(new URL('../enatega-multivendor-app/package.json', import.meta.url))
 const { createClient } = appRequire('./src/delifast/api.js')
@@ -21,7 +21,7 @@ let mongo, connection, server, logs = '', checks = 0, orderRequests = 0, dropRes
 const ok = label => console.log(`OK ${++checks} — ${label}`)
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 try {
-  mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'delifast_checkout_freshness_smoke' } })
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 }, instance: { ip: '127.0.0.1', dbName: 'delifast_checkout_freshness_smoke' } })
   connection = await MongoClient.connect(mongo.getUri())
   const db = connection.db()
   const env = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'development', MONGODB_URI: mongo.getUri(), HOST: '127.0.0.1', PORT: String(port), DELIFAST_DEMO_PAYMENTS: 'false', DELIFAST_ALLOW_NONATOMIC_CHECKOUT: 'true', PAYMENT_PROVIDER: '', PAYDUNYA_ENABLED: 'false', PAYDUNYA_LIVE_AUTHORIZED: 'false', CINETPAY_ENABLED: 'false', CINETPAY_LIVE_AUTHORIZED: 'false', SMS_PROVIDER: 'disabled', ORANGE_SMS_ENABLED: 'false', RATE_LIMIT_MAX: '1000' }

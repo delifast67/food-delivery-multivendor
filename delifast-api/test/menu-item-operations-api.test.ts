@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
 import crypto from "node:crypto";
 import { operationsMenuItemSummaries, operationsMenuItem } from "../src/catalog.js";
 import { passwordHash } from "../src/auth.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let app: any;
 let db: any;
 const gql = async (query: string, variables: any = {}, token?: string) => {
@@ -20,7 +21,7 @@ const login = async (email: string, password = "Test!123") =>
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
   process.env.RATE_LIMIT_MAX = "10000";
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
   db = await (await import("../src/db.js")).connect();
   await db.collection("staff_users").insertMany([
@@ -41,7 +42,8 @@ beforeAll(async () => {
   })));
   await db.collection("menu_items").insertOne({ id: "same-id", restaurantId: "restaurant-b", name: "Wrong scope", description: "D", priceXof: 1, available: true, archived: false, version: 1, optionGroups: [] });
   app = await (await import("../src/server.js")).createApp();
-}, 60000);
+
+  await initializeCheckoutFences(db, await db.collection("restaurants").distinct("id"));}, 60000);
 
 afterAll(async () => { await (await import("../src/db.js")).closeDb(); await mongo.stop(); });
 

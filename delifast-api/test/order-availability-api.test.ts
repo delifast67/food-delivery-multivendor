@@ -1,10 +1,11 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
 import type { Db } from "mongodb";
 import { quoteInput } from "./quote-helper.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer, db: Db, app: any;
+let mongo: MongoMemoryReplSet, db: Db, app: any;
 const point = { latitude: 12.3714, longitude: -1.5197 };
 const cart = { restaurantId: "guard-r1", items: [{ menuItemId: "guard-dish", quantity: 1, selections: [] }] };
 const address = { recipientName: "Test fictif", phone: "+22670000000", city: "Ouagadougou",
@@ -23,7 +24,7 @@ beforeAll(async () => {
   vi.stubEnv("RATE_LIMIT_MAX", "1000");
   vi.stubEnv("SMS_PROVIDER", "");
   vi.stubEnv("DELIFAST_DEMO_PAYMENTS", "false");
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   vi.stubEnv("MONGODB_URI", mongo.getUri());
   db = await (await import("../src/db.js")).connect();
   await db.collection("orders").createIndex({ idempotencyKey: 1 }, { unique: true });
@@ -34,7 +35,8 @@ beforeAll(async () => {
     name: "Zone fictive", shape: "CIRCLE", center: point, radiusMeters: 10000, enabled: true,
     feeXof: 500, minimumOrderXof: 0, estimatedMinutes: 45, priority: 0, demo: true, hours: [], version: 0 });
   app = await (await import("../src/server.js")).createApp();
-}, 60000);
+
+  await initializeCheckoutFences(db, await db.collection("restaurants").distinct("id"));}, 60000);
 beforeEach(async () => {
   vi.stubEnv("NODE_ENV", "test");
   vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", undefined);

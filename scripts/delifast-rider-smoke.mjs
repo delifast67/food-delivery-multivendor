@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 const require = createRequire(
   new URL("../delifast-api/package.json", import.meta.url),
 );
-const { MongoMemoryServer } = require("mongodb-memory-server");
+const { MongoMemoryReplSet } = require("mongodb-memory-server");
 const { MongoClient } = require("mongodb");
 const {
   createClient,
@@ -80,7 +80,8 @@ async function loginController(overrides = {}, storage = memory()) {
   return controller;
 }
 try {
-  mongo = await MongoMemoryServer.create({
+  mongo = await MongoMemoryReplSet.create({
+    replSet: { count: 1 },
     instance: { ip: "127.0.0.1", dbName: "delifast_rider_smoke" },
   });
   env = {

@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import { connect, closeDb } from "../src/db.js";
 import { isRestaurantOpen, normalizeRestaurantSchedule } from "../src/restaurant-hours.js";
 import { setRestaurantSchedule } from "../src/restaurant.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let db: any;
 const admin = { id: "admin", name: "Admin", role: "ADMIN" as const, restaurantId: null };
 const owner = { id: "owner", name: "Owner", role: "RESTAURANT" as const, restaurantId: "r" };
@@ -14,10 +15,11 @@ const errorCode = async (fn: () => Promise<unknown> | unknown) => {
 };
 
 beforeAll(async () => {
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   db = await connect(mongo.getUri());
   await db.collection("restaurants").insertOne({ id: "r", name: "R", description: "", open: true, version: 0, audit: [] });
-});
+
+  await initializeCheckoutFences(db, await db.collection("restaurants").distinct("id"));});
 afterAll(async () => { await closeDb(); await mongo.stop(); });
 
 describe("restaurant weekly hours", () => {

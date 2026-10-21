@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let app: any;
 let db: any;
 const gql = async (query: string, variables: any = {}) =>
@@ -12,7 +13,7 @@ const code = (body: any) => body.errors?.[0]?.extensions?.code;
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
   process.env.RATE_LIMIT_MAX = "10000";
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
   db = await (await import("../src/db.js")).connect();
   await db.collection("restaurants").insertMany(Array.from({ length: 41 }, (_, i) => ({
@@ -38,7 +39,8 @@ beforeAll(async () => {
     { id: "archived-item", restaurantId: "pub-001", name: "Archived", description: "", priceXof: 1, available: true, archived: true, categoryId: null, optionGroups: [] },
   ]);
   app = await (await import("../src/server.js")).createApp();
-}, 60000);
+
+  await initializeCheckoutFences(db, await db.collection("restaurants").distinct("id"));}, 60000);
 
 afterAll(async () => { await (await import("../src/db.js")).closeDb(); await mongo.stop(); });
 

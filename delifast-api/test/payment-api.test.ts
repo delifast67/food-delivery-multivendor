@@ -1,3 +1,4 @@
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 import crypto from "node:crypto";
 import {
   afterAll,
@@ -9,7 +10,7 @@ import {
   vi,
 } from "vitest";
 import request from "supertest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import type { Db } from "mongodb";
 import type {
   CheckoutGateway,
@@ -69,7 +70,7 @@ class GatewayMock implements CheckoutGateway {
   }
 }
 
-let mongod: MongoMemoryServer;
+let mongod: MongoMemoryReplSet;
 let db: Db;
 let app: any;
 let gateway: GatewayMock;
@@ -116,12 +117,13 @@ const startInput = (extra: any = {}) => ({
 
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
-  mongod = await MongoMemoryServer.create();
+  mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongod.getUri();
   db = await (await import("../src/db.js")).connect();
   gateway = new GatewayMock("live");
   app = await (await import("../src/server.js")).createApp(gateway);
-}, 60000);
+
+  await initializeCheckoutFences(db, []);}, 60000);
 
 beforeEach(async () => {
   await db.collection("orders").deleteMany({});

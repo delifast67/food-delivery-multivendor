@@ -1,11 +1,12 @@
 import "./local-checkout-helper.js";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
 import { passwordHash } from "../src/auth.js";
 import { quoteInput } from "./quote-helper.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer | undefined;
+let mongo: MongoMemoryReplSet | undefined;
 let app: any;
 let db: any;
 const sessions: Record<string, string> = {};
@@ -24,7 +25,7 @@ beforeAll(async () => {
   process.env.NODE_ENV = "test";
   // Simulation locale uniquement : aucun prestataire de paiement ni SMS.
   process.env.DELIFAST_DEMO_PAYMENTS = "true";
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
   db = await (await import("../src/db.js")).connect();
   await db.collection("restaurants").insertMany(
@@ -63,7 +64,8 @@ beforeAll(async () => {
     );
     sessions[user.id] = result.staffLogin.token;
   }
-}, 60000);
+
+  await initializeCheckoutFences(db, await db.collection("restaurants").distinct("id"));}, 60000);
 
 afterAll(async () => {
   await (await import("../src/db.js")).closeDb();

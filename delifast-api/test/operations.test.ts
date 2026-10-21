@@ -1,11 +1,12 @@
 import "./local-checkout-helper.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
 import { passwordHash } from "../src/auth.js";
 import { quoteInput } from "./quote-helper.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let app: any;
 let db: any;
 const gql = async (query: string, variables: any = {}, token?: string) => {
@@ -38,7 +39,7 @@ describe("contrat opérations", () => {
   beforeAll(async () => {
     process.env.NODE_ENV = "test";
     delete process.env.DELIFAST_DEMO_PAYMENTS;
-    mongo = await MongoMemoryServer.create();
+    mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     process.env.MONGODB_URI = mongo.getUri();
     db = await (await import("../src/db.js")).connect();
     await db.collection("restaurants").insertMany([
@@ -117,7 +118,8 @@ describe("contrat opérations", () => {
     await db.collection("delivery_zones").insertOne({ id:`test-zone-${restaurant.id}`,restaurantId:restaurant.id,name:"Zone fictive de test",shape:"CIRCLE",center:{latitude:12.3714,longitude:-1.5197},radiusMeters:10000,enabled:true,feeXof:500,minimumOrderXof:0,estimatedMinutes:45,priority:0,demo:true,hours:[],version:0 });
   }
   app = await (await import("../src/server.js")).createApp();
-  }, 60000);
+
+  await initializeCheckoutFences(db, await db.collection("restaurants").distinct("id"));}, 60000);
   afterAll(async () => {
     await (await import("../src/db.js")).closeDb();
     await mongo.stop();

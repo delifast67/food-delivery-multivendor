@@ -1,15 +1,16 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { MongoClient, type Db } from "mongodb";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import type { Staff } from "../src/auth.js";
 import { assign, transition } from "../src/orders.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
 const admin: Staff = { id: "admin", name: "Admin", role: "ADMIN" };
 const restaurant: Staff = { id: "restaurant", name: "Restaurant", role: "RESTAURANT", restaurantId: "r1" };
 const rider: Staff = { id: "rider", name: "Livreur", role: "RIDER" };
 const states = ["PAYMENT_PENDING", "CONFIRMED", "ACCEPTED", "PREPARING", "READY", "PICKED_UP", "DELIVERED", "CANCELLED", "UNKNOWN"];
 const timestamp = "2026-01-01T00:00:00.000Z";
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let client: MongoClient;
 let db: Db;
 async function seed(status = "READY", extra: Record<string, unknown> = {}) {
@@ -22,13 +23,14 @@ const rejection = (code: string) => ({ extensions: { code } });
 
 describe("cycle de vie local des commandes", () => {
   beforeAll(async () => {
-    mongo = await MongoMemoryServer.create();
+    mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     client = await new MongoClient(mongo.getUri()).connect();
     db = client.db("order_lifecycle");
     await db.collection("staff_users").insertMany([
       { ...rider, active: true }, { ...rider, id: "other-rider", active: true },
     ]);
-  }, 60000);
+
+  await initializeCheckoutFences(db, []);}, 60000);
   beforeEach(async () => { await db.collection("orders").deleteMany({}); });
   afterAll(async () => { await client?.close(); await mongo?.stop(); });
 

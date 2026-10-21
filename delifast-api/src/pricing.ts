@@ -5,6 +5,7 @@ import type { Db } from "mongodb";
 import { config } from "./config.js";
 import { assertIntAmount, Cart, fail } from "./validation.js";
 import { isRestaurantOpen } from "./restaurant-hours.js";
+import type { CheckoutStaticPolicy } from "./checkout-policy.js";
 import { captureCheckoutGuard } from "./checkout-guard.js";
 export type SelectedMenuOption = {
   groupId: string;
@@ -37,7 +38,7 @@ export type Checkout = {
   items: CheckoutItem[];
   delivery: Awaited<ReturnType<typeof eligibility>> | null;
 };
-export type CheckoutReadContext = { session?: import("mongodb").ClientSession; admissionAt?: Date };
+export type CheckoutReadContext = { session?: import("mongodb").ClientSession; admissionAt?: Date; staticPolicy?: CheckoutStaticPolicy };
 export async function calculateCheckout(db: Db, cart: Cart): Promise<Checkout> {
   return (await prepareCheckout(db, cart)).checkout;
 }
@@ -128,15 +129,17 @@ export async function prepareCheckout(db: Db, cart: Cart, context: CheckoutReadC
   const deliveryState = cart.point ? await prepareEligibility(db, cart.restaurantId, cart.point, subtotal, context.admissionAt, context) : null;
   const delivery = deliveryState?.delivery ?? null;
   const deliveryFee = delivery?.deliveryFee ?? 0;
-  const fees = assertIntAmount(deliveryFee + config.serviceFee + config.tax),
+  const serviceFee = context.staticPolicy?.serviceFee ?? config.serviceFee;
+  const tax = context.staticPolicy?.tax ?? config.tax;
+  const fees = assertIntAmount(deliveryFee + serviceFee + tax),
     total = assertIntAmount(subtotal + fees);
   const snapshot = {
     currency: "XOF" as const,
     subtotal,
     deliveryFee,
     delivery,
-    serviceFee: config.serviceFee,
-    tax: config.tax,
+    serviceFee,
+    tax,
     discount: 0,
     total,
     items,

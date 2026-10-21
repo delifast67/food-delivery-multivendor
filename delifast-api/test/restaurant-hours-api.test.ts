@@ -1,11 +1,12 @@
 import "./local-checkout-helper.js";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
 import { closeDb, connect, getDb } from "../src/db.js";
 import { quoteInput } from "./quote-helper.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let app: any;
 const tokens: Record<string, string> = {};
 const point = { latitude: 12.3714, longitude: -1.5197 };
@@ -23,7 +24,7 @@ const orderInput = (key: string) => ({ restaurantId: "rest-koudougou", items: [{
 
 beforeAll(async () => {
   process.env.NODE_ENV = "test"; process.env.RATE_LIMIT_MAX = "1000";
-  mongo = await MongoMemoryServer.create(); process.env.MONGODB_URI = mongo.getUri();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } }); process.env.MONGODB_URI = mongo.getUri();
   await connect(mongo.getUri());
   const { seedAll } = await import("../migrations/seed.js");
   await seedAll(getDb());
@@ -32,7 +33,8 @@ beforeAll(async () => {
   tokens.OWNER = await login("restaurant1@delifast.local", "RestaurantDemo!2026");
   tokens.OTHER = await login("restaurant2@delifast.local", "RestaurantDemo!2026");
   tokens.RIDER = await login("rider@delifast.local", "RiderDemo!2026");
-}, 60000);
+
+  await initializeCheckoutFences(getDb(), []);}, 60000);
 afterAll(async () => { await closeDb(); await mongo.stop(); });
 
 it("applique les droits anon/rider/autre restaurant et accepte propriétaire/admin", async () => {

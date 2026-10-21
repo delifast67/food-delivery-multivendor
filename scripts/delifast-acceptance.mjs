@@ -36,7 +36,7 @@ if (process.argv[2] === '--isolated-system') {
   process.env.MONGOMS_SYSTEM_BINARY = process.argv[8];
 }
 const require = createRequire(new URL('../delifast-api/package.json', import.meta.url));
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const scratch = await mkdtemp(join(tmpdir(), 'delifast-acceptance-'));
 const web = join(scratch, 'web');
 const mailbox = join(scratch, 'otp.json');
@@ -78,7 +78,7 @@ try {
   console.log('1/5 — Vérification des outils et compilation API hors réseau');
   await run(python, ['-c', 'import playwright.sync_api'], root);
   try {
-    mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'acceptance' }, binary: { checkMD5: false } });
+    mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 }, instance: { ip: '127.0.0.1', dbName: 'acceptance' }, binary: { checkMD5: false } });
   } catch (error) {
     throw new Error('MongoDB doit être préinstallé (cache ou MONGOMS_SYSTEM_BINARY). Aucun téléchargement autorisé.', { cause: error });
   }

@@ -8,11 +8,12 @@ import {
   vi,
 } from "vitest";
 import request from "supertest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import type { Db } from "mongodb";
 import { config } from "../src/config.js";
 import type { SmsProvider } from "../src/sms-provider.js";
 import crypto from "node:crypto";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
 const PHONE_A = "+22670123456";
 const PHONE_B = "+22670123457";
@@ -31,7 +32,7 @@ const address = (suffix: string) => ({
   point: { latitude: 12.3714, longitude: -1.5197 },
 });
 
-let mongod: MongoMemoryServer;
+let mongod: MongoMemoryReplSet;
 let app: any;
 let db: Db;
 let provider: SmsProvider & { messages: Map<string, string> };
@@ -74,7 +75,7 @@ async function login(phone: string) {
 
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
-  mongod = await MongoMemoryServer.create();
+  mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongod.getUri();
   Object.assign(config, {
     smsProvider: "orange",
@@ -90,7 +91,8 @@ beforeAll(async () => {
   db = await dbModule.connect();
   provider = otpProvider();
   app = await (await import("../src/server.js")).createApp(undefined, provider);
-}, 60000);
+
+  await initializeCheckoutFences(db, []);}, 60000);
 
 beforeEach(async () => {
   assertSmsConfigured();

@@ -24,7 +24,7 @@ if (process.argv[2] === '--isolated-system') {
   process.env.HOME = process.argv[5]; process.env.DELIFAST_TEST_PYTHON = process.argv[6]; process.env.DELIFAST_TEST_CHROMIUM = process.argv[7]; process.env.MONGOMS_SYSTEM_BINARY = process.argv[8]; process.env.DELIFAST_ACCEPTANCE_OUTPUT = process.argv[9];
 }
 const require = createRequire(new URL('../delifast-api/package.json', import.meta.url));
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const scratch = await mkdtemp(join(tmpdir(), 'delifast-public-catalogue-'));
 const web = join(scratch, 'web'); const fixture = join(scratch, 'fixture.json');
 const output = process.env.DELIFAST_ACCEPTANCE_OUTPUT || join(root, 'artifacts', 'public-catalogue-acceptance'); const result = join(output, 'result.json');
@@ -39,7 +39,7 @@ try {
   await mkdir(output, { recursive: true });
   console.log('1/4 — Playwright, Mongo jetable et builds propres');
   execFileSync(python, ['-c', 'import playwright.sync_api'], { cwd: root, stdio: 'inherit' });
-  mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'delifast_public_catalogue_acceptance' }, binary: { checkMD5: false } });
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 }, instance: { ip: '127.0.0.1', dbName: 'delifast_public_catalogue_acceptance' }, binary: { checkMD5: false } });
   env.MONGODB_URI = mongo.getUri(); Object.assign(process.env, env);
   execFileSync('npm', ['run', 'build'], { cwd: join(root, 'delifast-api'), env, stdio: 'inherit' });
   const tracked = execFileSync('git', ['ls-files', '-z', 'enatega-multivendor-web'], { cwd: root }).toString().split('\0').filter(Boolean);

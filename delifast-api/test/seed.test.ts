@@ -1,16 +1,18 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import { seedAll } from "../migrations/seed.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let db: any;
 
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
   db = await (await import("../src/db.js")).connect();
-}, 60_000);
+
+  await initializeCheckoutFences(db, []);}, 60_000);
 
 afterAll(async () => {
   await (await import("../src/db.js")).closeDb();

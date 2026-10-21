@@ -1,12 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
 import crypto from "node:crypto";
 import type { Db } from "mongodb";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
 // All identities, orders and sessions below are synthetic, in a disposable DB.
 // No OTP delivery, order placement or payment-provider call is needed.
-let mongo: MongoMemoryServer, db: Db, app: any;
+let mongo: MongoMemoryReplSet, db: Db, app: any;
 const sha = (value: string) => crypto.createHash("sha256").update(value).digest("hex");
 const identities = ["anonymous", "customer", "restaurant", "rider", "admin", "unsupported"] as const;
 type Identity = typeof identities[number];
@@ -35,7 +36,7 @@ beforeAll(async () => {
   process.env.RATE_LIMIT_MAX = "5000";
   process.env.PAYMENT_PROVIDER = "";
   process.env.PAYMENT_RECONCILIATION_PROVIDERS = "";
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
   db = await (await import("../src/db.js")).connect();
   await db.collection("staff_users").insertMany(staff.map(person => ({ ...person, name: person.id, email: `${person.id}@test.local`, active: true })));
@@ -60,7 +61,8 @@ beforeAll(async () => {
     { id: "ticket-rider", customerId: null, creatorId: "rider", creatorRole: "RIDER", restaurantId: null, scopeTenant: "" },
   ].map(ticket => ({ ...ticket, subject: ticket.id, description: "Private synthetic text", status: "OPEN", version: 0, createdAt: timestamp, updatedAt: timestamp, history: [], idempotencyKey: `key-${ticket.id}`, payloadFingerprint: ticket.id })));
   app = await (await import("../src/server.js")).createApp(undefined, { send: async () => { throw new Error("SMS forbidden in authorization tests"); } }, []);
-}, 60000);
+
+  await initializeCheckoutFences(db, await db.collection("restaurants").distinct("id"));}, 60000);
 afterAll(async () => { await (await import("../src/db.js")).closeDb(); await mongo?.stop(); });
 
 const customerOnly: Identity[] = ["customer"];

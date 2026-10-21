@@ -104,6 +104,15 @@ export async function initializeCheckoutFences(
   return result;
 }
 
+/** Création d'une nouvelle identité uniquement, sous le guard global détenu par le writer.
+ * Pas d'upsert ni de réparation : un doublon abandonne aussi la création restaurant.
+ */
+export async function insertNewRestaurantCheckoutFence(db: Db, session: ClientSession, restaurantId: string) {
+  if (!session.inTransaction()) throw new Error("Une transaction MongoDB active est obligatoire");
+  const ids = canonicalCheckoutFenceIds([restaurantId]);
+  await fenceCollection(db).insertOne({ _id: ids[1], generation: randomUUID(), revision: Long.ZERO }, { session });
+}
+
 /**
  * Acquiert tous les guards par CAS génération+révision dans l'ordre canonique.
  * Les expectations doivent provenir d'une lecture snapshot dans la même session.
@@ -143,6 +152,19 @@ export async function acquireCheckoutFences(
   return acquired;
 }
 
+/** Acquisition restaurant après le guard global, uniquement via le contexte writer actif. */
+export async function acquireRestaurantCheckoutFence(db: Db, session: ClientSession, restaurantId: string) {
+  const id = canonicalCheckoutFenceIds([restaurantId])[1];
+  const expected = await readCheckoutFence(db, session, id);
+  if (expected.revision.equals(MAX_REVISION)) throw new Error("Débordement du compteur checkout");
+  const update = await fenceCollection(db).updateOne(
+    { _id: id, generation: expected.generation, revision: expected.revision },
+    { $inc: { revision: Long.ONE } }, { session },
+  );
+  if (update.matchedCount !== 1 || update.modifiedCount !== 1)
+    throw new Error(`Guard checkout changé ou absent : ${id}`);
+}
+
 /** Transaction explicite snapshot/majority, sans démarrer de transaction implicite. */
 export async function withCheckoutFenceTransaction<T>(
   client: MongoClient,
@@ -153,6 +175,8 @@ export async function withCheckoutFenceTransaction<T>(
     return await session.withTransaction((s) => work(s), {
       readConcern: { level: "snapshot" },
       writeConcern: { w: "majority" },
+      timeoutMS: 15_000,
+      maxCommitTimeMS: 5_000,
     });
   } finally {
     await session.endSession();

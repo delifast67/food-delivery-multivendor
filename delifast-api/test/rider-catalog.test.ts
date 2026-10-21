@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
 import crypto from "node:crypto";
 import { passwordHash } from "../src/auth.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let app: any;
 let db: any;
 
@@ -26,7 +27,7 @@ const login = async (email: string) => {
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
   process.env.RATE_LIMIT_MAX = "10000";
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
   db = await (await import("../src/db.js")).connect();
   await db.collection("staff_users").insertMany([
@@ -56,7 +57,8 @@ beforeAll(async () => {
     expiresAt: new Date(Date.now() + 60_000),
   });
   app = await (await import("../src/server.js")).createApp();
-}, 60_000);
+
+  await initializeCheckoutFences(db, []);}, 60_000);
 
 afterAll(async () => {
   await (await import("../src/db.js")).closeDb();

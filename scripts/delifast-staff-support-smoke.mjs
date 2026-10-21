@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(
   new URL("../delifast-api/package.json", import.meta.url),
 );
-const { MongoMemoryServer } = require("mongodb-memory-server");
+const { MongoMemoryReplSet } = require("mongodb-memory-server");
 const { MongoClient } = require("mongodb");
 const { passwordHash } = require("../delifast-api/dist/src/auth.js");
 const cwd = fileURLToPath(new URL("../delifast-api/", import.meta.url));
@@ -77,7 +77,8 @@ const detail = (token, id) =>
     token,
   ).then((d) => d.staffSupportTicket);
 try {
-  mongo = await MongoMemoryServer.create({
+  mongo = await MongoMemoryReplSet.create({
+    replSet: { count: 1 },
     instance: { ip: "127.0.0.1", dbName: "delifast_staff_support_smoke" },
   });
   dbClient = await MongoClient.connect(mongo.getUri());

@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 import { assertQuote } from "./quote.js";
-import type { Db } from "mongodb";
+import type { Db, ClientSession } from "mongodb";
+import { acquireCheckoutFences, canonicalCheckoutFenceIds, readCheckoutFence, withCheckoutFenceTransaction } from "./checkout-fences.js";
+import { assertCheckoutStaticPolicy } from "./checkout-policy.js";
+import { assertCompleteCheckoutWriterCoverage } from "./checkout-coverage.js";
 import { prepareCheckout } from "./pricing.js";
 import { assertCheckoutCurrent } from "./checkout-guard.js";
 import { type Address, type Cart, fail } from "./validation.js";
@@ -101,8 +104,40 @@ export async function placeOrder(
   expectedQuoteHash?: unknown,
   expectedQuoteToken?: unknown,
 ) {
+  if (config.isAtomicCheckoutRequested()) {
+    assertCompleteCheckoutWriterCoverage();
+    return placeOrderAtomic(db, cart, address, idempotencyKey, customerId, expectedQuoteHash, expectedQuoteToken);
+  }
+  return placeOrderImplementation(db, cart, address, idempotencyKey, customerId, expectedQuoteHash, expectedQuoteToken);
+}
+
+/** Primitive serveur interne, non exposée par GraphQL hors du verrou explicite.
+ * L'idempotence est portée par le document order (index unique idempotencyKey) :
+ * aucune réservation hors transaction ni effet externe dans le callback rejouable.
+ */
+export async function placeOrderAtomic(
+  db: Db, cart: Cart, address: Address, idempotencyKey: unknown,
+  customerId?: string, expectedQuoteHash?: unknown, expectedQuoteToken?: unknown,
+) {
+  const run = () => withCheckoutFenceTransaction(db.client, (session) =>
+    placeOrderImplementation(db, cart, address, idempotencyKey, customerId, expectedQuoteHash, expectedQuoteToken, session));
+  try { return await run(); }
+  catch (error: any) {
+    // Un doublon invalide la transaction : récupération dans une NOUVELLE session.
+    // Les résultats de commit ambigus sont gérés par le driver, jamais rejoués ici.
+    if (error?.code !== 11000) throw error;
+    return run();
+  }
+}
+
+async function placeOrderImplementation(
+  db: Db, cart: Cart, address: Address, idempotencyKey: unknown,
+  customerId?: string, expectedQuoteHash?: unknown, expectedQuoteToken?: unknown,
+  session?: ClientSession,
+) {
   // Applies to every submission, including recovery: no implicit local/dev bypass.
-  assertLocalCheckoutEnabled();
+  if (!session) assertLocalCheckoutEnabled();
+  const mongoOptions = session ? { session } : {};
   if (
     typeof idempotencyKey !== "string" ||
     idempotencyKey.length < 8 ||
@@ -147,7 +182,7 @@ export async function placeOrder(
     return order.fingerprint === hash;
   };
   const orders = db.collection<any>("orders");
-  const old = await orders.findOne({ idempotencyKey });
+  const old = await orders.findOne({ idempotencyKey }, mongoOptions);
   if (old) {
     if ((old.customerId ?? null) !== (customerId ?? null))
       fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée par une autre session client");
@@ -155,8 +190,16 @@ export async function placeOrder(
       fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée avec un autre panier");
     return customerView(old, old.accessToken ?? "");
   }
+  const fenceExpectations = [];
+  let staticPolicy: Awaited<ReturnType<typeof assertCheckoutStaticPolicy>> | undefined;
+  const admissionAt = new Date();
+  if (session) {
+    for (const id of canonicalCheckoutFenceIds([cart.restaurantId]))
+      fenceExpectations.push(await readCheckoutFence(db, session, id));
+    staticPolicy = await assertCheckoutStaticPolicy(db, session);
+  }
   if (!address.point) fail("DELIVERY_POINT_REQUIRED", "Un point GPS de livraison est requis");
-  const { checkout, guard } = await prepareCheckout(db, { ...cart, point: address.point });
+  const { checkout, guard } = await prepareCheckout(db, { ...cart, point: address.point }, session ? { session, admissionAt, staticPolicy: staticPolicy!.policy } : {});
   // Historical omission is recovery-only: no new insertion without a server-issued quote.
   const acceptedQuote = assertQuote(expectedQuoteToken, expectedQuoteHash, checkout.quoteHash);
   const raw = crypto.randomBytes(24).toString("hex");
@@ -177,19 +220,27 @@ export async function placeOrder(
     history: [
       { status: "PAYMENT_PENDING", at: timestamp, actorRole: "SYSTEM" },
     ],
+    ...(session ? { checkoutProtocol: {
+      format: "delifast-checkout-fences-v1",
+      admissionAt: admissionAt.toISOString(),
+      policyHash: staticPolicy!.hash,
+      policyGeneration: staticPolicy!.generation,
+      fences: fenceExpectations.map(fence => ({ id: fence._id, generation: fence.generation, revision: fence.revision.toString() })),
+    } } : {}),
     ...(customerId ? { customerId } : {}),
   };
   try {
-    // Final conditional state/version checks work on standalone MongoDB too.
-    // They narrow, but cannot atomically close, the check-to-insert window.
-    await assertCheckoutCurrent(db, guard);
-    // Database reads may have crossed the expiry boundary. Still not an atomic commit fence.
+    if (session) await acquireCheckoutFences(db, session, fenceExpectations);
+    // Le chemin historique reste explicitement NON atomique.
+    else await assertCheckoutCurrent(db, guard);
+    // Échéance contrôlée après acquisition ; admission horaire fixée au calcul de cette tentative.
+    // L’horloge ne fait pas partie de la transaction MongoDB.
     assertQuote(expectedQuoteToken, expectedQuoteHash, checkout.quoteHash);
-    assertLocalCheckoutEnabled();
-    await orders.insertOne(order);
+    if (!session) assertLocalCheckoutEnabled();
+    await orders.insertOne(order, mongoOptions);
     return customerView(order, raw);
   } catch (error: any) {
-    if (error?.code !== 11000) throw error;
+    if (session || error?.code !== 11000) throw error;
     const concurrent = await orders.findOne({ idempotencyKey });
     if ((concurrent?.customerId ?? null) !== (customerId ?? null))
       fail("IDEMPOTENCY_CONFLICT", "Clé déjà utilisée par une autre session client");

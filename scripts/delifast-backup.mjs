@@ -36,7 +36,7 @@ export async function backup({ uri, file, offline = false }) {
     for (const info of await db.listCollections({}, { nameOnly: false }).toArray()) {
       if (!permittedName(info.name) || excluded.has(info.name)) continue;
       if (info.type !== 'collection') throw new Error('Les vues ne sont pas prises en charge par cet outil local.');
-      const collection = db.collection(info.name);
+      const collection = db.collection(info.name, { promoteLongs: false });
       const documents = await collection.find({}).toArray();
       const indexes = (await collection.indexes()).filter(index => index.name !== '_id_').map(({ key, name, unique, sparse, expireAfterSeconds, partialFilterExpression, collation }) => ({
         key, name, ...(unique !== undefined && { unique }), ...(sparse !== undefined && { sparse }),
@@ -65,7 +65,7 @@ export async function restore({ uri, file, offline = false }) {
   if ((await stat(file)).size > MAX_BYTES) throw new Error('Archive trop volumineuse.');
   const envelope = JSON.parse(await readFile(file, 'utf8'));
   if (envelope.format !== FORMAT || typeof envelope.payload !== 'string' || digest(envelope.payload) !== envelope.sha256) throw new Error('Format ou somme de contrôle de sauvegarde invalide.');
-  const { collections } = EJSON.parse(envelope.payload);
+  const { collections } = EJSON.parse(envelope.payload, { relaxed: false });
   if (!Array.isArray(collections) || new Set(collections.map(c => c.name)).size !== collections.length) throw new Error('Collections de sauvegarde invalides.');
   for (const item of collections) {
     if (!permittedName(item.name) || excluded.has(item.name) || !Array.isArray(item.documents) || !Array.isArray(item.indexes)) throw new Error('Collection de sauvegarde invalide.');

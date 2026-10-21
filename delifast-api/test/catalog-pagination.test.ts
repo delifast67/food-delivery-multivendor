@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
 import { passwordHash } from "../src/auth.js";
 import crypto from "node:crypto";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let app: any;
 let db: any;
 const gql = async (query: string, variables: any = {}, token?: string) => {
@@ -21,7 +22,7 @@ const login = async (email: string, password: string) => {
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
   process.env.RATE_LIMIT_MAX = "10000";
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
   db = await (await import("../src/db.js")).connect();
   await db.collection("staff_users").insertMany([
@@ -38,7 +39,8 @@ beforeAll(async () => {
   await db.collection("restaurants").updateOne({ id: "r-000" }, { $set: { weeklySchedule: [{ day: 1, startMinute: 600, endMinute: 1200 }] } });
   await db.collection("menu_items").insertOne({ id: "archived-menu", restaurantId: "r-000", name: "Archived", description: "D", priceXof: 10, available: true, archived: true, version: 1, optionGroups: [] });
   app = await (await import("../src/server.js")).createApp();
-}, 60000);
+
+  await initializeCheckoutFences(db, []);}, 60000);
 
 afterAll(async () => { await (await import("../src/db.js")).closeDb(); await mongo.stop(); });
 

@@ -9,7 +9,7 @@ import {
   it,
   vi,
 } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import { MongoClient, type Db } from "mongodb";
 import { config } from "../src/config.js";
 import {
@@ -19,9 +19,10 @@ import {
   authenticateCustomer,
 } from "../src/customer-auth.js";
 import type { SmsProvider } from "../src/sms-provider.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
 const PHONE = "+22670123456";
-let mongod: MongoMemoryServer, client: MongoClient, db: Db;
+let mongod: MongoMemoryReplSet, client: MongoClient, db: Db;
 const saved = { ...config };
 function fixture() {
   const messages: { phone: string; code: string }[] = [];
@@ -43,7 +44,7 @@ async function cool() {
   await challenges().updateMany({}, { $set: { cooldownUntil: new Date(0) } });
 }
 beforeAll(async () => {
-  mongod = await MongoMemoryServer.create();
+  mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   client = new MongoClient(mongod.getUri());
   await client.connect();
   db = client.db("customer-auth-tests");
@@ -55,7 +56,8 @@ beforeAll(async () => {
   await db
     .collection("customer_sessions")
     .createIndex({ challengeId: 1 }, { unique: true });
-});
+
+  await initializeCheckoutFences(db, []);});
 beforeEach(async () => {
   Object.assign(config, saved, {
     smsProvider: "orange",

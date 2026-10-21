@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { MongoClient, type Db } from "mongodb";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import { customerOrderByCustomer, customerOrders } from "../src/orders.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer, client: MongoClient, db: Db;
-beforeAll(async () => { mongo = await MongoMemoryServer.create(); client = new MongoClient(mongo.getUri()); await client.connect(); db = client.db("customer-orders"); });
+let mongo: MongoMemoryReplSet, client: MongoClient, db: Db;
+beforeAll(async () => { mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } }); client = new MongoClient(mongo.getUri()); await client.connect(); db = client.db("customer-orders");
+  await initializeCheckoutFences(db, []);});
 afterAll(async () => { await client.close(); await mongo.stop(); });
 beforeEach(async () => { await db.collection("orders").deleteMany({}); });
 const order = (id: string, customerId: string, createdAt: string, history = [{ status: "CONFIRMED", at: createdAt, actorRole: "SYSTEM" }]) => ({ id, customerId, createdAt, updatedAt: createdAt, history, accessToken: "secret-token", accessTokenHash: "hash", idempotencyKey: "private-key", fingerprint: "private-fingerprint", checkout: { items: [], total: 1 }, deliveryAddress: { instructions: "keep" }, status: "CONFIRMED", paymentStatus: "PAID", restaurantId: "r" });

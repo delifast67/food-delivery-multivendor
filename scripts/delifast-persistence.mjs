@@ -10,20 +10,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const require = createRequire(new URL('../delifast-api/package.json', import.meta.url));
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const { MongoClient } = require('mongodb');
 const cwd = fileURLToPath(new URL('../delifast-api/', import.meta.url));
 const dbPath = await mkdtemp(join(tmpdir(), 'delifast-restart-'));
 const port = Number(process.env.DELIFAST_PERSISTENCE_PORT || 4105);
 const url = `http://127.0.0.1:${port}/graphql`;
 let mongo;
+let mongoPort;
 let api;
 let log = '';
 function environment() {
   return { ...process.env, NODE_ENV: 'development', DELIFAST_ALLOW_NONATOMIC_CHECKOUT: 'true', MONGODB_URI: mongo.getUri('delifast_restart'), HOST: '127.0.0.1', PORT: String(port) };
 }
 async function startMongo() {
-  mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'delifast_restart', storageEngine: 'wiredTiger', dbPath } });
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1, name: 'delifast-restart', ip: '127.0.0.1', storageEngine: 'wiredTiger' }, instanceOpts: [{ dbPath, ...(mongoPort ? { port: mongoPort } : {}) }] });
+  mongoPort = mongo.servers[0].instanceInfo.port;
 }
 async function cli(path) {
   const child = spawn(process.execPath, [path], { cwd, env: environment(), stdio: ['ignore', 'pipe', 'pipe'] });

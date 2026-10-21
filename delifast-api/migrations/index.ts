@@ -1,4 +1,6 @@
 import { connect, closeDb } from "../src/db.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
+import { initializeCheckoutStaticPolicy } from "../src/checkout-policy.js";
 const db = await connect();
 await db
   .collection("orders")
@@ -86,5 +88,10 @@ await db
 await db.collection("orders").createIndex({ createdAt: -1, id: -1 }, { name: "orders_operations_created_desc" });
 await db.collection("orders").createIndex({ restaurantId: 1, createdAt: -1, id: -1 }, { name: "orders_operations_restaurant_created_desc" });
 await db.collection("orders").createIndex({ riderId: 1, createdAt: -1, id: -1 }, { name: "orders_operations_rider_created_desc" });
+await initializeCheckoutFences(
+  db,
+  await db.collection("restaurants").distinct("id"),
+);
+await initializeCheckoutStaticPolicy(db);
 console.log("Migrations v1 appliquées");
 await closeDb();

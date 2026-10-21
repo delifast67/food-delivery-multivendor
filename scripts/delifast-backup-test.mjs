@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { mkdtemp, rm, readFile, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { backup, restore } from './delifast-backup.mjs';
 const require = createRequire(new URL('../delifast-api/package.json', import.meta.url));
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const { MongoClient, ObjectId, BSON } = require('mongodb');
 const folder = await mkdtemp(join(tmpdir(), 'delifast-backup-'));
 const file = join(folder, 'backup.json');
 let mongo;
 let client;
 try {
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   client = await new MongoClient(mongo.getUri()).connect();
   const source = client.db('delifast_backup_source');
   const order = { _id: new ObjectId(), id: 'backup-order', status: 'DELIVERED', createdAt: new Date(), amount: BSON.Long.fromNumber(5000), accessToken: 'test-only-token', history: [{ status: 'DELIVERED', at: new Date().toISOString() }] };
@@ -28,10 +29,15 @@ try {
   await source.createCollection('empty_collection');
   await source.collection('support_tickets').createIndex({ customerId: 1, idempotencyKey: 1 }, { unique: true });
   await source.collection('support_tickets').insertOne({ id: 'backup-ticket', customerId: 'test-customer', idempotencyKey: 'backup-support-key', subject: 'Réclamation fictive', description: 'Test de conservation', status: 'RESOLVED', version: 2, history: [{ status: 'OPEN', at: new Date().toISOString(), actorRole: 'CUSTOMER', note: '' }, { status: 'IN_PROGRESS', at: new Date().toISOString(), actorRole: 'ADMIN', note: 'Examen' }, { status: 'RESOLVED', at: new Date().toISOString(), actorRole: 'ADMIN', note: 'Résolution fictive' }] });
+  await source.collection('checkout_fences').insertMany([
+    { _id: 'global:delivery-policy', generation: randomUUID(), revision: BSON.Long.MAX_VALUE.subtract(BSON.Long.ONE) },
+    { _id: 'restaurant:test-restaurant', generation: randomUUID(), revision: BSON.Long.ZERO },
+  ]);
+  await source.collection('checkout_policies').insertOne({ _id: 'test-policy', generation: randomUUID(), policy: { currency: 'XOF', serviceFee: 100, tax: 0 }, hash: 'fixture-hash-preserved' });
   const sourceUri = mongo.getUri('delifast_backup_source');
   await assert.rejects(backup({ uri: sourceUri, file }), /--offline/);
   const saved = await backup({ uri: sourceUri, file, offline: true });
-  assert.deepEqual(saved, { collections: 7, documents: 6 });
+  assert.deepEqual(saved, { collections: 9, documents: 9 });
   assert.equal((await stat(file)).mode & 0o777, 0o600);
   assert.doesNotMatch(await readFile(file, 'utf8'), /should-not-survive/);
   await assert.rejects(backup({ uri: sourceUri, file, offline: true }), /EEXIST/);
@@ -45,6 +51,12 @@ try {
   assert.equal(await target.collection('staff_users').countDocuments(), 1);
   assert.equal(await target.collection('staff_sessions').countDocuments(), 0);
   for (const collection of ['restaurants', 'menu_items', 'menu_categories', 'support_tickets']) assert.deepEqual(await target.collection(collection).findOne({}), await source.collection(collection).findOne({}));
+  for (const collection of ['checkout_fences', 'checkout_policies']) {
+    assert.deepEqual(await target.collection(collection, { promoteLongs: false }).find({}).sort({ _id: 1 }).toArray(), await source.collection(collection, { promoteLongs: false }).find({}).sort({ _id: 1 }).toArray());
+  }
+  assert.equal(await target.collection('checkout_fences').countDocuments({ revision: { $type: 'long' } }), 2);
+  assert.equal(await target.collection('orders').countDocuments({ amount: { $type: 'long' } }), 1);
+  console.log('OK — guards zéro/grand compteur restent BSON Long, générations et politique inchangées');
   assert.equal((await target.listCollections({ name: 'empty_collection' }).toArray()).length, 1);
   await assert.rejects(target.collection('orders').insertOne({ id: 'backup-order' }), /duplicate key/);
   await assert.rejects(target.collection('support_tickets').insertOne({ customerId: 'test-customer', idempotencyKey: 'backup-support-key' }), /duplicate key/);

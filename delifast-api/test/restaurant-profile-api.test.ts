@@ -1,9 +1,10 @@
 import { beforeAll, afterAll, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
 import { closeDb, connect, getDb } from "../src/db.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer, app: any;
+let mongo: MongoMemoryReplSet, app: any;
 const tokens: Record<string, string> = {};
 const point = { latitude: 12.3714, longitude: -1.5197 };
 const zoneId = "zone-rest-koudougou-centre";
@@ -21,7 +22,7 @@ async function created(changes: any = {}) {
 }
 beforeAll(async () => {
   process.env.NODE_ENV = "test"; process.env.RATE_LIMIT_MAX = "1000";
-  mongo = await MongoMemoryServer.create(); process.env.MONGODB_URI = mongo.getUri();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } }); process.env.MONGODB_URI = mongo.getUri();
   const { createApp } = await import("../src/server.js");
   app = await createApp();
   await (await import("../migrations/seed.js")).seedAll(getDb());
@@ -33,7 +34,8 @@ beforeAll(async () => {
     const result = await call("mutation($email:String!,$password:String!){staffLogin(email:$email,password:$password){token}}", { email, password });
     tokens[role] = result.data.staffLogin.token;
   }
-}, 60000);
+
+  await initializeCheckoutFences(getDb(), []);}, 60000);
 afterAll(async () => { await closeDb(); await mongo?.stop(); });
 
 it("refuse création et modification aux anonymes, restaurants et livreurs", async () => {

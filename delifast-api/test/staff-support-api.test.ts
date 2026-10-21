@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import crypto from "node:crypto";
 import type { Db } from "mongodb";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer, app: any, db: Db;
+let mongo: MongoMemoryReplSet, app: any, db: Db;
 const sha = (s: string) => crypto.createHash("sha256").update(s).digest("hex");
 const customerToken = "customer-staff-collision-12345678901234567890";
 const people = [
@@ -55,7 +56,7 @@ async function detail(id: string, ticket: string) {
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
   process.env.RATE_LIMIT_MAX = "1000";
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
   db = await (await import("../src/db.js")).connect();
   app = await (
@@ -65,7 +66,8 @@ beforeAll(async () => {
       throw new Error("SMS interdit dans cette recette");
     },
   });
-}, 60000);
+
+  await initializeCheckoutFences(db, []);}, 60000);
 beforeEach(async () => {
   for (const name of [
     "support_tickets",

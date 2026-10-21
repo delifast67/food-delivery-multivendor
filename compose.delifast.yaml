@@ -6,13 +6,13 @@ name: delifast-local
 services:
   mongo:
     image: mongo:7.0
-    command: ["mongod", "--bind_ip_all"]
+    command: ["mongod", "--bind_ip_all", "--replSet", "delifast-local"]
     ports:
       - "127.0.0.1:27017:27017"
     volumes:
       - delifast-mongo:/data/db
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      test: ["CMD", "mongosh", "--quiet", "--eval", "try { rs.status() } catch (e) { if (e.code === 94) rs.initiate({_id:'delifast-local',members:[{_id:0,host:'mongo:27017'}]}); else throw e; } if (!db.hello().isWritablePrimary) quit(1)"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -32,7 +32,7 @@ services:
     build: ./delifast-api
     environment:
       NODE_ENV: development
-      MONGODB_URI: mongodb://mongo:27017/delifast
+      MONGODB_URI: mongodb://mongo:27017/delifast?replicaSet=delifast-local&directConnection=true
     command: ["sh", "-c", "node dist/migrations/index.js && node dist/migrations/seed.js"]
     depends_on:
       mongo:
@@ -45,7 +45,7 @@ services:
       NODE_ENV: development
       HOST: 0.0.0.0
       PORT: "4000"
-      MONGODB_URI: mongodb://mongo:27017/delifast
+      MONGODB_URI: mongodb://mongo:27017/delifast?replicaSet=delifast-local&directConnection=true
       # Désactivé par défaut. Démonstration fictive, aucun encaissement réel.
       DELIFAST_DEMO_PAYMENTS: ${DELIFAST_DEMO_PAYMENTS:-false}
       # Local demo opt-in only; the API rejects the residual non-atomic checkout race by default.

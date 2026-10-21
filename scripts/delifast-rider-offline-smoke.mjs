@@ -60,7 +60,7 @@ const apiCwd = fileURLToPath(new URL("../delifast-api/", import.meta.url));
 const require = createRequire(
   new URL("../delifast-api/package.json", import.meta.url),
 );
-const { MongoMemoryServer } = require("mongodb-memory-server");
+const { MongoMemoryReplSet } = require("mongodb-memory-server");
 const { MongoClient } = require("mongodb");
 const {
   createClient,
@@ -135,7 +135,8 @@ const fields =
   "id status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions } history { status at actorRole } checkout { currency subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice baseUnitPrice total selectedOptions { groupId groupName optionId name priceXof } } }";
 try {
   process.env.MONGOMS_RUNTIME_DOWNLOAD = "false";
-  mongo = await MongoMemoryServer.create({
+  mongo = await MongoMemoryReplSet.create({
+    replSet: { count: 1 },
     instance: { ip: "127.0.0.1", dbName: "delifast_rider_offline" },
     binary: { checkMD5: false },
   });

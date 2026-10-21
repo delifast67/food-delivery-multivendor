@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const flag = 'DELIFAST_ALLOW_NONATOMIC_CHECKOUT';
+const atomicFlag = 'DELIFAST_ALLOW_ATOMIC_CHECKOUT';
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 // Only these reviewed local configuration artifacts may mention the switch.
 // A production/deployment path is NEVER exempt, even with a false value.
@@ -26,7 +27,7 @@ function isConfig(path) {
     || /(?:^|\/)[^/]*(?:config|environment)[^/]*\.(?:[cm]?[jt]s)$/i.test(path);
 }
 function forbidden(paths, readFile) {
-  return paths.filter(path => isConfig(path) && readFile(path).includes(flag)
+  return paths.filter(path => isConfig(path) && [flag, atomicFlag].some(name => readFile(path).includes(name))
     && (productionPath.test(path) || !localConfigs.has(path)));
 }
 
@@ -45,8 +46,10 @@ test('guard rejects representative production artifacts, including disabled valu
     'config/production.ts', 'api/package.json', 'scripts/start.sh',
     'api/.env.staging.example', 'api/environment.js',
   ];
-  for (const value of ['true', 'false', '${DELIFAST_ALLOW_NONATOMIC_CHECKOUT:-false}']) {
-    assert.deepEqual(forbidden(paths, () => `${flag}=${value}`), paths);
+  for (const name of [flag, atomicFlag]) {
+    for (const value of ['true', 'false', `${'${'}${name}:-false}`]) {
+      assert.deepEqual(forbidden(paths, () => `${name}=${value}`), paths);
+    }
   }
   assert.deepEqual(forbidden(paths, () => 'SAFE_SETTING=false'), []);
 });
@@ -80,7 +83,7 @@ test('CI opt-in stays scoped to the synthetic HTTP startup step, not builds or g
 test('clean-process API default is closed without a dotenv file or inherited opt-in', () => {
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
     const { config } = await import('./delifast-api/src/config.ts');
-    if (config.isNonatomicCheckoutAllowed() !== false) process.exit(1);
+    if (config.isNonatomicCheckoutAllowed() !== false || config.isAtomicCheckoutRequested() !== false) process.exit(1);
   `], { cwd: root, env: { PATH: process.env.PATH, NODE_ENV: 'test' }, encoding: 'utf8' });
   assert.equal(result.status, 0, 'Default-off must hold in a fresh process');
 });

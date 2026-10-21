@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { MongoClient, type Db } from "mongodb";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PayDunyaClient, loadPayDunyaConfig, type PayDunyaFetch } from "../src/paydunya.js";
 import { payDunyaProvider } from "../src/payment-gateway.js";
 import { PaymentService } from "../src/payment-service.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
 const ACCESS_TOKEN = "customer-token-fixture-123456";
 const ORDER_ID = "order-paydunya-integration";
@@ -75,15 +76,16 @@ function fixtureTransport(mode: "test" | "live", patch: ConfirmationPatch = {}) 
   return { fetcher, calls };
 }
 
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let client: MongoClient;
 let db: Db;
 beforeAll(async () => {
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   client = new MongoClient(mongo.getUri());
   await client.connect();
   db = client.db("paydunya-integration-fixtures");
-}, 60_000);
+
+  await initializeCheckoutFences(db, []);}, 60_000);
 afterAll(async () => {
   await client?.close();
   await mongo?.stop();

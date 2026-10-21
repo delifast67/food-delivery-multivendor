@@ -1,17 +1,19 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import { connect, closeDb } from "../src/db.js";
 import { createRestaurantProfile, updateRestaurantProfile } from "../src/restaurant.js";
 import { createDeliveryZone, eligibility } from "../src/zones.js";
 import { GraphQLError } from "graphql";
+import { withCheckoutWriterTransaction } from "../src/checkout-writer.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer; let db: any;
+let mongo: MongoMemoryReplSet; let db: any;
 const admin = { id: "a", name: "Admin", role: "ADMIN" as const, restaurantId: null };
 const restaurant = { id: "r", name: "R", role: "RESTAURANT" as const, restaurantId: "r" };
 const rider = { id: "d", name: "D", role: "RIDER" as const, restaurantId: null };
 const input = (zones: string[] = []) => ({ name: "  Nouveau resto  ", description: "", open: true, deliveryZoneIds: zones });
 const code = async (fn: () => Promise<any>) => { try { await fn(); return undefined; } catch (e: any) { return e?.extensions?.code; } };
-beforeAll(async () => { mongo = await MongoMemoryServer.create(); db = await connect(mongo.getUri()); await db.collection("delivery_zones").insertOne({ id: "z1", restaurantId: "legacy", enabled: true }); });
+beforeAll(async () => { mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } }); db = await connect(mongo.getUri()); await initializeCheckoutFences(db, []); await db.collection("delivery_zones").insertOne({ id: "z1", restaurantId: "legacy", enabled: true }); });
 afterAll(async () => { await closeDb(); await mongo.stop(); });
 
 it("allows only admin and creates a UUID profile at version zero", async () => {
@@ -40,6 +42,7 @@ const zoneInput = (name = "Centre") => ({ name, shape: "CIRCLE", center: { latit
 it("creates zones with a restaurant CAS bump and audit, including legacy profiles", async () => {
   const legacyId = "legacy-profile";
   await db.collection("restaurants").insertOne({ id: legacyId, name: "Legacy", open: true });
+  await initializeCheckoutFences(db, [legacyId]);
   const created = await createDeliveryZone(db, admin, legacyId, zoneInput());
   const profile = await db.collection("restaurants").findOne({ id: legacyId });
   expect(created.version).toBe(0);
@@ -49,18 +52,14 @@ it("creates zones with a restaurant CAS bump and audit, including legacy profile
   expect((await eligibility(db, legacyId, { latitude: 12.37, longitude: -1.52 })).zoneId).toBe(created.id);
 });
 
-it("compensates the inserted zone when restaurant CAS loses a race", async () => {
+it("rollbacke la zone et la version restaurant dans la même session sur abandon", async () => {
   const r = await createRestaurantProfile(db, admin, input());
-  const conflictDb = { collection: (name: string) => {
-    const collection = db.collection(name);
-    if (name !== "restaurants") return collection;
-    return new Proxy(collection, { get(target, property, receiver) {
-      if (property === "updateOne") return async () => ({ matchedCount: 0, modifiedCount: 0 });
-      return Reflect.get(target, property, receiver);
-    }});
-  }} as any;
-  await expect(createDeliveryZone(conflictDb, admin, r.id, zoneInput("race"))).rejects.toMatchObject({ extensions: { code: "CONCURRENT_MODIFICATION" } });
+  await expect(withCheckoutWriterTransaction(db, [r.id], async (context) => {
+    await createDeliveryZone(db, admin, r.id, zoneInput("race"), context);
+    throw new GraphQLError("Abandon après écriture réelle", { extensions: { code: "CONCURRENT_MODIFICATION" } });
+  })).rejects.toMatchObject({ extensions: { code: "CONCURRENT_MODIFICATION" } });
   expect(await db.collection("delivery_zones").countDocuments({ restaurantId: r.id, name: "race" })).toBe(0);
+  expect((await db.collection("restaurants").findOne({ id: r.id })).version).toBe(0);
 });
 
 it("attaches new zones to explicit profiles and prevents stale profile overwrite", async () => {

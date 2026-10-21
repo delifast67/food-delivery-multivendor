@@ -1,14 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import crypto from "node:crypto";
 import type { Db } from "mongodb";
 import { passwordHash } from "../src/auth.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
 const PHONE_A = "+22670123456";
 const PHONE_B = "+22670123457";
 const sha = (s: string) => crypto.createHash("sha256").update(s).digest("hex");
-let mongod: MongoMemoryServer;
+let mongod: MongoMemoryReplSet;
 let app: any;
 let db: Db;
 let aToken: string;
@@ -46,7 +47,7 @@ async function seedCustomer(id: string, phone: string, raw: string) {
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
   process.env.RATE_LIMIT_MAX = "1000"; // High-volume synthetic pagination only.
-  mongod = await MongoMemoryServer.create();
+  mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongod.getUri();
   const dbModule = await import("../src/db.js");
   db = await dbModule.connect();
@@ -63,7 +64,8 @@ beforeAll(async () => {
   staffTokens.ADMIN = await staffLogin("admin@test.local", "AdminPass!2026");
   staffTokens.RESTAURANT = await staffLogin("rest@test.local", "RestPass!2026");
   staffTokens.RIDER = await staffLogin("rider@test.local", "RiderPass!2026");
-}, 60000);
+
+  await initializeCheckoutFences(db, []);}, 60000);
 
 beforeEach(async () => {
   await db.collection("support_tickets").deleteMany({});

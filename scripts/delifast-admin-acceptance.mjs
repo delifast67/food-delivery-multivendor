@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Vraie recette admin Chromium, MongoMemoryServer jetable, aucun fournisseur externe. */
+/** Vraie recette admin Chromium, MongoMemoryReplSet jetable, aucun fournisseur externe. */
 import assert from 'node:assert/strict';
 import { withQuote } from './delifast-quote-helper.mjs';
 import { createRequire } from 'node:module';
@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import net from 'node:net';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const require = createRequire(new URL('../delifast-api/package.json', import.meta.url));
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const { MongoClient } = require('mongodb');
 const serve = process.argv.includes('--serve');
 let apiPort = Number(process.env.DELIFAST_ADMIN_API_TEST_PORT || 4213);
@@ -43,14 +43,14 @@ try {
   await (await import('node:fs/promises')).mkdir(captures, { recursive: true });
   apiPort = await available(apiPort); webPort = await available(webPort === apiPort ? webPort + 1 : webPort);
   env.PORT = String(apiPort); env.DELIFAST_API_URL = `http://127.0.0.1:${apiPort}/graphql`;
-  mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'delifast_admin_acceptance' }, binary: { checkMD5: false } });
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 }, instance: { ip: '127.0.0.1', dbName: 'delifast_admin_acceptance' }, binary: { checkMD5: false } });
   env.MONGODB_URI = mongo.getUri();
   const apiDir = join(root, 'delifast-api');
   const run = async (args) => { const p = spawn(process.execPath, args, { cwd: apiDir, env, stdio: ['ignore', 'pipe', 'pipe'] }); let log = ''; p.stdout.on('data', x => log += x); p.stderr.on('data', x => log += x); const [code] = await once(p, 'exit'); assert.equal(code, 0, log); };
   await run(['dist/migrations/index.js']); await run(['dist/migrations/seed.js']);
   api = launch(process.execPath, ['dist/src/server.js'], apiDir); await ready(`http://127.0.0.1:${apiPort}/health`, api);
   dbClient = await MongoClient.connect(mongo.getUri()); const db = dbClient.db();
-  // Fixture payée créée uniquement dans MongoMemoryServer: aucune mutation paiement ni provider.
+  // Fixture payée créée uniquement dans MongoMemoryReplSet: aucune mutation paiement ni provider.
   const login = (email, password) => gql('mutation($e:String!,$p:String!){staffLogin(email:$e,password:$p){token user{id role}}}', { e: email, p: password });
   const admin = (await login('admin@delifast.local', 'AdminDemo!2026')).staffLogin;
   const restaurant = (await login('restaurant1@delifast.local', 'RestaurantDemo!2026')).staffLogin;

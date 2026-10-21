@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
 import { operationsMenuCategorySummaries, operationsMenuCategory } from "../src/catalog.js";
 import { passwordHash } from "../src/auth.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let app: any;
 let db: any;
 const gql = async (query: string, variables: any = {}, token?: string) => {
@@ -19,7 +20,7 @@ const login = async (email: string) =>
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
   process.env.RATE_LIMIT_MAX = "10000";
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
   db = await (await import("../src/db.js")).connect();
   await db.collection("staff_users").insertMany([
@@ -41,7 +42,8 @@ beforeAll(async () => {
   ]);
   await db.collection("menu_categories").createIndex({ restaurantId: 1, id: 1 }, { name: "menu_categories_restaurant_id" });
   app = await (await import("../src/server.js")).createApp();
-}, 60000);
+
+  await initializeCheckoutFences(db, await db.collection("restaurants").distinct("id"));}, 60000);
 
 afterAll(async () => { await (await import("../src/db.js")).closeDb(); await mongo.stop(); });
 

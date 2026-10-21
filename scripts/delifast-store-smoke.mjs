@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 const require = createRequire(
   new URL("../delifast-api/package.json", import.meta.url),
 );
-const { MongoMemoryServer } = require("mongodb-memory-server");
+const { MongoMemoryReplSet } = require("mongodb-memory-server");
 const {
   createClient,
 } = require("../enatega-multivendor-store/src/delifast/api.js");
@@ -69,7 +69,8 @@ function memory() {
   };
 }
 try {
-  mongo = await MongoMemoryServer.create({
+  mongo = await MongoMemoryReplSet.create({
+    replSet: { count: 1 },
     instance: { ip: "127.0.0.1", dbName: "delifast_store_smoke" },
   });
   env = {

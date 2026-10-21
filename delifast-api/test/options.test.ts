@@ -1,6 +1,6 @@
 import "./local-checkout-helper.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import crypto from "node:crypto";
 import request from "supertest";
 import { passwordHash } from "../src/auth.js";
@@ -16,7 +16,8 @@ import {
 import { normalizeCart, normalizeAddress } from "../src/validation.js";
 import { calculateCheckout } from "../src/pricing.js";
 import { placeOrder } from "../src/orders.js";
-let mongo: MongoMemoryServer, db: any, app: any;
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
+let mongo: MongoMemoryReplSet, db: any, app: any;
 const admin: any = { id: "a", name: "Admin fictif", role: "ADMIN" };
 const restaurant: any = {
   id: "s",
@@ -85,11 +86,12 @@ async function gql(query: string, variables: any = {}, token?: string) {
 }
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
   db = await (await import("../src/db.js")).connect();
   app = await (await import("../src/server.js")).createApp();
-}, 60000);
+
+  await initializeCheckoutFences(db, await db.collection("restaurants").distinct("id"));}, 60000);
 beforeEach(async () => {
   for (const collection of [
     "restaurants",
@@ -108,7 +110,7 @@ beforeEach(async () => {
   for (const restaurant of await db.collection("restaurants").find({}).toArray()) {
     await db.collection("delivery_zones").insertOne({ id:`test-zone-${restaurant.id}`,restaurantId:restaurant.id,name:"Zone fictive de test",shape:"CIRCLE",center:{latitude:12.3714,longitude:-1.5197},radiusMeters:10000,enabled:true,feeXof:500,minimumOrderXof:0,estimatedMinutes:45,priority:0,demo:true,hours:[],version:0 });
   }
-
+  await initializeCheckoutFences(db, await db.collection("restaurants").distinct("id"));
 });
 afterAll(async () => {
   await (await import("../src/db.js")).closeDb();

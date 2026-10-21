@@ -1,6 +1,7 @@
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { MongoClient, type Db } from "mongodb";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import crypto from "node:crypto";
 import {
   authenticate,
@@ -32,7 +33,7 @@ const otherRestaurant: Staff = {
 };
 const rider: Staff = { id: "rider1", name: "Livreur 1", role: "RIDER" };
 const otherRider: Staff = { id: "rider2", name: "Livreur 2", role: "RIDER" };
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let client: MongoClient;
 let db: Db;
 const timestamp = "2026-01-01T12:00:00.000Z";
@@ -65,7 +66,7 @@ const code = (value: string) => ({ extensions: { code: value } });
 
 describe("régressions sécurité et intégrité des opérations", () => {
   beforeAll(async () => {
-    mongo = await MongoMemoryServer.create();
+    mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     client = await new MongoClient(mongo.getUri()).connect();
     db = client.db("delifast_security");
     const hash = passwordHash("TestOnly!2026");
@@ -77,7 +78,8 @@ describe("régressions sécurité et intégrité des opérations", () => {
         passwordHash: hash,
       })),
     );
-  }, 60000);
+
+  await initializeCheckoutFences(db, []);}, 60000);
   beforeEach(async () => {
     delete process.env.DELIFAST_DEMO_PAYMENTS;
     await db.collection("orders").deleteMany({});

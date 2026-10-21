@@ -3,7 +3,8 @@ import type { Db } from "mongodb";
 import type { Staff } from "./auth.js";
 import { fail } from "./validation.js";
 import { isRestaurantOpen, normalizeRestaurantSchedule, resolvedRestaurantSchedule, type RestaurantHours } from "./restaurant-hours.js";
-import { checkoutWriterOptions, type CheckoutWriterContext } from "./checkout-writer.js";
+import { checkoutWriterOptions, ensureCheckoutWriterRestaurant, withCheckoutWriterTransaction, type CheckoutWriterContext } from "./checkout-writer.js";
+import { insertNewRestaurantCheckoutFence } from "./checkout-fences.js";
 
 const MAX_NAME = 160;
 const MAX_DESCRIPTION = 2000;
@@ -34,17 +35,22 @@ async function validateZones(db: Db, ids: string[], options: { session?: import(
   if (found.length !== ids.length) fail("ZONE_NOT_FOUND", "Zone de livraison introuvable");
 }
 function audit(user: Staff, action: string, version: number) { return { actor: { id: user.id, role: user.role }, action, version, at: new Date().toISOString() }; }
-export async function createRestaurantProfile(db: Db, user: Staff, raw: unknown) {
-  admin(user); const input = normalizeRestaurantProfile(raw); await validateZones(db, input.deliveryZoneIds);
+export async function createRestaurantProfile(db: Db, user: Staff, raw: unknown, context?: CheckoutWriterContext) : Promise<any> {
+  admin(user);
+  if (context === undefined) return withCheckoutWriterTransaction(db, [], (ctx) => createRestaurantProfile(db,user,raw,ctx)); const input = normalizeRestaurantProfile(raw); const options = checkoutWriterOptions(db, context); await validateZones(db, input.deliveryZoneIds, options);
   const item = { id: crypto.randomUUID(), ...input, version: 0, audit: [audit(user, "RESTAURANT_PROFILE_CREATED", 0)], createdAt: new Date(), updatedAt: new Date() };
-  await db.collection("restaurants").insertOne(item);
+  await db.collection("restaurants").insertOne(item, options);
+  await insertNewRestaurantCheckoutFence(db, options.session, item.id);
   return view(item);
 }
-export async function updateRestaurantProfile(db: Db, user: Staff, idRaw: unknown, expectedRaw: unknown, raw: unknown, context?: CheckoutWriterContext) {
+export async function updateRestaurantProfile(db: Db, user: Staff, idRaw: unknown, expectedRaw: unknown, raw: unknown, context?: CheckoutWriterContext) : Promise<any> {
+  if (context === undefined) return withCheckoutWriterTransaction(db, [], (ctx) => updateRestaurantProfile(db,user,idRaw,expectedRaw,raw,ctx));
   admin(user); const id = idOf(idRaw, "id");
-  const options = checkoutWriterOptions(db, context, id);
+  const options = checkoutWriterOptions(db, context);
   if (!Number.isInteger(expectedRaw) || (expectedRaw as number) < 0) fail("INVALID_INPUT", "Version invalide");
   const input = normalizeRestaurantProfile(raw); await validateZones(db, input.deliveryZoneIds, options);
+  if (!await db.collection("restaurants").findOne({ id }, options)) fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
+  await ensureCheckoutWriterRestaurant(db, context, id);
   const expected = expectedRaw as number; const version = expected + 1;
   const filter: any = { id, ...(expected === 0 ? { $or: [{ version: 0 }, { version: { $exists: false } }] } : { version: expected }) };
   const result = await db.collection<any>("restaurants").findOneAndUpdate(filter, { $set: { ...input, version, updatedAt: new Date() }, $push: { audit: { $each: [audit(user, "RESTAURANT_PROFILE_UPDATED", version)], $slice: -100 } } } as any, { returnDocument: "after", ...options });
@@ -60,15 +66,17 @@ export async function restaurantZoneIds(db: Db, restaurant: any, session?: impor
   return (await db.collection<any>("delivery_zones").find({ restaurantId: restaurant.id }, session ? { session } : {}).project({ id: 1, _id: 0 }).toArray()).map(x => x.id);
 }
 
-export async function setRestaurantSchedule(db: Db, user: Staff, idRaw: unknown, expectedRaw: unknown, raw: unknown, context?: CheckoutWriterContext) {
+export async function setRestaurantSchedule(db: Db, user: Staff, idRaw: unknown, expectedRaw: unknown, raw: unknown, context?: CheckoutWriterContext) : Promise<any> {
+  if (context === undefined) return withCheckoutWriterTransaction(db, [], (ctx) => setRestaurantSchedule(db,user,idRaw,expectedRaw,raw,ctx));
   if (user.role !== "ADMIN" && user.role !== "RESTAURANT") fail("FORBIDDEN", "Droits insuffisants");
   const id = idOf(idRaw, "id");
-  const options = checkoutWriterOptions(db, context, id);
+  const options = checkoutWriterOptions(db, context);
   if (!Number.isInteger(expectedRaw) || (expectedRaw as number) < 0) fail("INVALID_INPUT", "Version invalide");
   if (user.role === "RESTAURANT" && user.restaurantId !== id) fail("FORBIDDEN", "Restaurant hors portée");
   const schedule = normalizeRestaurantSchedule(raw) as RestaurantHours[] | null;
   const old = await db.collection<any>("restaurants").findOne({ id }, options);
   if (!old) fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
+  await ensureCheckoutWriterRestaurant(db, context, id);
   const expected = expectedRaw as number;
   const oldVersion = Number.isInteger(old.version) ? old.version : 0;
   if (expected !== oldVersion) fail("CONCURRENT_MODIFICATION", "Version modifiée, rechargez le restaurant");

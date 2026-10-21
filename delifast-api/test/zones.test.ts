@@ -1,5 +1,6 @@
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import type { Db } from "mongodb";
 import {
   createDeliveryZone,
@@ -13,7 +14,7 @@ import { seedAll, seedZones } from "../migrations/seed.js";
 
 type Actor = { id: string; name: string; role: "ADMIN" | "RESTAURANT" | "RIDER"; restaurantId?: string | null };
 
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let db: Db;
 const admin: Actor = { id: "admin", name: "Admin", role: "ADMIN", restaurantId: null };
 const rest1: Actor = { id: "rest1", name: "Resto 1", role: "RESTAURANT", restaurantId: "rest-koudougou" };
@@ -63,7 +64,7 @@ const errCode = (fn: () => unknown) => {
 
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
   db = await (await import("../src/db.js")).connect();
   await seedAll(db);
@@ -72,6 +73,7 @@ beforeAll(async () => {
     { id: "rest-zone-hours", name: "Zone hours", open: true },
     { id: "rest-zone-move", name: "Zone move", open: true },
   ]);
+  await initializeCheckoutFences(db, (await db.collection("restaurants").find({}).toArray()).map((r: any) => r.id));
 }, 60_000);
 afterAll(async () => {
   await (await import("../src/db.js")).closeDb();

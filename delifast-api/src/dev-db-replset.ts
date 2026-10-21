@@ -40,7 +40,7 @@ try {
   console.log(`Données séparées : ${dbPath}`);
   console.log("Développement uniquement : un membre, sans authentification, loopback uniquement.");
   console.log("Exporter MONGODB_URI avec cette URI dans chaque terminal API/migration/seed.");
-  console.log("Le checkout applicatif reste non transactionnel ; sa course résiduelle n’est pas corrigée.");
+  console.log("Checkout fermé par défaut ; opt-in atomique local distinct, aucune commande réelle autorisée.");
 } catch (error) {
   await replica.stop({ doCleanup: false, force: false });
   throw error;

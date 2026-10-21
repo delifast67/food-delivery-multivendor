@@ -5,7 +5,7 @@ import { MongoMemoryReplSet } from "mongodb-memory-server";
 import { config } from "../src/config.js";
 import {
   assertCheckoutStaticPolicy, captureCheckoutStaticPolicy, checkoutStaticPolicyHash,
-  CHECKOUT_POLICY_ID,
+  CHECKOUT_POLICY_ID, initializeCheckoutStaticPolicy,
 } from "../src/checkout-policy.js";
 
 let repl: MongoMemoryReplSet;
@@ -48,7 +48,22 @@ async function check() {
   } finally { await session.endSession(); }
 }
 
-describe("contrat préparatoire de politique statique, non activé", () => {
+describe("politique statique transactionnelle et maintenance explicite", () => {
+  it("la maintenance initialise une seule génération et ne la réécrit pas", async () => {
+    await initializeCheckoutStaticPolicy(db);
+    const first = await db.collection<any>("checkout_policies").findOne({ _id: CHECKOUT_POLICY_ID });
+    await initializeCheckoutStaticPolicy(db);
+    expect(await db.collection<any>("checkout_policies").findOne({ _id: CHECKOUT_POLICY_ID })).toEqual(first);
+    expect((await check()).generation).toBe(first!.generation);
+  });
+  it("la maintenance refuse une configuration divergente sans réinitialiser le document", async () => {
+    await initializeCheckoutStaticPolicy(db);
+    const first = await db.collection<any>("checkout_policies").findOne({ _id: CHECKOUT_POLICY_ID });
+    config.serviceFee += 1;
+    try { await expect(initializeCheckoutStaticPolicy(db)).rejects.toThrow("CHECKOUT_POLICY_MISMATCH"); }
+    finally { Object.assign(config, original); }
+    expect(await db.collection<any>("checkout_policies").findOne({ _id: CHECKOUT_POLICY_ID })).toEqual(first);
+  });
   it("exige une transaction et ne crée jamais une politique manquante", async () => {
     const session = client.startSession();
     try {

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Recette customerOrders/customerOrder : API locale, MongoMemoryServer jetable,
+// Recette customerOrders/customerOrder : API locale, MongoMemoryReplSet jetable,
 // SMS et paiements désactivés. Aucune donnée n'est envoyée à un service réel.
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
 const require = createRequire(new URL('../delifast-api/package.json', import.meta.url))
-const { MongoMemoryServer } = require('mongodb-memory-server')
+const { MongoMemoryReplSet } = require('mongodb-memory-server')
 const { MongoClient } = require('mongodb')
 const { passwordHash } = require('../delifast-api/dist/src/auth.js')
 const appRequire = createRequire(new URL('../enatega-multivendor-app/package.json', import.meta.url))
@@ -40,7 +40,7 @@ const fields = `id status paymentStatus createdAt updatedAt restaurantId checkou
 const listQuery = `query($limit:Int,$after:String){customerOrders(limit:$limit,after:$after){items{${fields}} nextCursor}}`
 const detailQuery = `query($id:ID!){customerOrder(id:$id){${fields}}}`
 try {
-  mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'delifast_customer_orders_smoke' } })
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 }, instance: { ip: '127.0.0.1', dbName: 'delifast_customer_orders_smoke' } })
   dbClient = await MongoClient.connect(mongo.getUri()); const db = dbClient.db()
   const env = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'development', MONGODB_URI: mongo.getUri(), HOST: '127.0.0.1', PORT: String(port), DELIFAST_DEMO_PAYMENTS: 'false', DELIFAST_ALLOW_NONATOMIC_CHECKOUT: 'true', PAYMENT_PROVIDER: '', PAYDUNYA_ENABLED: 'false', PAYDUNYA_LIVE_AUTHORIZED: 'false', CINETPAY_ENABLED: 'false', CINETPAY_LIVE_AUTHORIZED: 'false', SMS_PROVIDER: 'disabled', ORANGE_SMS_ENABLED: 'false', RATE_LIMIT_MAX: '1000' }
   await startChild('dist/migrations/index.js', env)

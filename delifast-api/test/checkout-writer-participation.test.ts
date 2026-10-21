@@ -3,7 +3,7 @@ import { MongoClient, type Db, type ClientSession, type CommandStartedEvent, typ
 import { MongoMemoryReplSet } from "mongodb-memory-server";
 import type { Staff } from "../src/auth.js";
 import { createMenuItem, setMenuItemArchived, setRestaurantOpen, updateMenuItem } from "../src/catalog.js";
-import { setRestaurantSchedule, updateRestaurantProfile } from "../src/restaurant.js";
+import { createRestaurantProfile, setRestaurantSchedule, updateRestaurantProfile } from "../src/restaurant.js";
 import { createDeliveryZone, updateDeliveryZone } from "../src/zones.js";
 import { prepareCheckout } from "../src/pricing.js";
 import { checkoutWriterOptions, withCheckoutWriterTransaction, type CheckoutWriterContext } from "../src/checkout-writer.js";
@@ -111,6 +111,26 @@ for (const [label, mutate] of cases) {
 }
 
 describe("participation et refus sans fallback", () => {
+  it("crée restaurant et son guard ensemble, et rollbacke les deux sur erreur", async () => {
+    const input = { name: "Nouveau", description: "Test", open: true, deliveryZoneIds: ["z1"] };
+    let discardedId = "";
+    await expect(withCheckoutWriterTransaction(writerDb, [], async (ctx) => {
+      const created = await createRestaurantProfile(writerDb, admin, input, ctx);
+      discardedId = created.id;
+      const options = checkoutWriterOptions(writerDb, ctx);
+      expect(await writerDb.collection<any>("checkout_fences").findOne({ _id: `restaurant:${created.id}` }, options)).not.toBeNull();
+      throw new Error("abort restaurant et guard");
+    })).rejects.toThrow("abort restaurant et guard");
+    expect(await db.collection("restaurants").findOne({ id: discardedId })).toBeNull();
+    expect(await db.collection<any>("checkout_fences").findOne({ _id: `restaurant:${discardedId}` })).toBeNull();
+    const created = await createRestaurantProfile(writerDb, admin, input);
+    expect(await db.collection("restaurants").findOne({ id: created.id })).not.toBeNull();
+    expect(await db.collection<any>("checkout_fences").findOne({ _id: `restaurant:${created.id}` })).not.toBeNull();
+  });
+  it("ne retourne jamais des options non transactionnelles pour un contexte absent", () => {
+    expect(() => checkoutWriterOptions(db)).toThrow("obligatoire");
+  });
+
   it("crée un menu sous les guards et la création change le snapshot", async () => {
     const result = await withCheckoutWriterTransaction(writerDb, ["r1"], async (ctx) => createMenuItem(writerDb, admin, "r1", { ...menuInput, name: "Nouveau" }, ctx));
     expect(result).toBeDefined();

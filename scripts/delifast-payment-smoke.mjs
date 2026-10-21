@@ -14,7 +14,7 @@ globalThis.fetch = (input, init) => {
 };
 process.env.NODE_ENV = 'test';
 const require = createRequire(new URL('../delifast-api/package.json', import.meta.url));
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const { MongoClient } = require('mongodb');
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const token = 'payment-smoke-customer-token-123456789';
@@ -81,7 +81,7 @@ const refreshQuery = `mutation($orderId:ID!,$accessToken:String!){refreshPayment
 const inputFor = (id, key = `key-${id}-123456`) => ({ orderId: id, accessToken: token, idempotencyKey: key, channel: 'ORANGE_MONEY_BF' });
 
 try {
-  mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'delifast_payment_smoke' } });
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 }, instance: { ip: '127.0.0.1', dbName: 'delifast_payment_smoke' } });
   client = new MongoClient(mongo.getUri()); await client.connect();
   const db = client.db();
   await db.collection('customers').insertOne({ id: 'payment-customer', phone: '+22670000001', createdAt: new Date() });

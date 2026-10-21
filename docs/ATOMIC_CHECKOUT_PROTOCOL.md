@@ -1,137 +1,85 @@
-# Checkout atomique : protocole proposé, activation bloquée
+# Checkout transactionnel local : intégration et limites
 
-## Décision
+## Aucun usage réel activé
 
-**Le checkout actuel reste non atomique.** `DELIFAST_ALLOW_NONATOMIC_CHECKOUT` est fermé par défaut et n’accepte que la valeur exacte `true` pour une activation locale explicite de commandes fictives. Cette activation conserve une course résiduelle non atomique et n’est pas production-ready ; elle ne doit pas être globale en production. Ce lot ajoute au runtime une garde au tout début de `placeOrder` (y compris les reprises), puis avant toute insertion : sans `DELIFAST_ALLOW_NONATOMIC_CHECKOUT=true`, toute soumission est refusée avec `CHECKOUT_DISABLED`. Les devis et lectures restent disponibles ; aucun endpoint de mutation de catalogue ni parcours d’authentification n’est basculé vers le protocole préparatoire. Aucune commande, aucun paiement ni SMS réel n’est exécuté.
+La création de commandes reste **fermée par défaut**. La PR ne fusionne ni ne déploie rien. Aucun paiement, SMS, achat ou ordre réel n’est autorisé par ce lot.
 
-Une migration sûre implique les écritures du catalogue, les restaurants, les zones partagées, les seeds et la configuration des frais. Les modifier partiellement serait dangereux : un seul writer oublié suffit à laisser passer un ancien devis. La migration applicative est donc bloquée jusqu’à satisfaction des préconditions ci-dessous.
+Deux chemins sont distingués dans [`orders.ts`](../delifast-api/src/orders.ts). `DELIFAST_ALLOW_ATOMIC_CHECKOUT=true` demande le chemin transactionnel local, sous réserve de couverture complète des neuf writers. Une couverture manquante refuse l’appel avant accès métier, sans revenir au chemin historique. L’option n’est injectée par aucun manifeste de déploiement. `DELIFAST_ALLOW_NONATOMIC_CHECKOUT=true` conserve uniquement les recettes synthétiques historiques : ce chemin reste **non atomique**, avec une fenêtre entre contrôle final et insertion. Si les deux options sont présentes, le chemin atomique est prioritaire et ne fait jamais de fallback.
 
-## Préparation implémentée, sans activation
+Seule la chaîne exacte `true` est acceptée. `NODE_ENV=production` reste interdit pour l’API, même avec les options. Ces verrous ne prouvent pas qu’un environnement est fictif : ne jamais les utiliser pour autoriser des commandes réelles. Les devis et lectures restent disponibles sans opt-in.
 
-Les primitives de [`checkout-fences.ts`](../delifast-api/src/checkout-fences.ts) ne sont pas appelées par `placeOrder` ni par les appels historiques sans contexte des mutations métier. Le wrapper préparatoire explicite décrit ci-dessous les utilise désormais. Elles fournissent une transaction explicite `snapshot`/`majority`, des guards persistants `checkout_fences`, une génération UUID et un compteur BSON `Long` lu sans promotion numérique. L'acquisition exige une transaction active, trie les guards dans un ordre binaire déterministe et effectue un véritable CAS génération/révision avec incrément non nul. Guards absents, malformés, dupliqués et compteurs à leur maximum sont refusés. L'initialisation séparée est une maintenance hors trafic : elle ne remet pas à zéro un guard existant, mais ne peut pas détecter une suppression/restauration externe antérieure. Ne pas la présenter comme une protection contre un opérateur contournant le protocole.
+## Les writers participent automatiquement
 
-`prepareCheckout` et les lectures secondaires d'éligibilité acceptent désormais une session facultative et un `admissionAt`. Le fallback historique de `restaurantZoneIds` reçoit aussi la session. Les horaires restaurant et zone partagent l'instant explicitement fourni ; les appels historiques sans contexte restent compatibles. [`checkout-session.test.ts`](../delifast-api/test/checkout-session.test.ts) prouve la cohérence de ces lectures sur replica set, **pas leur protection contre des écritures concurrentes**. Le format du hash de devis et les tarifs existants sont conservés.
+Les endpoints continuent d’appeler les fonctions métier usuelles, mais ces fonctions ouvrent maintenant automatiquement une transaction lorsqu’aucun contexte n’est fourni. Il n’existe plus de branche d’écriture silencieusement hors session dans ces fonctions.
 
-[`checkout-policy.ts`](../delifast-api/src/checkout-policy.ts) prépare un contrat de configuration statique : hash canonique des frais de service, taxe, devise et révision de calcul, comparé à un document `checkout_policies` de génération UUID dans une transaction active. Aucun document n'est créé ou réparé implicitement. Les tests refusent les frais différents ou documents corrompus. Ce helper n'est pas branché au calcul actuel et **ne prend pas le guard global à lui seul**. L'intégration future doit acquérir ce guard avant lecture, utiliser le snapshot tarifaire retourné pour le calcul, contrôler l'homogénéité de tous les workers et inclure toute nouvelle dépendance statique. Ce lot ne permet ni changement tarifaire live sûr, ni déploiement de configurations mixtes.
+| Surface | Fonctions participantes |
+| --- | --- |
+| Prix, disponibilité et options | `updateMenuItem` |
+| Archivage | `setMenuItemArchived` |
+| Ouverture | `setRestaurantOpen` |
+| Horaires | `setRestaurantSchedule` |
+| Profil et références de zones | `updateRestaurantProfile` |
+| Frais, géométrie, disponibilité, priorité et horaires de zones | `updateDeliveryZone` |
+| Nouveau candidat de zone | `createDeliveryZone` |
+| Autres créations et catégories | `createMenuItem`, `createRestaurantProfile`, `createMenuCategory`, `updateMenuCategory`, `setMenuCategoryArchived` |
 
-### Participation préparatoire des vrais writers, sans bascule des endpoints
+[`checkout-writer.ts`](../delifast-api/src/checkout-writer.ts) acquiert d’abord le guard global. Pour un appel automatique, la portée est découverte dans **la même session**, puis le guard restaurant est acquis avant mutation. Un contexte explicitement limité à des restaurants ne peut pas étendre sa portée. Les contextes sont opaques, liés à une base et une tentative, et invalidés à la fin du callback. Un contexte absent à `checkoutWriterOptions`, forgé, expiré ou hors portée est refusé.
 
-[`checkout-writer.ts`](../delifast-api/src/checkout-writer.ts) fournit `withCheckoutWriterTransaction(db, restaurantIds, callback)`. Il acquiert les guards global puis restaurants dans une transaction `snapshot`/`majority` depuis le client de cette base, puis remet au callback un contexte opaque, lié à cette base, à cette tentative et aux restaurants déclarés. Un contexte forgé, expiré ou utilisé hors portée est refusé, sans repli historique. Aucun guard manquant n'est créé automatiquement ; le mode standalone ne bénéficie d'aucun fallback. Le callback peut être rejoué par le pilote : aucun paiement, SMS ou autre effet externe n'y est permis. Les opérations doivent être attendues séquentiellement ; ne pas conserver le contexte après le callback.
+Les lectures secondaires, validations de catégorie/zone, CAS de version, audits et écritures reçoivent la même session. Une nouvelle zone, ses références et la hausse de version du restaurant sont indivisibles, sans suppression compensatoire hors transaction. Une création de restaurant insère aussi son nouveau guard dans la même transaction. Les versions métier restent distinctes des révisions de guards et les formulaires conservent leurs conflits `CONCURRENT_MODIFICATION`.
 
-Les fonctions `createMenuItem`, `updateMenuItem`, `setMenuItemArchived`, `setRestaurantOpen`, `updateRestaurantProfile`, `setRestaurantSchedule`, `createDeliveryZone` et `updateDeliveryZone` acceptent ce contexte en dernier argument. Dans ce chemin explicite, leurs lectures secondaires, contrôles de version, audits et écritures utilisent la même session. La création d'une zone et l'ajout de sa référence au restaurant sont alors indivisibles : une erreur abandonne la transaction, sans suppression compensatoire hors transaction. Les versions métier, autorisations et contrats de retour restent inchangés.
+Les catégories ne déterminent toujours pas l’admission d’un plat au checkout. Elles participent néanmoins à la transaction lorsqu’elles sont modifiées ; leur archivage ne change pas implicitement cette règle métier.
 
-[`checkout-writer-participation.test.ts`](../delifast-api/test/checkout-writer-participation.test.ts) exerce ces vraies mutations sous contexte sur un replica set jetable. Ces tests complètent les contre-exemples historiques ci-dessous : **ils ne les remplacent pas**. Les endpoints continuent d'appeler les fonctions sans contexte et restent donc hors protocole. Cette étape prépare leur migration, mais ne ferme aucun des neuf contournements dans le parcours HTTP actuel. Aucune option d'environnement ni nouvel endpoint ne permet d'activer ce chemin.
+## Le vrai checkout dans une seule transaction
 
-La création d'un restaurant et de son guard, les seeds/imports, la politique tarifaire, la bascule complète des endpoints et le checkout lui-même restent à intégrer. Les reprises de ce wrapper utilisent encore le contrat du pilote des primitives existantes ; un budget applicatif et des limites de tentatives dédiées restent à valider avant activation. L'ensemble ne constitue ni une garantie d'atomicité applicative, ni une autorisation de commandes réelles.
+`placeOrderAtomic` est la primitive interne appelée par le même endpoint `placeOrder` seulement après son verrou. Elle utilise le `MongoClient` de la base, avec `readConcern: snapshot` et `writeConcern: majority`.
 
-### Blocage concret reproduit avec les vraies mutations
+1. La clé et le payload sont validés, puis l’ancienne commande est recherchée **dans la session**. Une reprise vérifie propriétaire et empreinte, et retourne le snapshot déjà enregistré sans revalider un restaurant désormais fermé ou une politique modifiée.
+2. Pour une nouvelle commande, les guards global et restaurant, ainsi que la politique statique persistante, sont lus dans cette session.
+3. Restaurant, horaires, tous les plats/options et tous les candidats de zones sont lus et validés dans la même session, y compris le fallback `restaurantZoneIds`. Frais de service et taxe proviennent de la politique statique capturée et vérifiée, pas de nouvelles lectures de configuration pendant le calcul.
+4. Le vrai hash et le jeton signé présentés par le client sont vérifiés. Aucun nouveau prix n’est accepté silencieusement.
+5. Les guards sont réellement incrémentés par CAS génération/révision, global puis restaurant. Un writer committé depuis le snapshot provoque un vrai conflit d’écriture. Le pilote peut reprendre toute la transaction ; la nouvelle tentative revalide alors le devis ou refuse le panier.
+6. L’échéance du jeton est contrôlée à nouveau, puis la commande et son idempotence intégrée sont insérées dans la même session. L’index unique `orders.idempotencyKey` reste obligatoire. Le serveur ne retourne le succès qu’après commit.
 
-[`checkout-writer-gaps.test.ts`](../delifast-api/test/checkout-writer-gaps.test.ts) acquiert les nouveaux guards dans une transaction puis appelle, depuis un autre client MongoDB, neuf mutations existantes **appelées sans contexte préparatoire** : prix, disponibilité et options via `updateMenuItem`, archivage via `setMenuItemArchived`, ouverture via `setRestaurantOpen`, horaires via `setRestaurantSchedule`, références via `updateRestaurantProfile`, frais via `updateDeliveryZone` et nouveau candidat prioritaire via `createDeliveryZone`. **Chacune committe encore sans toucher les guards dans ce chemin historique, qui reste celui des endpoints.** Le vrai `prepareCheckout` conserve alors son ancien hash dans le snapshot, tandis qu'une lecture fraîche voit le changement ou refuse le panier. Aucune commande n'est insérée par ces contre-exemples.
+L’ordre stocke aussi `checkoutProtocol` : format, instant d’admission, hash/génération de politique et générations/révisions attendues des guards. Ces métadonnées internes ne remplacent ni le snapshot tarifaire, ni le fingerprint d’idempotence.
 
-Ces tests verts attestent l'existence du blocage, non sa résolution. Lors de la migration, ils devront devenir des tests de conflit/attente des writers participants. Les autres chemins du tableau ci-dessous, seeds et accès directs inclus, restent aussi à migrer/auditer. Il n'existe toujours pas de checkout atomique applicatif ni de nouvelle option pour l'activer. L'idempotence transactionnelle, les courses sur chaque règle, les crashs et reprises du **vrai** parcours devront être validés après migration ; les preuves du prototype ne les remplacent pas. `DELIFAST_ALLOW_NONATOMIC_CHECKOUT=true` reste limité aux commandes fictives locales et désactivé par défaut.
+Aucun appel externe, paiement, SMS, notification ou réservation de stock n’existe dans le callback rejouable.
 
-Exécuter les preuves historiques et les prérequis ensemble : `npm run test:transactions --prefix delifast-api`. Cette commande est aussi utilisée par la CI. Aucun service externe, paiement ou SMS réel n'est nécessaire.
+## Guards et zones partagées
 
-## Audit historique du verrou avant la garde runtime
+[`checkout-fences.ts`](../delifast-api/src/checkout-fences.ts) conserve une génération UUID immuable et une révision BSON `Long`, sans promotion numérique. L’acquisition vérifie les comptes de documents réellement modifiés ; un `$set` sans changement n’est pas un verrou. Guards absents, corrompus, révisions négatives et débordements sont refusés, jamais réparés pendant le checkout.
 
-[`config.ts`](../delifast-api/src/config.ts) refuse déjà le chargement avec la valeur exacte `NODE_ENV=production`, avec l’erreur « Ce lot Delifast est réservé au développement local : authentification et paiements de production non disponibles. ». Le [`Dockerfile` API](../delifast-api/Dockerfile) utilise cette valeur par défaut ; [`compose.delifast.yaml`](../compose.delifast.yaml) la remplace explicitement par `development` pour l’API de démonstration. Le web peut être compilé/exécuté en production pour cette même démonstration : son environnement n’est pas celui du serveur API. **`NODE_ENV` ne prouve pas qu’une commande est réelle ou fictive.** Aucun indicateur global existant ne distingue ces deux cas de façon fiable. Les autorisations live propres aux paiements ne sont pas un tel indicateur, notamment pour une commande sans encaissement ; les flags SMS concernent uniquement le transport SMS.
+Le guard `restaurant:<id>` protège le catalogue, les états et les références de ce restaurant. Le guard `global:delivery-policy` protège l’ensemble des candidats et politiques de livraison. Il couvre les zones partagées par références explicites, et les nouveaux candidats du fallback historique. Les références absentes utilisent encore `restaurantId`; `deliveryZoneIds: []` n’admet aucune zone. Le partage de zones reste une faculté **admin** existante, pas une modification d’autorisation dans ce lot.
 
-Le chemin runtime audité est `Mutation.placeOrder` de [`server.ts`](../delifast-api/src/server.ts), qui normalise panier/adresse et appelle [`orders.ts: placeOrder`](../delifast-api/src/orders.ts). Cette fonction recherche d’abord la clé d’idempotence, recalcule le devis, vérifie son hash, son jeton signé et son expiration de cinq minutes ainsi que le catalogue/restaurant, puis effectue l’unique insertion applicative `orders.insertOne(order)`. Le contrôle final et l’insertion ne sont pas atomiques. Les clients web/mobile et le proxy web atteignent cette même mutation. Les mises à jour de `payment-service.ts` portent sur des commandes existantes, pas sur une autre voie de création. Les insertions des suites de tests sont des fixtures/prototypes, pas des endpoints actifs.
+Le guard global sérialise aussi les restaurants distincts. C’est volontairement conservateur, avec une contention et un débit qui restent à mesurer. Le remplacer par un verrou sur la seule zone choisie ne couvrirait pas les nouveaux candidats.
 
-**Limite précise de l’audit historique :** avant la garde ajoutée par ce lot, le refus était uniquement au chargement de la configuration. `placeOrder` n’avait pas de garde de commandes réelles ; un serveur lancé avec `NODE_ENV=development`, `test`, une valeur absente/non reconnue, ou dont l’environnement change après import, n’est pas bloqué par ce verrou. Ces cas conservent le comportement existant pour ne pas casser la démonstration et les tests ; ce n’est pas une attestation de sécurité. Ni `HOST`, ni l’adresse MongoDB, ni les variables web, paiement ou SMS ne permettent une déduction sûre. Ce constat décrit l’audit historique avant ce lot. Le verrou runtime désormais ajouté est indépendant de `NODE_ENV` et utilise la variable dédiée documentée ci-dessus, avec l’erreur sûre `CHECKOUT_DISABLED`. Ne jamais contourner le refus en changeant `NODE_ENV` pour prendre des commandes réelles.
+## Initialisation et maintenance hors trafic
 
-**Prochaine décision nécessaire :** avant tout usage non local, approuver un contrat serveur dédié au mode de commande, indépendant de `NODE_ENV` et des prestataires. Il devra refuser les valeurs absentes/invalides, interdire le mode réel tant que tous les blocages d’atomicité ne sont pas levés et être appliqué à l’entrée métier avant accès aux commandes, avec un code/message exploitable. Le mode local/test doit être explicitement choisi et réservé à des données fictives. La variable et la garde runtime décrites plus haut ne constituent pas une autorisation de déploiement : elles restent réservées aux commandes synthétiques locales.
+Les migrations et le seed initialisent séparément les guards de l’existant. Les migrations initialisent aussi `checkout_policies` avec une génération durable et un hash canonique de devise, révision de calcul, frais de service et taxe. Un document existant divergent n’est pas écrasé silencieusement. Tous les workers doivent avoir une configuration identique.
 
-Les tests [`order-availability.test.ts`](../delifast-api/test/order-availability.test.ts) et [`order-availability-api.test.ts`](../delifast-api/test/order-availability-api.test.ts) vérifient le refus de chargement production même avec opt-in, le refus par défaut et pour les valeurs invalides sans accès métier aux commandes, les devis toujours consultables, la lecture des commandes existantes et la création/reprise idempotente fictives uniquement avec opt-in explicite. Une révocation pendant les lectures finales empêche aussi l’insertion. Ces preuves sur MongoDB jetable ne démontrent ni atomicité, ni détection universelle d’un environnement réel ; aucun paiement ni SMS réel n’est exécuté.
+Ces outils sont de la **maintenance hors trafic** : ne pas exécuter seed, import, réparation, changement de frais ou restauration pendant des checkouts. Ne pas supprimer/réinitialiser un guard ni restaurer isolément ses données. Une sauvegarde cohérente doit couvrir commandes/idempotence, catalogue, zones, guards et politique. Le sérialiseur de sauvegarde/restauration conserve explicitement les BSON `Long`, y compris zéro et les grands compteurs ; le test réel vérifie aussi les générations et la politique inchangées. L’API n’offre pas de changement tarifaire live ni de réparation en ligne.
 
-## Pourquoi les versions seules ne suffisent pas
+Tout futur writer, import concurrent ou accès opérateur doit rejoindre ce protocole. Une écriture MongoDB directe sans guard peut toujours contourner la protection ; les contre-exemples du prototype conservent volontairement cette limite. Le manifeste de couverture et TypeScript ne prouvent pas l’absence d’un logiciel externe.
 
-Le [contre-exemple sur replica set](../delifast-api/test/replica-set-transactions.test.ts) conserve le prix ancien dans un snapshot, même après la modification du plat par un autre client, et accepte l’insertion d’une commande. Une relecture du même snapshot ou un `$set` sans changement ne verrouille pas les dépendances.
+## Reprises, crashs et horaires
 
-Écrire uniquement sur les plats commandés ne couvre pas une fermeture du restaurant, une nouvelle zone prioritaire, une zone partagée modifiée, ni les frais de service. Un verrou sur la seule zone choisie manque les nouveaux candidats. Le contrôle final actuel dans [`checkout-guard.ts`](../delifast-api/src/checkout-guard.ts) est une série de lectures, pas un CAS multi-documents, et ne revalide pas les zones.
+Le pilote gère les conflits transitoires en refaisant une transaction complète et les commits inconnus en reprenant le même commit. Chaque transaction a un budget de quinze secondes et un commit borné à cinq secondes. Un `11000` n’est jamais récupéré à l’intérieur d’une transaction invalide : une nouvelle transaction recherche et vérifie la commande gagnante. La reprise conserve clé et payload.
 
-## Deux protections communes, réellement écrites
+Après crash avant commit, aucune commande de la tentative ne doit survivre. Après commit et perte de réponse, la même clé restitue le même ordre, snapshot et jeton. Les tests SIGKILL ne sont pas des tests de panne disque, élection multi-membres ou résultat de commit inconnu injecté par le réseau.
 
-Le schéma cible comporte une collection de guards persistants :
+Les horaires restaurant et zone utilisent un même `admissionAt` UTC, fixé au début du calcul de chaque tentative. Une tentative admise avant une fermeture horaire peut committer après : l’horloge n’écrit pas de document MongoDB. Ce protocole **ne promet pas une ouverture à l’instant exact du commit**. Le jeton de devis expire toujours après cinq minutes et doit être encore valide juste avant l’appel d’insertion ; cette vérification ne fige pas l’horloge pendant le commit.
 
-- `restaurant:<id>` protège tous les plats et options du restaurant, son existence, son ouverture, ses horaires et ses références de zones ;
-- `global:delivery-policy` protège l’ensemble des zones, leur existence, leur géométrie, leur classement et leurs règles, ainsi que la politique de calcul des frais.
-
-Chaque guard a une identité durable, une génération immuable et un compteur BSON `Long` incrémenté réellement. Pas de TTL, de suppression/recréation, de remise à zéro, de restauration isolée ou de réutilisation d’une génération. Un guard manquant ou mal formé entraîne un refus, jamais une création implicite pendant le checkout. La création initiale et la création d’un nouveau restaurant doivent être des opérations contrôlées. Les compteurs sont distincts des versions métier et ne doivent pas invalider les formulaires d’administration à chaque commande.
-
-Le guard global est volontairement conservateur : les zones peuvent être partagées entre restaurants par `deliveryZoneIds`, et une insertion peut changer la liste des candidats utilisée par le fallback historique `restaurantId`. Ce choix évite une recherche de références inverses elle-même sujette aux courses. **Il sérialise aussi les checkouts entre restaurants** : contention et débit doivent être mesurés avant activation. Le partitionner ensuite exige une nouvelle preuve couvrant les déplacements de zones et toutes les références.
-
-Tous les participants acquièrent les guards dans le même ordre canonique (global puis identifiants de restaurants triés). L’acquisition est une écriture conditionnelle de la génération attendue et un `$inc` non nul, vérifiée par `matchedCount === 1` et `modifiedCount === 1`. Les guards et données restent dans la même session et transaction jusqu’au commit. Des écritures indépendantes « données puis guard » ou « guard puis données » ne sont pas le protocole.
-
-## Ce qu’un futur checkout doit faire
-
-1. Valider et normaliser requête, propriétaire et clé ; conserver les règles d’autorisation existantes. Calculer une empreinte versionnée du panier, des choix, de l’adresse et du point de livraison. Ne pas casser les empreintes historiques acceptées par `placeOrder`.
-2. Ouvrir une transaction `snapshot` / `majority` depuis le même `MongoClient`. Toutes les fonctions appelées doivent recevoir explicitement la même `ClientSession`, y compris les lectures secondaires dans `eligibility` et `restaurantZoneIds`.
-3. Rechercher d’abord la commande par clé d’idempotence. Si elle existe, vérifier propriétaire et empreinte puis retourner son snapshot immuable, sans recalcul de prix ni refus parce que le restaurant est maintenant fermé. Une clé utilisée avec un autre propriétaire ou contenu est un conflit.
-4. Lire et réellement incrémenter les deux guards dans l’ordre défini, sans utiliser un devis/cache comme autorité. Une mutation committée après l’établissement du snapshot fait échouer l’écriture sur le guard ; ne pas absorber cet échec pour continuer dans la transaction.
-5. Après acquisition, échantillonner une seule fois `admissionAt` puis lire restaurant, plats, options, zones et politique tarifaire dans la session. Appliquer toutes les règles métier et comparer le hash du devis affiché. Sur une reprise complète, refaire ces lectures, le calcul et cette comparaison ; ne jamais accepter automatiquement un nouveau total.
-6. Insérer la commande avec son snapshot, propriétaire, empreinte, clé, `admissionAt`, révision de politique et versions pertinentes. L’index unique de `orders.idempotencyKey` reste obligatoire. L’idempotence intégrée à la commande évite un deuxième document ; si elle est séparée, les deux écritures doivent appartenir à cette même transaction.
-7. Committer avant de retourner une réponse de succès. Aucun appel réseau de paiement, SMS ou notification dans le callback transactionnel. Un éventuel outbox est un autre lot autorisé, avec insertion atomique puis consommateur idempotent.
-
-Le `Db` actuellement passé à `placeOrder` n’expose pas à lui seul un contrat de session : [`db.ts`](../delifast-api/src/db.ts) doit proposer une interface explicite de transaction. Ajouter `{ session }` à une seule lecture ne suffit pas.
-
-Le hash de devis actuel couvre le point GPS, le snapshot tarifaire et les sources métier catalogue/zones lues, pas le nom, le téléphone ou les instructions ; l’empreinte d’idempotence couvre l’adresse entière. C’est cohérent tant que seul le point influence le prix et l’éligibilité. Toute nouvelle règle fondée sur le reste de l’adresse doit étendre le hash de devis avec un format versionné et des tests de compatibilité, sans remplacer les empreintes de commandes déjà enregistrées.
-
-### Pourquoi cela protège les courses participantes
-
-Si un writer a committé une mutation et son incrément après le snapshot du checkout, l’écriture du checkout sur le guard de ce snapshot entre en conflit. Aucun document commande de cette tentative ne doit survivre. Si le checkout a déjà acquis les guards, un writer participant ne peut pas committer une mutation protégée avant la libération de ces guards ; il doit abandonner ou reprendre après le checkout. Les modifications des autres restaurants sont couvertes par leurs guards, et toutes les zones/politiques par le guard global.
-
-Cette propriété suppose **tous** les writers participants. Un accès direct à MongoDB qui modifie les données sans le guard peut encore committer un changement invisible au snapshot. Le prototype conserve volontairement ce contre-exemple. Ni TypeScript, ni une convention de code, ni un validateur de schéma ne prouvent à eux seuls l’absence d’un writer externe contournant le protocole.
-
-## Horaires : une règle métier à décider explicitement
-
-Le passage du temps ne fait pas d’écriture MongoDB et ne crée donc aucun conflit. La proposition est une **admission à `admissionAt`**, après acquisition des guards : les horaires restaurant et zone sont évalués avec ce même instant UTC. Une transaction admise juste avant fermeture peut committer juste après ; ce comportement doit être accepté et testé explicitement.
-
-Une promesse « toujours ouvert à l’instant exact du commit » n’est pas fournie par ce protocole. Une relecture de l’horloge juste avant commit ne supprime pas la dernière fenêtre. Si cette promesse est exigée, ne pas activer le protocole proposé : il faut d’abord un modèle d’admission/fermeture différent. Aucun délai de transaction ou marge arbitraire ne doit être présenté comme une preuve stricte.
-
-## Tous les chemins d’écriture à migrer
-
-| Surface actuelle | Chemins inspectés | Changement requis avant activation |
-| --- | --- | --- |
-| Plats, prix, disponibilité, archivage et groupes/options | `catalog.ts`: `createMenuItem`, `updateMenuItem`, `setMenuItemArchived` | Guard restaurant + mutation atomiques ; options incluses, même si un ancien writer ne change pas `version`. |
-| Ouverture | `catalog.ts`: `setRestaurantOpen` | Même guard restaurant et transaction, contrôle de version métier conservé. |
-| Profil, références et création restaurant | `restaurant.ts`: `createRestaurantProfile`, `updateRestaurantProfile` | Initialisation contrôlée du guard ; validation des zones dans la session avec guard global, puis guard restaurant ; références partagées autorisées seulement sous protocole. |
-| Horaires restaurant | `restaurant.ts`: `setRestaurantSchedule` | Guard restaurant ; horloge commune au calcul lors du checkout. |
-| Création de zone | `zones.ts`: `createDeliveryZone` | Remplacer insertion puis mise à jour restaurant puis suppression compensatoire par une seule transaction avec guards global et restaurant. Aujourd’hui une zone peut être visible avant la fin de l’opération. |
-| Modification de zone | `zones.ts`: `updateDeliveryZone` | Guard global pour frais, géométrie moderne/historique, activation, minimum, priorité, horaires, estimation et indicateur demo. |
-| Suppressions, recréations, déplacements et import | Futurs endpoints, scripts et accès opérateurs | Même protocole, incluant anciennes/nouvelles portées ; guards persistants contre ABA. Aucun accès direct concurrent non audité. |
-| Seed et maintenance | `migrations/seed.ts`: `seedCatalog`, `seedZones`, `seedAll` | Ne pas lancer en concurrence avec checkout, ou migrer les écritures vers le protocole. Les upserts historiques ne sont pas une exception sûre. Sauvegarde/restauration cohérente des données ET guards. |
-| Frais et taxes | `config.ts`: `SERVICE_FEE_XOF`, `TAX_XOF` ; `pricing.ts` | Aujourd’hui valeurs d’environnement propres à chaque processus, non verrouillables par MongoDB. Migrer vers une politique autoritative versionnée en base et guard global, ou démontrer une révision immuable commune à tous les workers et interdire les configurations mixtes. |
-| Catégories | `catalog.ts`: création/modification/archivage des catégories | `prepareCheckout` ne lit pas les catégories : leur archivage ne rend pas actuellement les plats non commandables. Conserver cette sémantique ; toute nouvelle dépendance impose d’étendre le protocole et les tests. |
-
-L’inventaire porte sur l’API locale du dépôt, pas sur une inspection des accès de production ou de logiciels historiques externes. Leur absence de contournement reste à prouver avant activation.
-
-La matrice applicative doit tester séparément : références absentes → fallback `restaurantId`, références explicites → sélection par identifiants, références `[]` → aucune zone, et transitions entre ces trois représentations ; création sous profil historique ; zone partagée entre deux restaurants ; suppression/recréation et déplacement d’une zone. Une zone insérée mais non référencée par un profil explicite ne devient pas automatiquement candidate. Les writers, comme les checkouts, doivent refuser tout guard absent ou mal formé.
-
-## Reprises et incidents
-
-La reprise doit être bornée par un budget total et un nombre maximal de tentatives, sans boucle infinie ni fallback standalone. Les conflits transitoires autorisent une nouvelle transaction complète. Un résultat de commit inconnu exige de résoudre/reprendre **le même commit**, pas de refaire aveuglément un autre achat ; si le résultat reste inconnu, retourner un état indéterminé récupérable par la même clé.
-
-Après collision d’unicité, terminer/abandonner la transaction perdante puis rechercher la commande gagnante dans une nouvelle lecture et vérifier propriétaire/empreinte. Une absence temporaire n’autorise pas à traiter la clé comme définitivement libre. Après crash avant commit : aucune commande de la tentative, puis nouvelle transaction complète. Après commit et perte de réponse : récupérer exactement le snapshot déjà enregistré, même si le catalogue ou la politique a changé depuis. Ne jamais supprimer une preuve d’idempotence tant qu’une clé peut être rejouée.
-
-Les tests par interruption de processus ne sont pas des tests de panne disque, d’élection multi-membres, de rollback de cluster ou de résultat de commit inconnu injecté par le réseau. Ces scénarios et la topologie de production restent des préconditions distinctes.
-
-## Preuves et limites du lot
-
-Le [prototype test-only](../delifast-api/test/checkout-fences-prototype.test.ts) utilise un vrai replica set jetable, deux clients et des collections propres à la suite. Il est automatiquement inclus dans `npm test`. Il ne charge pas le checkout applicatif comme implémentation du protocole : ses scénarios montrent ce qu’un futur chemin applicatif devra reproduire, pas ce que `placeOrder` garantit aujourd’hui.
-
-Le prototype prouve les conflits de guards pour les changements de plats/options/disponibilité, ouverture/horaires/références restaurant, frais/géométrie/activation/minimum/priorité/horaires de zone et politique tarifaire ; il couvre aussi insertion/suppression/recréation, zone partagée, ABA, writer sans guard, idempotence concurrente et refus d’un autre propriétaire/panier. Les barrières explicites placent les mutations après établissement du snapshot. Les scénarios SIGKILL vérifient la reprise avant commit et la récupération après commit ; le premier raccourcit uniquement le délai de vie transactionnel du serveur jetable pour borner le nettoyage des transactions abandonnées.
-
-**Limites précises du prototype :** il ne recalcule pas le total avec `prepareCheckout`, ne valide pas les options, polygones ou horaires comme l’application, ne compare pas un hash de devis et ne réserve aucun stock. Ses compteurs numériques de test ne valident pas la migration BSON `Long`/génération décrite plus haut. Ses reprises ne simulent pas un résultat de commit réseau inconnu ni toutes les collisions `11000`. La matrice complète doit être rejouée sur les vrais writers et le vrai checkout après migration. Aucun test synthétique vert ne lève ces blocages.
-
-Les preuves de base restent dans [MONGODB_TRANSACTIONS.md](MONGODB_TRANSACTIONS.md). Pour exécuter le prototype :
+## Preuves exécutables
 
 ```bash
-cd delifast-api
-npx vitest run test/checkout-fences-prototype.test.ts
-npm run typecheck
-npm run build
-npm test
+npm run test:transactions --prefix delifast-api
+npm run typecheck --prefix delifast-api
+npm run build --prefix delifast-api
+npm test --prefix delifast-api
+node --test scripts/delifast-checkout-config.test.mjs
 ```
 
-Avant activation : migrer tous les chemins du tableau ; écrire des tests adverses sur les **vraies fonctions applicatives** pour chaque surface, avant et après acquisition ; prouver les reprises et les frontières horaires ; vérifier absence de contournement, homogénéité tarifaire, topologie/droits, refus par défaut et performances. Maintenir tous les contrats produit/authentification et terminer les tests sur appareils natifs. Jusque-là, aucune revendication d’atomicité applicative ou de préparation aux commandes/paiements réels. La PR reste ouverte, sans merge ni déploiement.
+Les tests `checkout-writer-gaps.test.ts` portent désormais sur les neuf writers réels appelés sans contexte et le vrai checkout transactionnel. Les barrières de processus les placent après les lectures de snapshot et avant l’acquisition : une simple mutation avant le démarrage du checkout n’est pas une course transactionnelle. `checkout-writer-participation.test.ts` vérifie aussi l’autre direction : un writer participant observe un conflit réel tant que le checkout détient les guards. `checkout-atomic-order.test.ts` couvre unicité concurrente, reprises et interruption de processus ; `checkout-coverage.test.ts` refuse chaque entrée de couverture manquante.
+
+Les preuves de primitives et du prototype restent distinctes des preuves applicatives : [MONGODB_TRANSACTIONS.md](MONGODB_TRANSACTIONS.md). Toutes utilisent des bases jetables et des données synthétiques. Le Compose **local**, le serveur de développement et les recettes qui écrivent le catalogue nécessitent désormais un replica set réel ; aucune topologie de production n’est créée ici.
+
+Les builds Web et exports JS Expo Android/iOS ne constituent pas une recette native sur appareils. Performance, élections, exploitation, autorisations de déploiement, authentification de production et recette native restent hors de ce lot. La PR reste ouverte, sans merge ni déploiement.

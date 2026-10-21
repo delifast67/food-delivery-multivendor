@@ -4,9 +4,9 @@
 
 Un **replica set MongoDB 7.0.24 réel**, à un membre et stockage WiredTiger, est disponible pour le développement et les tests. Il permet de tester commit, abort, conflit d’écriture et reprise après interruption sans simuler les transactions.
 
-**Le checkout applicatif n’a pas été migré vers les transactions. Sa fenêtre de concurrence catalogue → insertion reste ouverte.** Un replica set ne corrige pas cette course à lui seul. Aucune topologie de production n’a été inspectée ni validée, aucun déploiement effectué.
+**Le chemin transactionnel applicatif est désormais intégré derrière un opt-in local distinct, fermé par défaut.** Tous les writers API concernés participent aux guards ; les neuf courses et les crashs du vrai checkout ont leurs tests sur replica set. Le chemin historique NONATOMIC conserve sa fenêtre de concurrence explicite. Un replica set seul ne suffit pas : voir le protocole applicatif. Aucune topologie de production n’a été inspectée ni validée, aucun déploiement effectué.
 
-Le [protocole cible et l’inventaire des writers à migrer](ATOMIC_CHECKOUT_PROTOCOL.md) détaillent maintenant les guards communs, les zones partagées, les frais hors base, l’admission horaire et les reprises. Le prototype associé est réservé aux tests ; aucun de ces guards n’est activé dans `placeOrder`.
+Le [protocole intégré et l’inventaire des writers](ATOMIC_CHECKOUT_PROTOCOL.md) détaillent les guards communs, les zones partagées, la politique tarifaire persistante, l’admission horaire et les reprises. Les preuves primitives et le prototype ci-dessous restent des tests distincts, sans être confondus avec les preuves du vrai `placeOrder`.
 
 ## Démarrer sans toucher à la base existante
 
@@ -28,7 +28,7 @@ npm run seed --prefix delifast-api
 npm run dev --prefix delifast-api
 ```
 
-Le seed concerne des données fictives locales. Ne pas activer de fournisseur de paiement ou SMS. `Ctrl+C` arrête MongoDB proprement en conservant les données. Le redémarrage réutilise le même répertoire. La commande `dev:db` et `compose.delifast.yaml` restent **standalone**, inchangés, port 27017 ; ils ne constituent pas une preuve transactionnelle. Aucun volume existant n’est automatiquement converti, copié ou supprimé. Ne jamais mélanger les répertoires standalone et replica set.
+Le seed concerne des données fictives locales. Ne pas activer de fournisseur de paiement ou SMS. `Ctrl+C` arrête MongoDB proprement en conservant les données. Le redémarrage réutilise le même répertoire. Depuis l’intégration des writers, `dev:db` délègue au même lanceur replica set séparé et le Compose local démarre aussi un replica set. Les anciens répertoires standalone restent intacts. Le checkout est fermé par défaut ; voir le [protocole applicatif actuel](ATOMIC_CHECKOUT_PROTOCOL.md). Aucun volume existant n’est automatiquement converti, copié ou supprimé. Ne jamais mélanger les répertoires standalone et replica set.
 
 **Réservé au développement** : un membre ne procure aucune haute disponibilité ; cette instance n’a pas d’authentification ni de TLS et ne doit jamais être exposée sur une interface publique, via un tunnel ou utilisée en production.
 

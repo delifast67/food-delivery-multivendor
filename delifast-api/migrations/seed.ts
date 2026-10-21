@@ -1,5 +1,6 @@
 import { connect, closeDb } from "../src/db.js";
 import { passwordHash } from "../src/auth.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 const rs = [
   {
     id: "rest-koudougou",
@@ -216,6 +217,11 @@ export async function seedAll(db: any) {
       { upsert: true },
     );
   }
+  // Maintain writer guards outside checkout before mutations are served.
+  await initializeCheckoutFences(
+    db,
+    await db.collection("restaurants").distinct("id"),
+  );
 }
 if (import.meta.url === `file://${process.argv[1]}`) {
   const db = await connect();

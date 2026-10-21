@@ -1,10 +1,10 @@
 import "./local-checkout-helper.js";
 import { beforeAll, afterAll, expect, it } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
 import crypto from "node:crypto";
 import { quoteInput } from "./quote-helper.js";
-let mongo: MongoMemoryServer, app: any, db: any, token: string, zone: any;
+let mongo: MongoMemoryReplSet, app: any, db: any, token: string, zone: any;
 const point = { latitude: 12.3714, longitude: -1.5197 };
 const call = async (query: string, variables: any = {}, auth?: string) => (await request(app).post('/graphql').set(auth ? {authorization:`Bearer ${auth}`} : {}).send({query, variables})).body;
 const address = { recipientName:'Essai fictif', phone:'+22670000000', city:'Ville libre fictive', neighborhood:'Repère', landmark:'Aucune livraison réelle', instructions:'', point };
@@ -20,7 +20,7 @@ const update = async (changes: any) => {
 };
 beforeAll(async()=>{
  process.env.NODE_ENV='test'; process.env.RATE_LIMIT_MAX='1000';
- mongo=await MongoMemoryServer.create(); process.env.MONGODB_URI=mongo.getUri();
+ mongo=await MongoMemoryReplSet.create({ replSet: { count: 1 } }); process.env.MONGODB_URI=mongo.getUri();
  db=await (await import('../src/db.js')).connect();
  await (await import('../migrations/seed.js')).seedAll(db);
  app=await (await import('../src/server.js')).createApp();

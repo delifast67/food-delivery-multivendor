@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Recette profil mobile isolée : API réelle, MongoMemoryServer jetable, aucun SMS/paiement.
+// Recette profil mobile isolée : API réelle, MongoMemoryReplSet jetable, aucun SMS/paiement.
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { createHash, randomUUID } from 'node:crypto'
@@ -8,7 +8,7 @@ import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
 
 const require = createRequire(new URL('../delifast-api/package.json', import.meta.url))
-const { MongoMemoryServer } = require('mongodb-memory-server')
+const { MongoMemoryReplSet } = require('mongodb-memory-server')
 const { MongoClient } = require('mongodb')
 const { passwordHash } = require('../delifast-api/dist/src/auth.js')
 const appRequire = createRequire(new URL('../enatega-multivendor-app/package.json', import.meta.url))
@@ -56,7 +56,7 @@ async function ready(url) {
 }
 
 try {
-  mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'delifast_profile_smoke' } })
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 }, instance: { ip: '127.0.0.1', dbName: 'delifast_profile_smoke' } })
   dbClient = await MongoClient.connect(mongo.getUri())
   const db = dbClient.db()
   await seed(db, 'customer-a', tokenA, '+22670123456')

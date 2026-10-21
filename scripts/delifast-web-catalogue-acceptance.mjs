@@ -34,7 +34,7 @@ if (process.argv[2] === '--isolated-system') {
   process.env.DELIFAST_ACCEPTANCE_OUTPUT = process.argv[9];
 }
 const require = createRequire(new URL('../delifast-api/package.json', import.meta.url));
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const scratch = await mkdtemp(join(tmpdir(), 'delifast-web-catalogue-'));
 const web = join(scratch, 'web');
 const fixture = join(scratch, 'fixtures.json');
@@ -53,7 +53,7 @@ try {
   await mkdir(output, { recursive: true });
   console.log('1/4 — Vérification Playwright, Mongo jetable et builds propres');
   execFileSync(python, ['-c', 'import playwright.sync_api'], { cwd: root, stdio: 'inherit' });
-  try { mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'delifast_web_catalogue_acceptance' }, binary: { checkMD5: false } }); }
+  try { mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 }, instance: { ip: '127.0.0.1', dbName: 'delifast_web_catalogue_acceptance' }, binary: { checkMD5: false } }); }
   catch (error) { throw new Error('MongoDB préinstallé requis, aucun téléchargement autorisé', { cause: error }); }
   env.MONGODB_URI = mongo.getUri();
   Object.assign(process.env, env);

@@ -1,6 +1,7 @@
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 import crypto from "node:crypto";
 import { MongoClient, type Db } from "mongodb";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   PaymentService,
@@ -84,15 +85,16 @@ const code = async (p: Promise<any>) => {
   }
 };
 
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let client: MongoClient;
 let db: Db;
 beforeAll(async () => {
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   client = new MongoClient(mongo.getUri());
   await client.connect();
   db = client.db("payment-tests");
-}, 60000);
+
+  await initializeCheckoutFences(db, []);}, 60000);
 afterAll(async () => {
   await client?.close();
   await mongo?.stop();

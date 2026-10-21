@@ -1,14 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import type { Db } from "mongodb";
 import crypto from "node:crypto";
 import { config } from "../src/config.js";
 import type { SmsProvider } from "../src/sms-provider.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
 const PHONE_A = "+22670123456";
 const PHONE_B = "+22670123457";
-let mongo: MongoMemoryServer, app: any, db: Db;
+let mongo: MongoMemoryReplSet, app: any, db: Db;
 let provider: SmsProvider & { messages: Map<string, string> };
 const gql = (query: string, variables: any = {}, token?: string) => {
   const r = request(app).post("/graphql").send({ query, variables });
@@ -43,13 +44,14 @@ async function staffToken(role = "ADMIN") {
 
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
   Object.assign(config, { smsProvider: "orange", orangeSmsEnabled: true, orangeClientId: "fixture", orangeClientSecret: "fixture", customerOtpHashKey: "fixture-customer-otp-hmac-key-0123456789012345", orangeSenderAddress: "tel:+2260000", orangeSenderName: "" });
   db = await (await import("../src/db.js")).connect();
   provider = otpProvider();
   app = await (await import("../src/server.js")).createApp(undefined, provider);
-}, 60_000);
+
+  await initializeCheckoutFences(db, []);}, 60_000);
 beforeEach(async () => {
   Object.assign(config, { customerOtpIpMax: 1000, customerOtpPhoneMax: 1000 });
   await Promise.all(["customers", "customer_sessions", "customer_otp_challenges", "customer_otp_rate_limits", "customer_otp_phone_locks", "staff_users", "staff_sessions", "orders"].map((n) => db.collection(n).deleteMany({})));

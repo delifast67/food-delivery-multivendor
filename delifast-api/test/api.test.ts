@@ -1,8 +1,9 @@
 import "./local-checkout-helper.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import request from "supertest";
-let mongod: MongoMemoryServer;
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
+let mongod: MongoMemoryReplSet;
 let app: any;
 const call = (query: string, variables: any = {}) =>
   request(app).post("/graphql").send({ query, variables });
@@ -14,7 +15,7 @@ const quoteInput = async (input: any) => {
 };
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
-  mongod = await MongoMemoryServer.create();
+  mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongod.getUri();
   const db = await (await import("../src/db.js")).connect();
   await db
@@ -44,7 +45,8 @@ beforeAll(async () => {
     },
   ]);
   app = await (await import("../src/server.js")).createApp();
-}, 60000);
+
+  await initializeCheckoutFences(db, await db.collection("restaurants").distinct("id"));}, 60000);
 afterAll(async () => {
   (await import("../src/db.js")).closeDb();
   await mongod.stop();

@@ -7,7 +7,7 @@ import {
   expect,
   vi,
 } from "vitest";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import type { Db } from "mongodb";
 import crypto from "node:crypto";
 import { connect, closeDb } from "../src/db.js";
@@ -24,11 +24,12 @@ import {
   deleteAddress,
 } from "../src/customer-auth.js";
 import type { SmsProvider } from "../src/sms-provider.js";
+import { initializeCheckoutFences } from "../src/checkout-fences.js";
 
 const PHONE = "+22670123456";
 const unavailableCode = { extensions: { code: "AUTH_UNAVAILABLE" } };
 let db: Db;
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let uri: string;
 const saved = { ...config };
 
@@ -84,10 +85,11 @@ const address = {
 };
 
 beforeAll(async () => {
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   uri = mongo.getUri("customer-security");
   db = await connect(uri);
-});
+
+  await initializeCheckoutFences(db, []);});
 beforeEach(async () => {
   Object.assign(config, saved, {
     smsProvider: "orange",
