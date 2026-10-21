@@ -1,28 +1,10 @@
 name: Delifast local — API, web et mobile
 
 on:
+  # La garde inspecte tous les manifestes suivis, y compris ceux ajoutés hors des apps.
+  # Ne pas filtrer les chemins : un nouveau fichier de déploiement doit être contrôlé.
   push:
-    paths:
-      - 'delifast-api/**'
-      - 'enatega-multivendor-admin/**'
-      - 'enatega-multivendor-web/**'
-      - 'enatega-multivendor-app/**'
-      - 'enatega-multivendor-store/**'
-      - 'enatega-multivendor-rider/**'
-      - 'scripts/delifast-*.mjs'
-      - '.github/workflows/delifast-local.yml'
-      - 'compose.delifast.yaml'
   pull_request:
-    paths:
-      - 'delifast-api/**'
-      - 'enatega-multivendor-admin/**'
-      - 'enatega-multivendor-web/**'
-      - 'enatega-multivendor-app/**'
-      - 'enatega-multivendor-store/**'
-      - 'enatega-multivendor-rider/**'
-      - 'scripts/delifast-*.mjs'
-      - '.github/workflows/delifast-local.yml'
-      - 'compose.delifast.yaml'
   workflow_dispatch:
 
 permissions:
@@ -66,6 +48,7 @@ jobs:
       - name: Compiler et tester l’API
         run: |
           for script in scripts/delifast-*.mjs; do node --check "$script"; done
+          node --test scripts/delifast-checkout-config.test.mjs
           npm run build --prefix delifast-api
           npm test --prefix delifast-api
           node scripts/delifast-checkout-freshness-smoke.mjs

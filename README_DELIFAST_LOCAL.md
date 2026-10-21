@@ -1,5 +1,7 @@
 # Delifast Multivendor — démonstration autonome locale
 
+> **Checkout non atomique : jamais de commandes réelles.** Ne jamais définir `DELIFAST_ALLOW_NONATOMIC_CHECKOUT=true` pour des commandes réelles, même avec `NODE_ENV=development`. Cette option est réservée aux données fictives locales/test et doit être absente des manifestes de production. Le projet n’est pas prêt pour la production.
+
 Le site local et le nouveau parcours mobile client permettent de consulter deux restaurants fictifs, composer un panier mono-restaurant, calculer le total côté serveur en XOF, enregistrer une commande et suivre son historique. Un espace opérations distinct permet au personnel de tester l’acceptation restaurant, la préparation, l’affectation manuelle et la livraison simulée.
 
 **Aucun paiement ou remboursement réel, aucune livraison physique, aucun SMS ou push n’ont été déclenchés pendant ce développement.** Orange SMS BF est désormais raccordé mais désactivé par défaut : ne l’activer qu’après autorisation explicite de l’essai réel, du destinataire et du coût. Les comptes du personnel, restaurants, menus et frais du seed sont des données d’essai. Le paiement à la livraison n’existe pas dans le contrat. Ne pas exposer cette démonstration sur Internet avec des données personnelles réelles.
@@ -60,15 +62,15 @@ docker compose -f compose.delifast.yaml up --build -d
 
 Ouvrir **http://localhost:3000/delifast** pour le client et **http://localhost:3000/delifast/operations** pour le personnel. L’API est sur http://localhost:4000/graphql et son contrôle de santé sur http://localhost:4000/health. Les ports sont liés à `127.0.0.1`. MongoDB conserve ses données dans un volume ; migrations et seed précèdent le démarrage de l’API. Redis est provisionné pour de futurs traitements, sans usage métier dans ce lot.
 
-Par défaut, les commandes restent en attente de paiement. Pour tester le parcours entier avec le simulateur **strictement fictif** :
+Par défaut, les devis restent consultables mais toute soumission de commande est refusée avec `CHECKOUT_DISABLED`. Après opt-in local, les commandes fictives restent en attente de paiement. Pour tester le parcours entier avec le simulateur **strictement fictif**, activer séparément les deux options sur cette seule commande :
 
 ```bash
-DELIFAST_DEMO_PAYMENTS=true docker compose -f compose.delifast.yaml up --build -d
+DELIFAST_ALLOW_NONATOMIC_CHECKOUT=true DELIFAST_DEMO_PAYMENTS=true docker compose -f compose.delifast.yaml up --build -d
 ```
 
 L’activation du simulateur n’est ni une intégration à un opérateur ni une autorisation d’encaissement. Le simulateur est inaccessible au client et au restaurant : seul le compte admin local peut l’appeler.
 
-Le checkout non atomique est fermé par défaut par `DELIFAST_ALLOW_NONATOMIC_CHECKOUT=false`. Pour cette démonstration locale uniquement, les helpers qui créent des commandes fictives l’activent explicitement avec la valeur exacte `true` :
+Le checkout non atomique est fermé par défaut par `DELIFAST_ALLOW_NONATOMIC_CHECKOUT=false`. Ce fichier Compose est destiné exclusivement au poste local, pas à un déploiement partagé, de préproduction ou de production. Pour cette démonstration locale uniquement, la commande suivante active la création de commandes fictives avec la valeur exacte `true` :
 
 ```bash
 DELIFAST_ALLOW_NONATOMIC_CHECKOUT=true docker compose -f compose.delifast.yaml up --build -d
@@ -152,9 +154,19 @@ Le premier lancement télécharge un binaire MongoDB réservé au développement
 npm run migrate --prefix delifast-api
 npm run seed --prefix delifast-api
 npm run build --prefix delifast-api
-# Omettre DELIFAST_DEMO_PAYMENTS pour laisser tout paiement désactivé
-DELIFAST_DEMO_PAYMENTS=true npm start --prefix delifast-api
+# Démarrage fermé : devis disponibles, aucune création de commande
+npm start --prefix delifast-api
 ```
+
+Pour la recette locale de commandes fictives seulement, arrêter l’API puis remplacer sa commande de démarrage par :
+
+```bash
+DELIFAST_ALLOW_NONATOMIC_CHECKOUT=true npm start --prefix delifast-api
+# Cycle complet fictif, avec simulateur de paiement facultatif :
+# DELIFAST_ALLOW_NONATOMIC_CHECKOUT=true DELIFAST_DEMO_PAYMENTS=true npm start --prefix delifast-api
+```
+
+Ne pas exporter l’opt-in dans le profil shell ou un environnement partagé. Les commandes ci-dessus le limitent au processus local. Après arrêt, relancer sans cette variable pour fermer les soumissions. Les scripts ne chargent pas `.env` automatiquement ; une copie de `delifast-api/.env.example` ne suffit donc pas à activer quoi que ce soit. Ne jamais utiliser ces exemples avec une base ou des commandes réelles.
 
 Dans un troisième terminal :
 
@@ -169,13 +181,14 @@ DELIFAST_API_URL=http://127.0.0.1:4000/graphql npm run dev --prefix enatega-mult
 ```bash
 npm run build --prefix delifast-api
 npm test --prefix delifast-api
+node --test scripts/delifast-checkout-config.test.mjs
 node scripts/delifast-persistence.mjs
 node scripts/delifast-backup-test.mjs
 node --test scripts/delifast-client-multivendor.test.mjs
 npm test --prefix enatega-multivendor-web
 node scripts/delifast-contract.mjs
 npm run build --prefix enatega-multivendor-web
-# Avec MongoDB, API (simulateur activé) et web déjà démarrés :
+# Avec MongoDB fictif, API (opt-in local + simulateur activés) et web déjà démarrés :
 node scripts/delifast-smoke.mjs
 node scripts/delifast-operations-smoke.mjs
 node scripts/delifast-catalog-smoke.mjs
@@ -184,7 +197,9 @@ node scripts/delifast-options-smoke.mjs
 
 Les scripts HTTP créent uniquement des commandes fictives dans la base choisie. Le premier vérifie catalogue, montants, refus des prix client, mono-restaurant, quantités, absence de paiement à la livraison, concurrence/idempotence, jeton client et isolation web. Le second traverse le proxy web avec les rôles, teste les interdictions, la simulation concurrente, le restaurant, le dispatch, le livreur, le suivi client, l’annulation et la révocation de session. Le troisième teste les droits catalogue, création, validation, éditions concurrentes, prix figés d’une commande, disponibilité, archivage/restauration et fermeture/réouverture. Il exige le restaurant fictif initialement ouvert, archive son plat d’essai et rétablit l’ouverture sans écraser une éventuelle modification concurrente. Le quatrième crée une catégorie et un plat fictifs, contrôle les permissions, les éditions concurrentes, les sélections obligatoires et indisponibles, deux configurations d’un même plat, les snapshots et le rejeu idempotent ; il archive ses éléments d’essai en fin d’exécution. Ne pas les exécuter sur des données réelles.
 
-Pour enchaîner les quatre scripts sans pause, lancer l’API de recette avec `RATE_LIMIT_MAX=1000` en plus de `DELIFAST_DEMO_PAYMENTS=true`, comme en CI. La limite habituelle reste de 100 requêtes par minute ; cette valeur plus élevée est réservée à la base fictive de test.
+Pour enchaîner les quatre scripts sans pause, lancer l’API de recette avec `RATE_LIMIT_MAX=1000` en plus de `DELIFAST_ALLOW_NONATOMIC_CHECKOUT=true` et `DELIFAST_DEMO_PAYMENTS=true`, comme en CI. La limite habituelle reste de 100 requêtes par minute ; cette valeur plus élevée est réservée à la base fictive de test.
+
+La garde `scripts/delifast-checkout-config.test.mjs`, exécutée en CI, interdit toute mention de l’opt-in dans les configurations de production/déploiement et les autres configurations non autorisées. Seuls le modèle API fermé par défaut, Compose explicitement local et l’étape HTTP synthétique de la CI locale sont autorisés. Les tests API `order-availability*.test.ts` couvrent déjà l’absence de variable, les valeurs invalides, le refus sans écriture, la disponibilité des devis et le verrou production existant. Aucun nouveau verrou runtime ni déploiement n’est ajouté.
 
 Le test de persistance utilise une base temporaire, arrête complètement MongoDB et l’API, rejoue migrations et seed, puis vérifie commande, rejeu, catégories, groupes/options, snapshots, prix/disponibilité, archivage, ouverture et versions du catalogue. Il ne touche pas la base de travail et utilise par défaut le port API 4105 (`DELIFAST_PERSISTENCE_PORT` pour le changer). La CI ciblée est `.github/workflows/delifast-local.yml`.
 

@@ -1,5 +1,7 @@
 # Delifast API v1
 
+> **Checkout non atomique, commandes réelles interdites.** Ne jamais définir `DELIFAST_ALLOW_NONATOMIC_CHECKOUT=true` pour des commandes réelles, quel que soit `NODE_ENV`. Aucun manifeste de production ne doit contenir cette option.
+
 API GraphQL locale autonome, sans appel Enatega. Les montants sont des entiers XOF. **PayDunya est choisi comme premier prestataire, mais reste désactivé par défaut.** Le [contrat neutre PaymentProvider](PAYMENT_PROVIDERS.md) décrit le registre extensible et la bascule par configuration vers un futur adaptateur, sans changer les commandes ni les applications. Les anciennes tentatives gardent leur prestataire pour leur confirmation. Ce lot n’a créé aucun paiement, même sandbox. Le [contrat PayDunya](PAYDUNYA_CONTRACT.md) décrit les sources officielles, les garanties et les autorisations encore nécessaires. L’API conserve son verrou anti-production.
 
 ## Démarrage
@@ -13,6 +15,8 @@ npm run seed
 npm run build
 npm start
 ```
+
+Ce démarrage laisse `placeOrder` fermé (`CHECKOUT_DISABLED`) ; les devis restent disponibles. Pour créer uniquement des commandes fictives sur la base locale, remplacer la dernière commande par `DELIFAST_ALLOW_NONATOMIC_CHECKOUT=true npm start`. Ne pas exporter cette variable globalement ni la reporter dans une configuration de déploiement. Les scripts ne chargent pas `.env` automatiquement ; voir le [guide local complet](../README_DELIFAST_LOCAL.md#démarrer-sans-docker).
 
 Pour le Mongo local de développement : `npm run dev:db`, puis migrations, seed et démarrage dans un autre terminal. Les migrations et la seed sont idempotentes et les commandes sont conservées par Mongo.
 
