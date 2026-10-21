@@ -40,6 +40,7 @@ jobs:
       - name: Compiler et tester l’API
         run: |
           for script in scripts/delifast-*.mjs; do node --check "$script"; done
+          node --test scripts/delifast-documentation.test.mjs
           node --test scripts/delifast-checkout-config.test.mjs
           npm run build --prefix delifast-api
           npm test --prefix delifast-api
