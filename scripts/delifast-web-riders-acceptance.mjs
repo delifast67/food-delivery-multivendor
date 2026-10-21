@@ -44,7 +44,7 @@ const result = join(output, 'result.json');
 const python = process.env.DELIFAST_TEST_PYTHON || 'python3';
 const chromium = process.env.DELIFAST_TEST_CHROMIUM || '';
 const systemBinary = process.env.MONGOMS_SYSTEM_BINARY;
-const env = { PATH: process.env.PATH, HOME: process.env.HOME, LANG: 'C.UTF-8', NODE_ENV: 'test', NEXT_TELEMETRY_DISABLED: '1', CI: '1', MONGOMS_RUNTIME_DOWNLOAD: 'false', MONGODB_URI: '', DELIFAST_DEMO_PAYMENTS: 'false', PAYMENT_PROVIDER: '', PAYDUNYA_ENABLED: 'false', ORANGE_SMS_ENABLED: 'false', RATE_LIMIT_MAX: '1000', DELIFAST_LOCAL_MODE: 'true' };
+const env = { PATH: process.env.PATH, HOME: process.env.HOME, LANG: 'C.UTF-8', NODE_ENV: 'test', NEXT_TELEMETRY_DISABLED: '1', CI: '1', MONGOMS_RUNTIME_DOWNLOAD: 'false', MONGODB_URI: '', DELIFAST_DEMO_PAYMENTS: 'false', DELIFAST_ALLOW_NONATOMIC_CHECKOUT: 'true', PAYMENT_PROVIDER: '', PAYDUNYA_ENABLED: 'false', ORANGE_SMS_ENABLED: 'false', RATE_LIMIT_MAX: '1000', DELIFAST_LOCAL_MODE: 'true' };
 if (systemBinary) env.MONGOMS_SYSTEM_BINARY = systemBinary;
 let mongo, dbClient, dbModule, api, webServer, log = '';
 function launch(command, args, cwd, extra = {}) { const p = spawn(command, args, { cwd, env: { ...env, ...extra }, stdio: ['ignore', 'pipe', 'pipe'] }); p.stdout.on('data', x => { log = (log + x).slice(-24000); }); p.stderr.on('data', x => { log = (log + x).slice(-24000); }); return p; }

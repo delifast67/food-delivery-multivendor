@@ -18,9 +18,9 @@ Pour le Mongo local de développement : `npm run dev:db`, puis migrations, seed 
 
 ### Commandes réelles toujours interdites
 
-Le checkout applicatif reste **non atomique**. Le verrou existant `NODE_ENV=production` refuse le chargement de configuration et donc le démarrage normal. Il n’existe pas de garde live à l’entrée de `placeOrder`, ni d’indicateur global fiable distinguant commandes réelles et fictives. Faute de distinction sûre, l’audit n’ajoute aucune nouvelle garde ou variable et ne modifie pas le runtime.
+Le checkout applicatif reste **non atomique**. `DELIFAST_ALLOW_NONATOMIC_CHECKOUT` est un opt-in explicite, accepté uniquement avec la valeur exacte `true`, et sa valeur par défaut est `false` (fermé). Il ne doit être activé que pour une recette locale qui crée des commandes fictives et accepte l’avertissement de course résiduelle non atomique ; cette voie n’est **pas prête pour la production**. Ne pas l’activer globalement en production.
 
-`NODE_ENV` n’est pas un détecteur de commandes réelles : développement/test et valeur absente conservent leur comportement pour les usages locaux fictifs ; un serveur réel mal étiqueté ne serait pas identifié. Ne pas déduire ce mode des réglages réseau, paiement ou SMS, et ne pas contourner le refus en changeant `NODE_ENV`. Un futur contrat serveur dédié, explicite et fermé par défaut reste à approuver avant tout usage non local. Les nouveaux tests prouvent uniquement le verrou de démarrage existant et la compatibilité des commandes fictives. Voir le [résultat d’audit et les blocages d’activation](../docs/ATOMIC_CHECKOUT_PROTOCOL.md#audit-du-verrou-existant--aucune-distinction-live-fiable).
+Le verrou existant `NODE_ENV=production` reste intact et refuse le chargement de configuration et donc le démarrage normal. La nouvelle variable ne dérive pas de `NODE_ENV` et ne contourne pas ce verrou. Ne pas déduire son activation des réglages réseau, paiement ou SMS. Voir le [résultat d’audit et les blocages d’activation](../docs/ATOMIC_CHECKOUT_PROTOCOL.md#audit-historique-du-verrou-avant-la-garde-runtime).
 
 ## Contrat
 

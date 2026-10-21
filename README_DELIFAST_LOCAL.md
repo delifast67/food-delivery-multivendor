@@ -68,6 +68,14 @@ DELIFAST_DEMO_PAYMENTS=true docker compose -f compose.delifast.yaml up --build -
 
 L’activation du simulateur n’est ni une intégration à un opérateur ni une autorisation d’encaissement. Le simulateur est inaccessible au client et au restaurant : seul le compte admin local peut l’appeler.
 
+Le checkout non atomique est fermé par défaut par `DELIFAST_ALLOW_NONATOMIC_CHECKOUT=false`. Pour cette démonstration locale uniquement, les helpers qui créent des commandes fictives l’activent explicitement avec la valeur exacte `true` :
+
+```bash
+DELIFAST_ALLOW_NONATOMIC_CHECKOUT=true docker compose -f compose.delifast.yaml up --build -d
+```
+
+Cette option accepte une course résiduelle entre le contrôle du catalogue et l’insertion de la commande ; elle n’est pas production-ready. Elle ne doit pas être activée globalement en production, et ne dépend pas de `NODE_ENV`. Le verrou `NODE_ENV=production` reste intact.
+
 ```bash
 # Arrêter sans effacer les commandes
 docker compose -f compose.delifast.yaml down

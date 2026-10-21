@@ -31,6 +31,12 @@ export const config = {
   rateLimitWindowMs: boundedInteger("RATE_LIMIT_WINDOW_MS", 60_000),
   rateLimitMax: boundedInteger("RATE_LIMIT_MAX", 100),
   demoPayments: process.env.DELIFAST_DEMO_PAYMENTS === "true",
+  // Explicit local-only acknowledgement of the residual check-to-insert race.
+  // Read at each guard; removing consent blocks subsequent submissions/inserts.
+  // Never infer permission from NODE_ENV, demo payments, or MongoDB topology.
+  isNonatomicCheckoutAllowed() {
+    return process.env.DELIFAST_ALLOW_NONATOMIC_CHECKOUT === "true";
+  },
   smsProvider: process.env.SMS_PROVIDER || "",
   orangeSmsEnabled: process.env.ORANGE_SMS_ENABLED === "true",
   orangeClientId: process.env.ORANGE_CLIENT_ID || "",

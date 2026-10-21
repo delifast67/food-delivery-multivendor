@@ -1,5 +1,7 @@
 # Devis et création de commande
 
+`DELIFAST_ALLOW_NONATOMIC_CHECKOUT` est fermé par défaut et n’accepte que la valeur exacte `true`. Tant que cette valeur n’est pas explicitement présente dans l’environnement runtime, toute soumission `placeOrder` est refusée dès le début, y compris une reprise/retry, puis à nouveau avant insertion, avec le code `CHECKOUT_DISABLED` et un message sûr ne révélant ni configuration ni secrets. Les devis (`calculateCheckout`) et toutes les lectures d’ordres restent disponibles et inchangés. L’opt-in est réservé aux commandes synthétiques locales ; il ne rend pas le checkout atomique ni production-ready et ne doit jamais être activé en production.
+
 Le serveur reste l’unique source des prix : `calculateCheckout` et `placeOrder` relisent les restaurants, plats, options et zones de livraison. Le panier ne contient que les identifiants, quantités et choix ; aucun prix fourni par le client ne détermine le montant.
 
 ## Empêcher un prix modifié après le devis
@@ -29,6 +31,10 @@ La clé d’idempotence reste unique en base. Une clé déjà enregistrée retou
 Pour une ancienne tentative locale sans empreinte ou jeton, les clients actualisés envoient `expectedQuoteHash: "legacy-recovery-only"`. Une commande déjà présente est récupérée normalement ; sinon cette sentinelle est rejetée avant insertion et le client doit refaire confirmer le devis. Elle ne permet pas une nouvelle création sans devis.
 
 Les champs restent nullable dans le schéma pour lire les snapshots historiques et reprendre une commande déjà enregistrée. **L’omission n’autorise plus une nouvelle création**, y compris via un appel GraphQL historique direct. C’est une restriction comportementale volontaire : les consommateurs non migrés doivent obtenir un devis serveur signé, le faire confirmer, puis envoyer les deux champs. Aucune option de configuration, exception de test ou voie legacy n’autorise une nouvelle insertion sans jeton. Les empreintes d’idempotence des commandes historiques ne changent pas.
+
+## Activation locale explicite et limites
+
+`DELIFAST_ALLOW_NONATOMIC_CHECKOUT` vaut `false` par défaut et n’est autorisé que pour la valeur exacte `true`. Il ne se déduit pas de `NODE_ENV` : le verrou `NODE_ENV=production` reste inchangé. Une recette locale de commandes fictives peut l’activer explicitement, en acceptant la course résiduelle entre le contrôle final et l’insertion ; cette voie n’est pas production-ready. Ne jamais l’activer globalement en production.
 
 ## Garanties et limites
 

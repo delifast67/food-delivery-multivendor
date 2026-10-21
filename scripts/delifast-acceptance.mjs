@@ -48,7 +48,7 @@ const systemBinary = process.env.MONGOMS_SYSTEM_BINARY;
 const env = {
   PATH: process.env.PATH, HOME: process.env.HOME, LANG: 'C.UTF-8',
   NODE_ENV: 'test', NEXT_TELEMETRY_DISABLED: '1', CI: '1',
-  MONGOMS_RUNTIME_DOWNLOAD: 'false',
+  MONGOMS_RUNTIME_DOWNLOAD: 'false', DELIFAST_ALLOW_NONATOMIC_CHECKOUT: 'true',
   ...(systemBinary ? { MONGOMS_SYSTEM_BINARY: systemBinary } : {}),
 };
 for (const key of Object.keys(process.env)) delete process.env[key];

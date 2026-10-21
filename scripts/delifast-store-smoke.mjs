@@ -79,6 +79,7 @@ try {
     HOST: "127.0.0.1",
     PORT: String(port),
     DELIFAST_DEMO_PAYMENTS: "true",
+    DELIFAST_ALLOW_NONATOMIC_CHECKOUT: "true",
     PAYMENT_PROVIDER: "",
     PAYDUNYA_ENABLED: "false",
     PAYDUNYA_LIVE_AUTHORIZED: "false",

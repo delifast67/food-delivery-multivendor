@@ -89,6 +89,9 @@ jobs:
           npm run migrate --prefix delifast-api
           npm run seed --prefix delifast-api
       - name: Démarrer l’API et le web
+        env:
+          # Explicit opt-in for this synthetic HTTP server; lock tests override their own environment.
+          DELIFAST_ALLOW_NONATOMIC_CHECKOUT: 'true'
         run: |
           npm start --prefix delifast-api > /tmp/delifast-api.log 2>&1 &
           npm start --prefix enatega-multivendor-web -- --port 3000 > /tmp/delifast-web.log 2>&1 &

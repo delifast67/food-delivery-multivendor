@@ -42,7 +42,7 @@ const detailQuery = `query($id:ID!){customerOrder(id:$id){${fields}}}`
 try {
   mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'delifast_customer_orders_smoke' } })
   dbClient = await MongoClient.connect(mongo.getUri()); const db = dbClient.db()
-  const env = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'development', MONGODB_URI: mongo.getUri(), HOST: '127.0.0.1', PORT: String(port), DELIFAST_DEMO_PAYMENTS: 'false', PAYMENT_PROVIDER: '', PAYDUNYA_ENABLED: 'false', PAYDUNYA_LIVE_AUTHORIZED: 'false', CINETPAY_ENABLED: 'false', CINETPAY_LIVE_AUTHORIZED: 'false', SMS_PROVIDER: 'disabled', ORANGE_SMS_ENABLED: 'false', RATE_LIMIT_MAX: '1000' }
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'development', MONGODB_URI: mongo.getUri(), HOST: '127.0.0.1', PORT: String(port), DELIFAST_DEMO_PAYMENTS: 'false', DELIFAST_ALLOW_NONATOMIC_CHECKOUT: 'true', PAYMENT_PROVIDER: '', PAYDUNYA_ENABLED: 'false', PAYDUNYA_LIVE_AUTHORIZED: 'false', CINETPAY_ENABLED: 'false', CINETPAY_LIVE_AUTHORIZED: 'false', SMS_PROVIDER: 'disabled', ORANGE_SMS_ENABLED: 'false', RATE_LIMIT_MAX: '1000' }
   await startChild('dist/migrations/index.js', env)
   await db.collection('customers').insertMany([{ id: 'customer-a', phone: '+22670000001' }, { id: 'customer-b', phone: '+22670000002' }])
   await seedSession(db, 'session-a', 'customer-a', tokenA, new Date(Date.now() + 3600000)); await seedSession(db, 'session-b', 'customer-b', tokenB, new Date(Date.now() + 3600000)); await seedSession(db, 'session-expired', 'customer-a', expired, new Date(Date.now() - 1000)); await seedSession(db, 'session-revoked', 'customer-a', revoked, new Date(Date.now() + 3600000), now)

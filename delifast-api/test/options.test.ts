@@ -1,3 +1,4 @@
+import "./local-checkout-helper.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import crypto from "node:crypto";

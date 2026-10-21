@@ -20,7 +20,7 @@ let mongo;
 let api;
 let log = '';
 function environment() {
-  return { ...process.env, NODE_ENV: 'development', MONGODB_URI: mongo.getUri('delifast_restart'), HOST: '127.0.0.1', PORT: String(port) };
+  return { ...process.env, NODE_ENV: 'development', DELIFAST_ALLOW_NONATOMIC_CHECKOUT: 'true', MONGODB_URI: mongo.getUri('delifast_restart'), HOST: '127.0.0.1', PORT: String(port) };
 }
 async function startMongo() {
   mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'delifast_restart', storageEngine: 'wiredTiger', dbPath } });

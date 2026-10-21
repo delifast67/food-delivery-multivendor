@@ -24,7 +24,7 @@ try {
   mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'delifast_checkout_freshness_smoke' } })
   connection = await MongoClient.connect(mongo.getUri())
   const db = connection.db()
-  const env = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'development', MONGODB_URI: mongo.getUri(), HOST: '127.0.0.1', PORT: String(port), DELIFAST_DEMO_PAYMENTS: 'false', PAYMENT_PROVIDER: '', PAYDUNYA_ENABLED: 'false', PAYDUNYA_LIVE_AUTHORIZED: 'false', CINETPAY_ENABLED: 'false', CINETPAY_LIVE_AUTHORIZED: 'false', SMS_PROVIDER: 'disabled', ORANGE_SMS_ENABLED: 'false', RATE_LIMIT_MAX: '1000' }
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'development', MONGODB_URI: mongo.getUri(), HOST: '127.0.0.1', PORT: String(port), DELIFAST_DEMO_PAYMENTS: 'false', DELIFAST_ALLOW_NONATOMIC_CHECKOUT: 'true', PAYMENT_PROVIDER: '', PAYDUNYA_ENABLED: 'false', PAYDUNYA_LIVE_AUTHORIZED: 'false', CINETPAY_ENABLED: 'false', CINETPAY_LIVE_AUTHORIZED: 'false', SMS_PROVIDER: 'disabled', ORANGE_SMS_ENABLED: 'false', RATE_LIMIT_MAX: '1000' }
   await db.collection('restaurants').insertOne({ id: 'r1', name: 'Restaurant fictif', description: 'Test local', open: true })
   await db.collection('menu_items').insertOne({ id: 'dish', restaurantId: 'r1', name: 'Plat fictif', description: 'Ne pas préparer', available: true, priceXof: 1000, optionGroups: [] })
   await db.collection('delivery_zones').insertOne({ id: 'zone', restaurantId: 'r1', name: 'Zone fictive', shape: 'CIRCLE', center: point, radiusMeters: 10000, enabled: true, feeXof: 500, minimumOrderXof: 0, estimatedMinutes: 45, priority: 0, demo: true, hours: [], version: 0 })

@@ -19,6 +19,8 @@ beforeAll(async () => {
   vi.stubEnv("PAYMENT_RECONCILIATION_PROVIDERS", "");
   vi.stubEnv("PAYDUNYA_ENABLED", "false");
   vi.stubEnv("ORANGE_SMS_ENABLED", "false");
+  vi.stubEnv("CINETPAY_ENABLED", "false");
+  vi.stubEnv("RATE_LIMIT_MAX", "1000");
   vi.stubEnv("SMS_PROVIDER", "");
   vi.stubEnv("DELIFAST_DEMO_PAYMENTS", "false");
   mongo = await MongoMemoryServer.create();
@@ -33,8 +35,12 @@ beforeAll(async () => {
     feeXof: 500, minimumOrderXof: 0, estimatedMinutes: 45, priority: 0, demo: true, hours: [], version: 0 });
   app = await (await import("../src/server.js")).createApp();
 }, 60000);
-beforeEach(async () => { await db.collection("orders").deleteMany({}); });
-afterEach(() => { vi.stubEnv("NODE_ENV", "test"); });
+beforeEach(async () => {
+  vi.stubEnv("NODE_ENV", "test");
+  vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", undefined);
+  await db.collection("orders").deleteMany({});
+});
+afterEach(() => { vi.restoreAllMocks(); vi.stubEnv("NODE_ENV", "test"); });
 afterAll(async () => {
   await (await import("../src/db.js")).closeDb();
   await mongo?.stop();
@@ -44,6 +50,7 @@ afterAll(async () => {
 describe("développement/test préservés, checkout applicatif toujours non atomique", () => {
   it.each(["development", "test"])("préserve création fictive et rejeu idempotent en %s", async mode => {
     vi.stubEnv("NODE_ENV", mode);
+    vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", "true");
     const quoted = await quoteInput(async (query, variables) => (await request(app).post("/graphql").send({ query, variables })).body, input);
     const first = (await call(quoted)).body;
     const replay = (await call(quoted)).body;
@@ -52,6 +59,77 @@ describe("développement/test préservés, checkout applicatif toujours non atom
     expect(first.data.placeOrder.paymentStatus).toBe("PENDING");
     expect(replay.data.placeOrder).toEqual(first.data.placeOrder);
     expect(await db.collection("orders").countDocuments()).toBe(1);
+    expect(await db.collection("payment_events").countDocuments()).toBe(0);
+  });
+});
+
+describe("API fermée sans consentement explicite au checkout non atomique", () => {
+  const blocked = [undefined, "false", "", "TRUE", "True", "1", " true", "true ", "yes"];
+  it.each(["development", "test", undefined].flatMap(mode => blocked.map(value => [mode, value])))
+    ("laisse consulter le devis mais bloque placeOrder en mode %s avec opt-in %s", async (mode, value) => {
+      vi.stubEnv("NODE_ENV", mode);
+      vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", value);
+      const quoted = await quoteInput(async (query, variables) => {
+        const response = (await request(app).post("/graphql").send({ query, variables })).body;
+        expect(response.errors).toBeUndefined();
+        expect(response.data.calculateCheckout.quoteHash).toMatch(/^[a-f0-9]{64}$/);
+        expect(response.data.calculateCheckout.quoteToken).toEqual(expect.any(String));
+        return response;
+      }, input);
+      const response = await call(quoted);
+      expect(response.status).toBe(200);
+      expect(response.body.data).toBeNull();
+      expect(response.body.errors).toHaveLength(1);
+      expect(response.body.errors[0]).toMatchObject({
+        message: "La création de commandes est désactivée. Le devis reste consultable.",
+        extensions: { code: "CHECKOUT_DISABLED" },
+      });
+      expect(JSON.stringify(response.body)).not.toMatch(/stacktrace|MONGODB|DELIFAST_ALLOW|insertOne/);
+      for (const name of ["orders", "payment_events", "stock_events", "audit_logs"])
+        expect(await db.collection(name).countDocuments()).toBe(0);
+    });
+
+  it("ne permet pas aux paramètres client de fournir le consentement serveur", async () => {
+    const quoted = await quoteInput(async (query, variables) => (await request(app).post("/graphql").send({ query, variables })).body, input);
+    const response = await call({ ...quoted, allowNonatomicCheckout: true });
+    expect(response.body.errors).toBeDefined();
+    expect(await db.collection("orders").countDocuments()).toBe(0);
+    expect((await call(quoted)).body.errors[0].extensions.code).toBe("CHECKOUT_DISABLED");
+  });
+
+  it("un refus ne réserve pas la clé : un opt-in explicite permet ensuite le parcours fictif", async () => {
+    const quoted = await quoteInput(async (query, variables) => (await request(app).post("/graphql").send({ query, variables })).body, input);
+    expect((await call(quoted)).body.errors[0].extensions.code).toBe("CHECKOUT_DISABLED");
+    vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", "true");
+    const first = (await call(quoted)).body;
+    expect(first.errors).toBeUndefined();
+    vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", "false");
+    expect((await call(quoted)).body.errors[0].extensions.code).toBe("CHECKOUT_DISABLED");
+    // Existing snapshots remain readable via the dedicated read endpoint.
+    const saved = first.data.placeOrder;
+    const read = (await request(app).post("/graphql").send({
+      query: "query($id:ID!,$t:String!){order(id:$id,accessToken:$t){id}}",
+      variables: { id: saved.id, t: saved.accessToken },
+    })).body;
+    expect(read.errors).toBeUndefined();
+    expect(read.data.order.id).toBe(saved.id);
+    vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", "true");
+    expect((await call(quoted)).body.data.placeOrder).toEqual(saved);
+    expect(await db.collection("orders").countDocuments()).toBe(1);
+    expect(await db.collection("payment_events").countDocuments()).toBe(0);
+  });
+
+  it("revérifie le consentement après les lectures finales, avant insertion", async () => {
+    vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", "true");
+    const quoted = await quoteInput(async (query, variables) => (await request(app).post("/graphql").send({ query, variables })).body, input);
+    const guard = await import("../src/checkout-guard.js");
+    const real = guard.assertCheckoutCurrent;
+    vi.spyOn(guard, "assertCheckoutCurrent").mockImplementationOnce(async (database, expected) => {
+      await real(database, expected);
+      vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", "false");
+    });
+    expect((await call(quoted)).body.errors[0].extensions.code).toBe("CHECKOUT_DISABLED");
+    expect(await db.collection("orders").countDocuments()).toBe(0);
     expect(await db.collection("payment_events").countDocuments()).toBe(0);
   });
 });

@@ -1,3 +1,4 @@
+import "./local-checkout-helper.js";
 import { beforeAll, afterAll, expect, it } from "vitest";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import request from "supertest";

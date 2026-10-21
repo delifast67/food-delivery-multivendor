@@ -34,7 +34,41 @@ describe("verrou de démarrage production existant, pas un détecteur de command
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("DELIFAST_DEMO_PAYMENTS", "true");
     vi.stubEnv("DELIFAST_LOCAL_MODE", "true");
+    vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", "true");
     vi.resetModules();
     await expect(import("../src/config.js")).rejects.toThrow("réservé au développement local");
+  });
+});
+
+describe("opt-in non atomique strict et indépendant du mode local", () => {
+  it.each(["development", "test", undefined])("reste fermé sans opt-in en NODE_ENV=%s", async mode => {
+    vi.stubEnv("NODE_ENV", mode);
+    vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", undefined);
+    vi.stubEnv("DELIFAST_DEMO_PAYMENTS", "true");
+    vi.stubEnv("DELIFAST_LOCAL_MODE", "true");
+    const { config } = await import("../src/config.js");
+    expect(config.isNonatomicCheckoutAllowed()).toBe(false);
+  });
+
+  it.each([undefined, "", "false", "FALSE", "0", "1", "yes", "TRUE", "True", " true", "true ", "tru", "null", "undefined"])("échoue fermé pour la valeur %s", async value => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", value);
+    const { config } = await import("../src/config.js");
+    expect(config.isNonatomicCheckoutAllowed()).toBe(false);
+    // Service-level guard precedes any database access, including recovery.
+    const { placeOrder } = await import("../src/orders.js");
+    const collection = vi.fn();
+    await expect(placeOrder({ collection } as any, {} as any, {} as any, "blocked-order-key"))
+      .rejects.toMatchObject({ extensions: { code: "CHECKOUT_DISABLED" } });
+    expect(collection).not.toHaveBeenCalled();
+  });
+
+  it.each(["development", "test", undefined])("n’autorise que true explicite en NODE_ENV=%s", async mode => {
+    vi.stubEnv("NODE_ENV", mode);
+    vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", "true");
+    const { config } = await import("../src/config.js");
+    expect(config.isNonatomicCheckoutAllowed()).toBe(true);
+    vi.stubEnv("DELIFAST_ALLOW_NONATOMIC_CHECKOUT", "false");
+    expect(config.isNonatomicCheckoutAllowed()).toBe(false);
   });
 });

@@ -87,6 +87,11 @@ function decodeCustomerCursor(cursor: string, customerId: string) {
   } catch { fail("INVALID_CURSOR", "Curseur invalide"); }
 }
 
+function assertLocalCheckoutEnabled() {
+  if (!config.isNonatomicCheckoutAllowed())
+    fail("CHECKOUT_DISABLED", "La création de commandes est désactivée. Le devis reste consultable.");
+}
+
 export async function placeOrder(
   db: Db,
   cart: Cart,
@@ -96,6 +101,8 @@ export async function placeOrder(
   expectedQuoteHash?: unknown,
   expectedQuoteToken?: unknown,
 ) {
+  // Applies to every submission, including recovery: no implicit local/dev bypass.
+  assertLocalCheckoutEnabled();
   if (
     typeof idempotencyKey !== "string" ||
     idempotencyKey.length < 8 ||
@@ -178,6 +185,7 @@ export async function placeOrder(
     await assertCheckoutCurrent(db, guard);
     // Database reads may have crossed the expiry boundary. Still not an atomic commit fence.
     assertQuote(expectedQuoteToken, expectedQuoteHash, checkout.quoteHash);
+    assertLocalCheckoutEnabled();
     await orders.insertOne(order);
     return customerView(order, raw);
   } catch (error: any) {

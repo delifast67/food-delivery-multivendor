@@ -48,6 +48,8 @@ services:
       MONGODB_URI: mongodb://mongo:27017/delifast
       # Désactivé par défaut. Démonstration fictive, aucun encaissement réel.
       DELIFAST_DEMO_PAYMENTS: ${DELIFAST_DEMO_PAYMENTS:-false}
+      # Local demo opt-in only; the API rejects the residual non-atomic checkout race by default.
+      DELIFAST_ALLOW_NONATOMIC_CHECKOUT: ${DELIFAST_ALLOW_NONATOMIC_CHECKOUT:-false}
       # Serveur uniquement ; ne pas activer avant autorisation du premier SMS.
       SMS_PROVIDER: ${SMS_PROVIDER:-}
       ORANGE_SMS_ENABLED: ${ORANGE_SMS_ENABLED:-false}
