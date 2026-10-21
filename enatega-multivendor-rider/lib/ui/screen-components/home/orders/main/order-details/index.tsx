@@ -54,7 +54,6 @@ import { ConfigurationContext } from "@/lib/context/global/configuration.context
 // UI Components
 import {
   RIDER_ORDERS,
-  SINGLE_VENDOR_RIDER_ORDERS,
 } from "@/lib/apollo/queries";
 import { useRiderMode } from "@/lib/context/global/rider-mode.context";
 import { useApptheme } from "@/lib/context/global/theme.context";
@@ -70,7 +69,6 @@ import WelldoneComponent from "@/lib/ui/useable-components/well-done";
 import { CustomMapStyles } from "@/lib/utils/constants/map";
 import { map_styles } from "@/lib/utils/constants/order-details";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { RIDER_SERVER_MODES } from "@/lib/mode/rider-mode";
 import {
   canDeliverOrderForMode,
   canPickupOrderForMode,
@@ -111,12 +109,9 @@ export default function OrderDetailScreen() {
 
   // Hooks
   const { appTheme, currentTheme } = useApptheme();
-  const { t } = useTranslation();
   const { mode } = useRiderMode();
-  const riderOrdersQuery =
-    mode === RIDER_SERVER_MODES.SINGLE
-      ? SINGLE_VENDOR_RIDER_ORDERS
-      : RIDER_ORDERS;
+  const riderOrdersQuery = RIDER_ORDERS;
+  const { t } = useTranslation();
   const {
     restaurantAddressPin,
     deliveryAddressPin,
@@ -268,7 +263,7 @@ export default function OrderDetailScreen() {
   const handleRouteError = useCallback(
     (label: string) => (error: unknown) => {
       if (__DEV__) {
-        console.log(`${label} route error:`, error);
+        console.log(`${label} route calculation failed`);
       }
 
       if (String(error).includes("NOT_FOUND")) {
@@ -351,7 +346,7 @@ export default function OrderDetailScreen() {
       }
     } catch (error) {
       // Added global error handling
-      console.log("Error opening maps:", error);
+      console.log("Error opening maps");
       Alert.alert(
         t("Navigation Error"),
         t("An error occurred when trying to open maps"),
@@ -371,7 +366,7 @@ export default function OrderDetailScreen() {
   // instead of re-animating on a timer to often-identical positions
   useEffect(() => {
     if (!locationPin?.location || !isValidCoordinate(locationPin.location)) {
-      console.warn("Location pin is invalid or missing:", locationPin);
+      console.warn("Location pin is invalid or missing");
       return;
     }
 
@@ -767,9 +762,11 @@ export default function OrderDetailScreen() {
               {/* Divider */}
               <View className="flex-1 h-[1px] mb-4" />
 
-              <AccordionItem title={t("Order Details")}>
-                <ItemDetails orderData={order} tab={tab} />
-              </AccordionItem>
+              {order && (
+                <AccordionItem title={t("Order Details")}>
+                  <ItemDetails orderData={order} tab={tab ?? ""} />
+                </AccordionItem>
+              )}
 
               {tab === "processing" && (
                 <TouchableOpacity

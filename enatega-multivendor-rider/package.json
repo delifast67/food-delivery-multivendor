@@ -1,6 +1,6 @@
 {
   "name": "mobile-architecture",
-  "main": "expo-router/entry",
+  "main": "index.js",
   "version": "1.0.0",
   "overrides": {
     "nativewind": {
@@ -13,10 +13,11 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test": "jest --watchAll",
-    "check:single-vendor-schema": "node ./scripts/check-single-vendor-schema.js",
+    "test": "node --test src/delifast/*.test.js ../scripts/delifast-rider-entry.test.mjs",
     "lint": "npx eslint && prettier --write .",
-    "upload-sourcemaps": "npx sentry-expo upload-sourcemaps"
+    "upload-sourcemaps": "npx sentry-expo upload-sourcemaps",
+    "test:delifast": "node --test src/delifast/*.test.js",
+    "export:delifast": "expo export --platform android --platform ios --output-dir dist/delifast"
   },
   "jest": {
     "preset": "jest-expo"
@@ -112,6 +113,7 @@
     "jest": "^29.2.1",
     "jest-expo": "~53.0.7",
     "prettier": "3.4.2",
+    "react-test-renderer": "19.0.0",
     "ts-node": "^10.9.2",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.20.0"

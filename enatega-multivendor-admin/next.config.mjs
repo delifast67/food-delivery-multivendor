@@ -1,8 +1,20 @@
 import createNextIntlPlugin from 'next-intl/plugin';
 
 const withNextIntl = createNextIntlPlugin();
+const local = process.env.DELIFAST_LOCAL_MODE === 'true';
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  env: {
+    NEXT_PUBLIC_DELIFAST_LOCAL_MODE: local ? 'true' : 'false',
+  },
+  ...(local
+    ? {
+        pageExtensions: ['local.tsx', 'local.ts'],
+        typescript: { tsconfigPath: 'tsconfig.delifast.json' },
+        eslint: { dirs: ['app/delifast', 'lib/delifast'] },
+        experimental: { cpus: 2 },
+      }
+    : {}),
   images: {
     dangerouslyAllowSVG: false,
     remotePatterns: [
@@ -57,9 +69,9 @@ const nextConfig = {
       {
         protocol: 'https',
         hostname: 'assets.enatega.com',
-      }
+      },
     ], // Add placehold.co as an allowed domain
   },
 };
 
-export default withNextIntl(nextConfig);
+export default local ? nextConfig : withNextIntl(nextConfig);

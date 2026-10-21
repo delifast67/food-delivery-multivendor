@@ -17,7 +17,6 @@ import useUser from "@/lib/hooks/useUser";
 import { CartItem } from "@/lib/context/User/User.context";
 import { useConfig } from "@/lib/context/configuration/configuration.context";
 import { formatEtaWindow } from "@/lib/utils/methods/order-eta";
-import { useAppMode } from "@/lib/mode";
 
 const OrderCard: FC<IOrderCardProps> = ({
   order,
@@ -29,7 +28,6 @@ const OrderCard: FC<IOrderCardProps> = ({
 }) => {
   const t = useTranslations();
   const { CURRENCY_SYMBOL } = useConfig();
-  const { isSingleVendor } = useAppMode();
   const etaWindow = formatEtaWindow(order.eta);
   const activeStatusText = (() => {
     if (order.isPickedUp) return "Collection order";
@@ -56,7 +54,7 @@ const OrderCard: FC<IOrderCardProps> = ({
   const [pendingReorderItems, setPendingReorderItems] = useState<any[]>([]);
 
   const handleTrackOrder = (order: IOrder) => {
-    handleTrackOrderClicked?.(isSingleVendor ? order?.orderId : order?._id);
+    handleTrackOrderClicked?.(order?._id);
   };
 
   const { cart, setCart, transformCartWithFoodInfo, setCartRestaurant } =

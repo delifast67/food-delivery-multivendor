@@ -23,7 +23,6 @@ import { RIDER_EARNINGS_GRAPH } from "../apollo/queries/earnings.query";
 import {
   RIDER_ORDERS,
   RIDER_PROFILE,
-  SINGLE_VENDOR_RIDER_ORDERS,
 } from "../apollo/queries/rider.query";
 import UserContext from "../context/global/user.context";
 import { useRiderMode } from "../context/global/rider-mode.context";
@@ -35,17 +34,13 @@ interface RiderOrdersCacheData {
   riderOrders: IOrder[];
 }
 
-const useDetails = (orderData: IOrder) => {
+const useDetails = (orderData: IOrder | undefined) => {
   // Hooks
   const { t } = useTranslation();
   const router = useRouter();
-  const { mode } = useRiderMode();
-  const riderOrdersQuery =
-    mode === RIDER_SERVER_MODES.SINGLE
-      ? SINGLE_VENDOR_RIDER_ORDERS
-      : RIDER_ORDERS;
+  const riderOrdersQuery = RIDER_ORDERS;
   const { assignedOrders, loadingAssigned, userId } = useContext(UserContext);
-  const [order, setOrder] = useState<IOrder>(orderData);
+  const [order, setOrder] = useState<IOrder | undefined>(orderData);
 
   useEffect(() => {
     if (!loadingAssigned && orderData?._id) {

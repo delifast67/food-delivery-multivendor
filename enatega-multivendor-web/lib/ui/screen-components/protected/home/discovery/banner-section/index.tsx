@@ -8,7 +8,6 @@ import DiscoveryBannerSkeleton from "@/lib/ui/useable-components/custom-skeleton
 import { IGetBannersResponse } from "@/lib/utils/interfaces";
 // banner card
 import OrbitBannerCarousel from "./banner-card";
-import { useAppMode } from "@/lib/mode";
 
 export default function DiscoveryBannerSection({
   query = GET_BANNERS,
@@ -21,7 +20,6 @@ export default function DiscoveryBannerSection({
   loading?: boolean;
   error?: unknown;
 }) {
-  const { isSingleVendor } = useAppMode();
   const {
     data,
     loading: queryLoading,
@@ -35,7 +33,7 @@ export default function DiscoveryBannerSection({
   const bannerItems = banners ?? data?.banners;
 
   if (loading) {
-    return <DiscoveryBannerSkeleton single={isSingleVendor} />;
+    return <DiscoveryBannerSkeleton single={false} />;
   }
   if (error) {
     return null;

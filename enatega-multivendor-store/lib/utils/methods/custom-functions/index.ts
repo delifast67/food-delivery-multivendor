@@ -28,12 +28,14 @@ const calulateRemainingTime = (order: IOrder) => {
   const expectedTime = [
     ORDER_STATUS_ENUM.ACCEPTED,
     ORDER_STATUS_ENUM.ASSIGNED,
-  ].includes(order?.orderStatus)
+  ].some((status) => status === order.orderStatus)
     ? order?.preparationTime
     : order?.completionTime;
   const expectedAt = parseTimestamp(expectedTime);
   if (!expectedAt) return 0;
-  const remainingTime = Math.floor((expectedAt.getTime() - Date.now()) / 1000 / 60);
+  const remainingTime = Math.floor(
+    (expectedAt.getTime() - Date.now()) / 1000 / 60,
+  );
   return remainingTime > 0 ? remainingTime : 0;
 };
 function calculateDaysAgo(targetDate: number) {

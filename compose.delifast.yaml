@@ -1,0 +1,88 @@
+name: delifast-local
+
+# Démonstration locale : paiement désactivé et Orange SMS inactif par défaut.
+# Activer Orange SMS peut envoyer des SMS réels : autorisation destinataire/coût requise.
+# Redis est provisionné pour les lots suivants, pas utilisé pour l'idempotence.
+services:
+  mongo:
+    image: mongo:7.0
+    command: ["mongod", "--bind_ip_all", "--replSet", "delifast-local"]
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - delifast-mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "try { rs.status() } catch (e) { if (e.code === 94) rs.initiate({_id:'delifast-local',members:[{_id:0,host:'mongo:27017'}]}); else throw e; } if (!db.hello().isWritablePrimary) quit(1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - delifast-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  init:
+    build: ./delifast-api
+    environment:
+      NODE_ENV: development
+      MONGODB_URI: mongodb://mongo:27017/delifast?replicaSet=delifast-local&directConnection=true
+    command: ["sh", "-c", "node dist/migrations/index.js && node dist/migrations/seed.js"]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: ./delifast-api
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: "4000"
+      MONGODB_URI: mongodb://mongo:27017/delifast?replicaSet=delifast-local&directConnection=true
+      # Désactivé par défaut. Démonstration fictive, aucun encaissement réel.
+      DELIFAST_DEMO_PAYMENTS: ${DELIFAST_DEMO_PAYMENTS:-false}
+      # Local demo opt-in only; the API rejects the residual non-atomic checkout race by default.
+      DELIFAST_ALLOW_NONATOMIC_CHECKOUT: ${DELIFAST_ALLOW_NONATOMIC_CHECKOUT:-false}
+      # Serveur uniquement ; ne pas activer avant autorisation du premier SMS.
+      SMS_PROVIDER: ${SMS_PROVIDER:-}
+      ORANGE_SMS_ENABLED: ${ORANGE_SMS_ENABLED:-false}
+      ORANGE_CLIENT_ID: ${ORANGE_CLIENT_ID:-}
+      ORANGE_CLIENT_SECRET: ${ORANGE_CLIENT_SECRET:-}
+      ORANGE_SMS_SENDER_ADDRESS: ${ORANGE_SMS_SENDER_ADDRESS:-tel:+2260000}
+      ORANGE_SMS_SENDER_NAME: ${ORANGE_SMS_SENDER_NAME:-}
+      CUSTOMER_OTP_HASH_KEY: ${CUSTOMER_OTP_HASH_KEY:-}
+      ORANGE_SMS_TIMEOUT_MS: ${ORANGE_SMS_TIMEOUT_MS:-8000}
+      ORANGE_SMS_MAX_RESPONSE_BYTES: ${ORANGE_SMS_MAX_RESPONSE_BYTES:-32768}
+      CUSTOMER_OTP_IP_MAX: ${CUSTOMER_OTP_IP_MAX:-5}
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  web:
+    build: ./enatega-multivendor-web
+    environment:
+      NODE_ENV: production
+      DELIFAST_API_URL: http://api:4000/graphql
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  delifast-mongo:
+  delifast-redis:

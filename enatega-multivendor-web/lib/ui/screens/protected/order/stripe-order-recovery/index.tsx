@@ -4,7 +4,6 @@ import useUser from "@/lib/hooks/useUser";
 import { onUseLocalStorage } from "@/lib/utils/methods/local-storage";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
-import { useAppMode } from "@/lib/mode";
 
 const COUPON_STORAGE_KEY = "applied_coupon";
 const COUPON_TEXT_STORAGE_KEY = "coupon_text";
@@ -17,7 +16,6 @@ export default function StripeOrderRecovery() {
   const router = useRouter();
   const pathname = usePathname();
   const { clearCart, orders } = useUser();
-  const { isSingleVendor } = useAppMode();
   const isRedirectingRef = useRef(false);
 
   useEffect(() => {
@@ -35,9 +33,7 @@ export default function StripeOrderRecovery() {
     );
 
     if (!matchingOrder?._id) return;
-    const trackingReference = isSingleVendor
-      ? matchingOrder.orderId
-      : matchingOrder._id;
+    const trackingReference = matchingOrder._id;
     if (isTrackingPage && pathname.includes(trackingReference)) {
       onUseLocalStorage("delete", PENDING_STRIPE_ORDER_ID_KEY);
       onUseLocalStorage("delete", PENDING_STRIPE_STARTED_AT_KEY);
@@ -58,7 +54,7 @@ export default function StripeOrderRecovery() {
     };
 
     void finalizeStripeOrder();
-  }, [clearCart, isSingleVendor, orders, pathname, router]);
+  }, [clearCart, orders, pathname, router]);
 
   return null;
 }

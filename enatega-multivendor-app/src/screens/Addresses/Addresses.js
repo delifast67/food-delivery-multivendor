@@ -213,11 +213,11 @@ function Addresses() {
 
   const confirmSingleDelete = async () => {
     await mutate({ variables: { id: selectedAddressId._id } })
-      .then((response) => {
-        console.log('Mutation success:', response)
+      .then(() => {
+        console.log('Address deletion completed')
       })
-      .catch((error) => {
-        console.log('Mutation error:', error)
+      .catch(() => {
+        console.warn('Address deletion failed')
       })
     setSelectedAddressId(null)
     setDeleteModalVisible(false)

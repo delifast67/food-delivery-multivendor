@@ -1,7 +1,7 @@
 # Multivendor visual foundation
 
 This module is the semantic visual layer for the multivendor customer app. It
-does not replace or mutate the legacy theme object, so single-vendor screens
+does not replace or mutate the legacy theme object, so multivendor screens
 remain unchanged until they explicitly adopt a shared primitive.
 
 ## Layout rules
@@ -16,7 +16,7 @@ remain unchanged until they explicitly adopt a shared primitive.
 ## Compact horizontal rails
 
 Category, cuisine, shop-type, and other small image tiles follow the shared
-single-vendor proportions:
+multivendor proportions:
 
 - `tokens.sizes.compactTile` for an 80 × 80 image tile.
 - `tokens.radii.tile` for the 12-point image radius.
@@ -30,7 +30,7 @@ dimensions appropriate to their content.
 
 ## Discovery section rhythm
 
-Discovery follows the same vertical relationships as the single-vendor home:
+Discovery follows the same vertical relationships as the multivendor home:
 
 - `discoverySpacing` in `tokens.js` holds every value below; use it instead of literals.
 - 16 points between the navigation header and a rendered banner, 4 points after it.

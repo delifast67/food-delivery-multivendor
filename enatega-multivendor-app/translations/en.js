@@ -691,7 +691,6 @@ export const en = {
   oauthPasswordChangeMessage: 'Your password is managed by {{provider}}. Change it from your {{provider}} account.',
   verification_code_msg: 'We will send a verification code to this number.',
   multiVendor: 'Multi Vendor',
-  singleVendor: 'Single Vendor',
   applePay: 'Apple Pay',
   googlePay: 'Google Pay',
   payUsingApplePay: 'Pay using Apple Pay',

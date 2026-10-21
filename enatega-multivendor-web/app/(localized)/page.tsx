@@ -1,5 +1,5 @@
-import ModeHome from "@/lib/ui/screens/unprotected/ModeHome";
+import { redirect } from "next/navigation";
 
 export default function RootPage() {
-  return <ModeHome />;
+  redirect("/delifast");
 }

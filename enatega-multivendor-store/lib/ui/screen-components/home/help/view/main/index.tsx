@@ -73,7 +73,7 @@ export default function HelpMain() {
   });
 
   const renderFaqItem = ({ item }: { item: (typeof FAQs)[number] }) => (
-    <HelpAccordian heading={t(item.heading)}>
+    <HelpAccordian heading={t(item.heading)} isLast={false}>
       <Text style={{ color: appTheme.fontSecondColor }}>
         {t(item.description)}
       </Text>

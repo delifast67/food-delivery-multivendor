@@ -269,8 +269,8 @@ export default function ChatMain() {
         renderMessageImage={renderMessageImage}
         renderChatFooter={renderChatFooter}
         renderSend={renderSend}
-        scrollToBottom
         scrollToBottomComponent={scrollToBottomComponent}
+        isScrollToBottomEnabled
         renderAvatar={null}
         renderUsernameOnMessage
         inverted={true}
@@ -294,7 +294,7 @@ export default function ChatMain() {
           backgroundColor: appTheme.screenBackground,
           paddingBottom: 12,
         }}
-        listViewProps={{
+        invertibleScrollViewProps={{
           keyboardDismissMode:
             Platform.OS === "ios" ? "interactive" : "on-drag",
           maintainVisibleContentPosition: {

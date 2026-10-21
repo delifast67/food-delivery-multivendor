@@ -1,0 +1,51 @@
+#!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import assert from "node:assert/strict";
+const require = createRequire(
+  new URL("../delifast-api/package.json", import.meta.url),
+);
+const { buildSchema, parse, validate, Kind } = require("graphql");
+const {
+  documents,
+} = require("../enatega-multivendor-store/src/delifast/api.js");
+const schema = buildSchema(
+  readFileSync(
+    new URL("../delifast-api/schema/v1.graphql", import.meta.url),
+    "utf8",
+  ),
+);
+assert.deepEqual(Object.keys(documents).sort(), [
+  "createStaffSupportTicket",
+  "me",
+  "operationsOrders",
+  "staffLogin",
+  "staffLogout",
+  "staffSupportTicket",
+  "staffSupportTickets",
+  "transitionOrder",
+]);
+for (const [name, document] of Object.entries(documents)) {
+  const ast = parse(document);
+  assert.deepEqual(
+    validate(schema, ast).map((error) => error.message),
+    [],
+    name,
+  );
+  const operations = ast.definitions.filter(
+    (item) => item.kind === Kind.OPERATION_DEFINITION,
+  );
+  assert.equal(operations.length, 1);
+  assert.deepEqual(
+    operations[0].selectionSet.selections.map((item) => item.name.value),
+    [name],
+  );
+  assert.doesNotMatch(
+    document,
+    /accessToken|simulateDemoPayment|assignRider|startPayment|refreshPayment/,
+  );
+  console.log(`OK — restaurant ${name} conforme au schéma Delifast`);
+}
+console.log(
+  "SUCCÈS — 8 documents restaurant, sans jeton client ni mutation paiement/dispatch.",
+);

@@ -121,7 +121,6 @@ function createApolloClient(
   const environment = getModeEnvironment(mode);
 
   // const { SERVER_URL, WS_SERVER_URL } = getEnv(ENV);
-  const SERVER_URL = environment.graphqlUrl;
   const WS_SERVER_URL = environment.websocketUrl;
 
   initializeNonce(mode);

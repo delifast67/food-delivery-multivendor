@@ -15,7 +15,9 @@
     "prettier": "prettier --write .",
     "prepare": "husky",
     "cy:open": "cypress open",
-    "cy:run": "cypress run"
+    "cy:run": "cypress run",
+    "test:delifast": "node --test tests/delifast.test.mjs tests/admin-orders.test.mjs tests/admin-support.test.mjs tests/admin-pagination.test.mjs tests/admin-restaurants.test.mjs tests/admin-riders.test.mjs",
+    "test:admin-multivendor": "node --test tests/admin-multivendor-audit.test.mjs"
   },
   "dependencies": {
     "@apollo/client": "^3.11.8",

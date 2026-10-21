@@ -4,16 +4,8 @@ import { DirectionHandler } from "@/lib/ui/layouts/global/rtl/DirectionHandler";
 // import InstallPWA from "@/lib/ui/pwa/InstallPWA";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
-import { Inter } from "next/font/google";
-import Script from "next/script";
 import "@fontsource/barlow-condensed/600.css";
 import "@fontsource/cormorant-garamond/500-italic.css";
-
-const interfaceFont = Inter({
-  subsets: ["latin"],
-  variable: "--font-interface",
-  display: "swap",
-});
 
 export const metadata = {
   title: "Enatega Multivendor",
@@ -56,22 +48,6 @@ export default async function RootLayout({
             `,
           }}
         />
-        <Script
-          src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"
-          strategy="beforeInteractive"
-        />
-
-        {/* Microsoft Clarity */}
-        <Script id="microsoft-clarity" strategy="afterInteractive">
-          {`
-            (function(c,l,a,r,i,t,y){
-        c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
-        t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
-        y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
-    })(window, document, "clarity", "script", "tjqw9wn955");
-          `}
-        </Script>
-
         <link rel="manifest" href="/manifest.json" />
         <meta name="theme-color" content="#75D04B" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -87,7 +63,7 @@ export default async function RootLayout({
         {/* Add more media queries for other device sizes if needed */}
       </head>
       <body
-        className={`${interfaceFont.variable} ${dir === "rtl" ? "rtl" : ""}`}
+        className={`${dir === "rtl" ? "rtl" : ""}`}
         suppressHydrationWarning
       >
         <template

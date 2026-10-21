@@ -1,7 +1,6 @@
 "use client";
 import CustomButton from "@/lib/ui/useable-components/button";
 import TextComponent from "@/lib/ui/useable-components/text-field";
-import VendorModeToggle from "@/lib/ui/useable-components/vendor-mode-toggle";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import React from "react";
@@ -24,7 +23,6 @@ export default function ProfileHeader() {
         />
       </div>
       <div className="flex w-full justify-center">
-        <VendorModeToggle compact />
       </div>
     </div>
   );

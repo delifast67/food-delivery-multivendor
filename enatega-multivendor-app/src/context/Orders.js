@@ -5,13 +5,7 @@ import gql from 'graphql-tag'
 import { getUsersActiveOrders, getUsersPastOrders } from '../apollo/queries'
 import { orderStatusChanged } from '../apollo/subscriptions'
 import UserContext from './User'
-import {
-  GET_USERS_ACTIVE_ORDERS,
-  GET_USERS_PAST_ORDERS
-} from '../singlevendor/apollo/queries'
-import { orderStatusChanged as singleOrderStatusChanged } from '../singlevendor/apollo/subscriptions'
 import { useAppMode } from '../mode/AppModeContext'
-import { APP_MODES } from '../mode/constants'
 import { recordOrderOrigin } from '../mode/orderOrigin'
 
 const ACTIVE_ORDERS = gql`
@@ -22,9 +16,6 @@ const PAST_ORDERS = gql`
 `
 const SUBSCRIPTION_ORDERS = gql`
   ${orderStatusChanged}
-`
-const SINGLE_SUBSCRIPTION_ORDERS = gql`
-  ${singleOrderStatusChanged}
 `
 
 // Page-based pagination, matching the customer web app (offset stays 0, page
@@ -57,10 +48,8 @@ const mergeOrderUpdates = (orders = [], updates = []) => {
 export const OrdersProvider = ({ children, onOrderDelivered }) => {
   const { profile } = useContext(UserContext)
   const { mode } = useAppMode()
-  const isSingleVendor = mode === APP_MODES.SINGLE
   const [activePage, setActivePage] = useState(1)
   const [pastPage, setPastPage] = useState(1)
-  const [singleVendorLiveOrders, setSingleVendorLiveOrders] = useState({})
   const activeOrdersRef = useRef([])
   const backgroundOrderIdsRef = useRef(new Set())
 
@@ -75,7 +64,7 @@ export const OrdersProvider = ({ children, onOrderDelivered }) => {
     networkStatus: networkStatusActive,
     fetchMore: fetchMoreActive,
     refetch: refetchActive
-  } = useQuery(isSingleVendor ? GET_USERS_ACTIVE_ORDERS : ACTIVE_ORDERS, {
+  } = useQuery(ACTIVE_ORDERS, {
     variables: { page: 1, limit: PAGE_LIMIT, offset: 0 },
     fetchPolicy: 'network-only',
     notifyOnNetworkStatusChange: true,
@@ -90,7 +79,7 @@ export const OrdersProvider = ({ children, onOrderDelivered }) => {
     networkStatus: networkStatusPast,
     fetchMore: fetchMorePast,
     refetch: refetchPast
-  } = useQuery(isSingleVendor ? GET_USERS_PAST_ORDERS : PAST_ORDERS, {
+  } = useQuery(PAST_ORDERS, {
     variables: { page: 1, limit: PAGE_LIMIT, offset: 0 },
     fetchPolicy: 'network-only',
     notifyOnNetworkStatusChange: true,
@@ -98,10 +87,7 @@ export const OrdersProvider = ({ children, onOrderDelivered }) => {
     onError
   })
 
-  const liveOrderUpdates = useMemo(
-    () => isSingleVendor ? Object.values(singleVendorLiveOrders) : [],
-    [isSingleVendor, singleVendorLiveOrders]
-  )
+  const liveOrderUpdates = []
   const activeOrders = useMemo(() => {
     const merged = mergeOrderUpdates(
       dataActive?.getUsersActiveOrders ?? [],
@@ -132,7 +118,7 @@ export const OrdersProvider = ({ children, onOrderDelivered }) => {
   // then reconcile them from the network on foreground and surface the same
   // review prompt the live subscription would have shown.
   useEffect(() => {
-    if (isSingleVendor || !profile) return undefined
+    if (!profile) return undefined
 
     let appState = AppState.currentState
     let isMounted = true
@@ -176,11 +162,8 @@ export const OrdersProvider = ({ children, onOrderDelivered }) => {
       isMounted = false
       subscription.remove()
     }
-  }, [isSingleVendor, onOrderDelivered, profile, refetchActive, refetchPast])
+  }, [onOrderDelivered, profile, refetchActive, refetchPast])
 
-  useEffect(() => {
-    setSingleVendorLiveOrders({})
-  }, [mode, profile?._id])
 
   useEffect(() => {
     orders.forEach(order => {
@@ -188,26 +171,16 @@ export const OrdersProvider = ({ children, onOrderDelivered }) => {
     })
   }, [mode, orders])
 
-  // Apply single-vendor payloads directly so cards and order history move in
-  // the same render as the WebSocket event, without polling or refetching.
   useSubscription(
-    isSingleVendor ? SINGLE_SUBSCRIPTION_ORDERS : SUBSCRIPTION_ORDERS,
+    SUBSCRIPTION_ORDERS,
     {
       variables: { userId: profile?._id },
       skip: !profile,
       onData: ({ data }) => {
         const payload = data?.data?.orderStatusChanged
-        const order = isSingleVendor ? payload?.rawOrder : payload?.order
+        const order = payload?.order
         if (order) recordOrderOrigin(order, mode).catch(() => {})
-        if (isSingleVendor && order?._id) {
-          setSingleVendorLiveOrders(current => ({
-            ...current,
-            [String(order._id)]: {
-              ...(current[String(order._id)] || {}),
-              ...order
-            }
-          }))
-        } else if (order) {
+        if (order) {
           refetchActive?.()
           refetchPast?.()
         }

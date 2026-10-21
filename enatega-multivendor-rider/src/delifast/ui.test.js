@@ -1,0 +1,456 @@
+"use strict";
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const Module = require("node:module");
+const React = require("react");
+const renderer = require("react-test-renderer");
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+const alerts = [];
+const native = Object.fromEntries(
+  [
+    "SafeAreaView",
+    "ScrollView",
+    "View",
+    "Text",
+    "TextInput",
+    "Button",
+    "ActivityIndicator",
+    "TouchableOpacity",
+  ].map((name) => [name, name]),
+);
+native.StyleSheet = { create: (value) => value };
+native.Alert = { alert: (...args) => alerts.push(args) };
+const originalLoad = Module._load;
+Module._load = function (request, parent, isMain) {
+  if (request === "react-native") return native;
+  if (request === "expo-secure-store") return {};
+  if (request === "expo-font") return { loadAsync: async () => {} };
+  if (request === "@expo/vector-icons/Ionicons") return "Ionicons";
+  if (request === "expo-network")
+    return {
+      getNetworkStateAsync: async () => ({}),
+      addNetworkStateListener: () => ({ remove() {} }),
+    };
+  return originalLoad.call(this, request, parent, isMain);
+};
+require.extensions[".ttf"] = () => {};
+const App = require("./App");
+Module._load = originalLoad;
+const user = { id: "rider-1", name: "Awa", role: "RIDER" };
+const order = {
+  id: "m-1",
+  riderId: "rider-1",
+  restaurantId: "rest-7",
+  status: "PICKED_UP",
+  paymentStatus: "PAID",
+  deliveryAddress: { recipientName: "Client", city: "Ouaga" },
+  checkout: {
+    total: 1750,
+    currency: "XOF",
+    items: [{ name: "Riz", quantity: 1, selectedOptions: [{ name: "Grand" }] }],
+  },
+  history: [{ status: "READY", at: "hier", actorRole: "ADMIN" }],
+};
+function controller(overrides = {}) {
+  let state = {
+    user,
+    orders: [order],
+    busy: false,
+    restoring: false,
+    error: null,
+    notice: null,
+    locked: false,
+  };
+  const listeners = new Set();
+  return {
+    getState: () => state,
+    subscribe: (fn) => (listeners.add(fn), () => listeners.delete(fn)),
+    restore: async () => {},
+    refresh: async () => {},
+    transition: async () => {},
+    logout: async () => {
+      state = {
+        user: null,
+        orders: [],
+        busy: false,
+        restoring: false,
+        error: null,
+        notice: null,
+        locked: false,
+      };
+      listeners.forEach((fn) => fn(state));
+    },
+    login: async () => {},
+    ...overrides,
+  };
+}
+async function mount(c) {
+  let tree;
+  await renderer.act(async () => {
+    tree = renderer.create(React.createElement(App, { controller: c }));
+  });
+  return tree;
+}
+const text = (node) =>
+  typeof node === "string" ? node : node?.children?.map(text).join(" ") || "";
+const content = (tree) => text(tree.toJSON());
+function button(tree, title) {
+  return tree.root
+    .findAllByType("TouchableOpacity")
+    .find(
+      (item) =>
+        item.props.title === title || item.props.accessibilityLabel === title,
+    );
+}
+function navigateSupport(tree) {
+  const tab = tree.root
+    .findAllByType("TouchableOpacity")
+    .find((item) => item.props.accessibilityLabel === "Assistance");
+  return renderer.act(async () => tab.props.onPress());
+}
+
+test("affiche connexion et efface le mot de passe après tentative", async () => {
+  const c = controller({
+    getState: () => ({
+      user: null,
+      orders: [],
+      busy: false,
+      restoring: false,
+      error: null,
+      notice: null,
+      locked: false,
+    }),
+    login: async () => {
+      throw new Error("refus");
+    },
+  });
+  const tree = await mount(c);
+  const inputs = tree.root.findAllByType("TextInput");
+  await renderer.act(async () => {
+    inputs[1].props.onChangeText("secret");
+    await button(tree, "Se connecter").props.onPress();
+  });
+  assert.equal(tree.root.findAllByType("TextInput")[1].props.value, "");
+  assert.match(content(tree), /refus/);
+});
+test("détail expose options, adresse, total serveur et restaurant sans adresse inventée", async () => {
+  const tree = await mount(controller());
+  await renderer.act(async () =>
+    button(tree, "Voir le détail").props.onPress(),
+  );
+  const view = content(tree);
+  assert.match(view, /Restaurant : rest-7/);
+  assert.match(view, /Total serveur : 1 750 XOF|Total serveur : 1 750 XOF/);
+  assert.match(view, /Grand/);
+  assert.doesNotMatch(view, /Adresse du restaurant/);
+});
+test("statuts affichés en français", async () => {
+  const tree = await mount(controller());
+  assert.match(content(tree), /Récupérée/);
+  assert.match(content(tree), /Payée/);
+});
+test("confirmation DELIVERED n'appelle pas immédiatement la mutation", async () => {
+  let calls = 0;
+  const c = controller({
+    transition: async () => {
+      calls++;
+    },
+  });
+  const tree = await mount(c);
+  await renderer.act(async () =>
+    button(tree, "Voir le détail").props.onPress(),
+  );
+  await renderer.act(async () =>
+    button(tree, "Marquer livrée").props.onPress(),
+  );
+  assert.equal(calls, 0);
+  assert.equal(alerts.at(-1)[0], "Confirmer la livraison");
+});
+test("Annuler dans la confirmation ne mute pas", async () => {
+  let calls = 0;
+  const tree = await mount(
+    controller({
+      transition: async () => {
+        calls++;
+      },
+    }),
+  );
+  await renderer.act(async () =>
+    button(tree, "Voir le détail").props.onPress(),
+  );
+  await renderer.act(async () =>
+    button(tree, "Marquer livrée").props.onPress(),
+  );
+  assert.equal(alerts.at(-1)[2][0].style, "cancel");
+  assert.equal(calls, 0);
+});
+test("Actualiser reste disponible lorsque la session est verrouillée", async () => {
+  let calls = 0;
+  const tree = await mount(
+    controller({
+      getState: () => ({
+        user,
+        orders: [],
+        busy: false,
+        restoring: false,
+        error: null,
+        notice: null,
+        locked: true,
+      }),
+      refresh: async () => {
+        calls++;
+      },
+    }),
+  );
+  assert.equal(button(tree, "Actualiser").props.disabled, false);
+  await renderer.act(async () => button(tree, "Actualiser").props.onPress());
+  assert.equal(calls, 1);
+});
+test("transitions sont désactivées en locked ou busy", async () => {
+  const c = controller({
+    getState: () => ({
+      user,
+      orders: [order],
+      busy: true,
+      restoring: false,
+      error: null,
+      notice: null,
+      locked: false,
+    }),
+  });
+  const tree = await mount(c);
+  await renderer.act(async () =>
+    button(tree, "Voir le détail").props.onPress(),
+  );
+  assert.equal(button(tree, "Marquer livrée").props.disabled, true);
+});
+test("déconnexion reste accessible pendant busy et réinitialise la sélection", async () => {
+  let called = false;
+  const tree = await mount(
+    controller({
+      getState: () => ({
+        user,
+        orders: [order],
+        busy: true,
+        restoring: false,
+        error: null,
+        notice: null,
+        locked: false,
+      }),
+      logout: async () => {
+        called = true;
+      },
+    }),
+  );
+  await renderer.act(async () =>
+    tree.root
+      .findAllByType("TouchableOpacity")
+      .find((item) => item.props.accessibilityLabel === "Compte")
+      .props.onPress(),
+  );
+  assert.equal(button(tree, "Se déconnecter").props.disabled, false);
+  await renderer.act(async () =>
+    button(tree, "Se déconnecter").props.onPress(),
+  );
+  assert.equal(called, true);
+});
+
+test("livraison en attente ne remplace pas le dernier statut serveur et bloque le double clic", async () => {
+  const tree = await mount(
+    controller({
+      getState: () => ({
+        user,
+        orders: [order],
+        offline: true,
+        pending: [{ orderId: order.id, status: "DELIVERED" }],
+      }),
+    }),
+  );
+  await renderer.act(async () =>
+    button(tree, "Voir le détail").props.onPress(),
+  );
+  const view = content(tree);
+  assert.match(view, /Hors ligne/);
+  assert.match(view, /Livraison en attente de confirmation API/);
+  assert.match(view, /Statut : Récupérée/);
+  assert.doesNotMatch(view, /Statut : Livrée/);
+  assert.equal(button(tree, "Marquer livrée").props.disabled, true);
+});
+
+test("les actions d'une ancienne identité ne s'affichent pas sur la connexion", async () => {
+  const tree = await mount(
+    controller({
+      getState: () => ({
+        user: null,
+        orders: [],
+        pending: [{ orderId: "private-old-order", status: "DELIVERED" }],
+      }),
+    }),
+  );
+  assert.doesNotMatch(content(tree), /private-old-order/);
+  assert.ok(button(tree, "Réessayer la restauration"));
+});
+
+test("support : la reprise garde le contenu exact verrouillé et la même clé", async () => {
+  const pending = {
+    subject: "Incident privé",
+    description: "Texte conservé",
+    idempotencyKey: "same-key-12345678",
+  };
+  let sent;
+  const tree = await mount(
+    controller({
+      getState: () => ({
+        user,
+        orders: [],
+        supportTickets: [],
+        supportPending: pending,
+      }),
+      createSupportTicket: async (input) => {
+        sent = input;
+      },
+    }),
+  );
+  await navigateSupport(tree);
+  const inputs = tree.root.findAllByType("TextInput");
+  const subject = inputs.find(
+    (i) => i.props.accessibilityLabel === "Sujet du ticket",
+  );
+  const description = inputs.find(
+    (i) => i.props.accessibilityLabel === "Description du ticket",
+  );
+  assert.equal(subject.props.value, pending.subject);
+  assert.equal(subject.props.editable, false);
+  assert.equal(subject.props.maxLength, 120);
+  assert.equal(description.props.editable, false);
+  assert.equal(description.props.maxLength, 4000);
+  assert.equal(button(tree, "Réessayer le ticket").props.disabled, false);
+  await renderer.act(async () =>
+    button(tree, "Réessayer le ticket").props.onPress(),
+  );
+  assert.deepEqual(sent, pending);
+  assert.doesNotMatch(content(tree), /chat|pièce jointe/i);
+});
+
+test("support : le détail affiche l’historique fraîchement relu, jamais celui d’un autre ticket", async () => {
+  const stale = {
+    id: "ticket-a",
+    subject: "Incident",
+    description: "Ancien détail",
+    status: "OPEN",
+    updatedAt: "hier",
+    history: [],
+  };
+  const fresh = {
+    ...stale,
+    description: "Détail rechargé",
+    status: "RESOLVED",
+    history: [
+      {
+        status: "RESOLVED",
+        at: "maintenant",
+        actorRole: "ADMIN",
+        note: "Résolution visible",
+      },
+    ],
+  };
+  let requested;
+  const tree = await mount(
+    controller({
+      getState: () => ({
+        user,
+        orders: [],
+        supportTickets: [stale],
+        selectedSupportTicket: fresh,
+      }),
+      supportTicket: async (id) => {
+        requested = id;
+        return fresh;
+      },
+    }),
+  );
+  await navigateSupport(tree);
+  await renderer.act(async () =>
+    button(tree, "Voir le ticket").props.onPress(),
+  );
+  assert.equal(requested, "ticket-a");
+  assert.match(content(tree), /Détail rechargé/);
+  assert.match(content(tree), /Résolution visible/);
+  assert.doesNotMatch(content(tree), /Ancien détail/);
+  assert.equal(button(tree, "Tickets précédents").props.disabled, true);
+});
+
+test("navigation : missions, assistance et compte sont des pages distinctes", async () => {
+  const tree = await mount(controller());
+  assert.match(content(tree), /Mission m-1/);
+  assert.equal(button(tree, "Se déconnecter"), undefined);
+  assert.equal(tree.root.findAllByType("TextInput").length, 0);
+  await navigateSupport(tree);
+  assert.doesNotMatch(content(tree), /Mission m-1/);
+  assert.equal(tree.root.findAllByType("TextInput").length, 2);
+  await renderer.act(async () => button(tree, "Compte").props.onPress());
+  assert.ok(button(tree, "Se déconnecter"));
+  assert.equal(tree.root.findAllByType("TextInput").length, 0);
+  await renderer.act(async () => button(tree, "Missions").props.onPress());
+  assert.match(content(tree), /Mission m-1/);
+  await renderer.act(async () => tree.unmount());
+});
+
+test("confirmation utilisateur : statut Livrée seulement après résolution serveur", async () => {
+  let state = {
+    user,
+    orders: [structuredClone(order)],
+    busy: false,
+    restoring: false,
+  };
+  const listeners = new Set();
+  let resolveServer;
+  const server = new Promise((resolve) => {
+    resolveServer = resolve;
+  });
+  let calls = 0;
+  const c = controller({
+    getState: () => state,
+    subscribe: (fn) => {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    transition: async (_id, status) => {
+      calls++;
+      assert.equal(status, "DELIVERED");
+      state = { ...state, busy: true };
+      listeners.forEach((fn) => fn(state));
+      await server;
+      state = {
+        ...state,
+        busy: false,
+        orders: [{ ...order, status: "DELIVERED" }],
+      };
+      listeners.forEach((fn) => fn(state));
+    },
+  });
+  const tree = await mount(c);
+  await renderer.act(async () =>
+    button(tree, "Voir le détail").props.onPress(),
+  );
+  await renderer.act(async () =>
+    button(tree, "Marquer livrée").props.onPress(),
+  );
+  let pending;
+  await renderer.act(async () => {
+    const confirm = alerts
+      .at(-1)[2]
+      .find((action) => action.style !== "cancel");
+    pending = confirm.onPress();
+  });
+  assert.equal(calls, 1);
+  assert.match(content(tree), /Statut : Récupérée/);
+  assert.doesNotMatch(content(tree), /Statut : Livrée/);
+  assert.equal(button(tree, "Marquer livrée").props.disabled, true);
+  await renderer.act(async () => {
+    resolveServer();
+    await pending;
+  });
+  assert.match(content(tree), /Statut : Livrée/);
+  await renderer.act(async () => tree.unmount());
+});

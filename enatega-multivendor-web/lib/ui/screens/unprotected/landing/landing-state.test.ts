@@ -10,10 +10,10 @@ import {
 
 describe("Quiet Orbit landing state", () => {
   it("limits the simplified shell to the multi-vendor root route", () => {
-    expect(isMarketplaceLandingPath("/", false)).toBe(true);
-    expect(isMarketplaceLandingPath("/", true)).toBe(false);
-    expect(isMarketplaceLandingPath("/discovery", false)).toBe(false);
-    expect(isMarketplaceLandingPath("/product/123", false)).toBe(false);
+    expect(isMarketplaceLandingPath("/")).toBe(true);
+    expect(isMarketplaceLandingPath("/discovery")).toBe(false);
+    expect(isMarketplaceLandingPath("/product/123")).toBe(false);
+    expect(isMarketplaceLandingPath(null)).toBe(false);
   });
 
   it("maps scroll progress to the three approved journey stages", () => {

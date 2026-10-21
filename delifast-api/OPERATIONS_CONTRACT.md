@@ -1,0 +1,57 @@
+# Contrat des opérations Delifast local
+
+## Cycle de commande
+
+`placeOrder` crée une commande `PAYMENT_PENDING/PENDING` et l'événement initial. Avec `DELIFAST_DEMO_PAYMENTS=true`, un admin peut appeler `simulateDemoPayment`, qui effectue atomiquement `PAYMENT_PENDING → CONFIRMED` et `PENDING → PAID`. Deux appels concurrents ne produisent qu'un événement `CONFIRMED`.
+
+Le cycle nominal et l'historique attendu sont exactement :
+
+```text
+PAYMENT_PENDING → CONFIRMED → ACCEPTED → PREPARING → READY → PICKED_UP → DELIVERED
+```
+
+- Restaurant concerné ou admin : `CONFIRMED → ACCEPTED → PREPARING → READY`.
+- Admin ou livreur affecté : `READY → PICKED_UP → DELIVERED` (un admin peut aussi reprendre une course).
+- Restaurant concerné ou admin : annulation depuis `CONFIRMED` ou `ACCEPTED`, vers `CANCELLED` ; si la commande est `PAID`, son `paymentStatus` devient `REFUND_PENDING`. Ce statut ne signifie pas qu'un remboursement réel a été exécuté.
+- Toute transition de préparation/livraison et toute affectation requiert `paymentStatus=PAID`.
+
+Chaque mutation opérationnelle porte `expectedStatus` et utilise une mise à jour CAS atomique. `transitionOrder` accepte en plus `expectedUpdatedAt` (ISO-8601, optionnel) : lorsqu’il est fourni, il doit être exactement le `updatedAt` du snapshot lu par le client et est inclus dans le CAS. Une course rider inclut aussi `riderId` dans le CAS : une réaffectation concurrente ne peut pas être contournée. `assignRider` est admin-only, limité aux états payés `ACCEPTED`, `PREPARING`, `READY`, et rejouer la même affectation est idempotent. Changer de livreur après une première affectation n’est pas encore pris en charge ; la mutation refuse de remplacer une affectation existante. L'affectation ne crée pas d'événement de statut : l'historique reste nominal.
+
+Le rejeu d'une affectation identique, au même état attendu et avec un livreur toujours actif, ne réécrit pas le document : `updatedAt` reste inchangé. Une transition de statut rejouée avec son ancien `expectedStatus` (ou avec un `expectedUpdatedAt` périmé) est en revanche refusée (`CONCURRENT_MODIFICATION`), sans nouvel événement ; les autorisations et l’affectation rider sont toujours vérifiées avant toute réconciliation. Les timestamps `updatedAt` écrits par transition et affectation sont strictement croissants, y compris dans la même milliseconde. En concurrence, annulation et préparation depuis `ACCEPTED` ne peuvent pas gagner toutes les deux ; une seule transition et son éventuel changement de paiement sont persistés.
+
+## Portée et authentification
+
+`staffLogin(email,password)` renvoie un jeton bearer aléatoire et `{id,name,role,restaurantId}`. Utiliser `Authorization: Bearer <token>`. Les rôles autorisés sont strictement `ADMIN`, `RESTAURANT` et `RIDER`; un compte `RESTAURANT` doit avoir un `restaurantId`. `operationsOrders` filtre les restaurants par `restaurantId`, uniquement après paiement confirmé (y compris remboursement en attente), et les riders par `riderId`. Les commandes impayées restent visibles uniquement à l’admin et à leur client détenteur du jeton. `staffLogout` révoque la session ; les sessions expirées sont refusées. Les sessions stockent un SHA-256 du jeton, les mots de passe un hash scrypt borné et les hashes malformés ne font jamais lever d'exception.
+
+Le client récupère une commande avec son `accessToken`. Le rejeu d'une clé d'idempotence identique retourne le même jeton client ; les réponses staff ne retournent jamais ce jeton. Les documents historiques sans `history` reçoivent une valeur par défaut compatible et les formes `accessToken`/`accessTokenHash` sont acceptées.
+
+Après révocation persistée, `staffLogout` et `customerLogout` retirent aussi immédiatement l’identité du contexte GraphQL courant. Un champ sensible placé après la déconnexion dans la même mutation, même via un alias ou un fragment, est refusé avec `UNAUTHENTICATED` sans modifier les adresses ou commandes. Cette garantie ne prétend pas interrompre une autre requête déjà en cours. Une session du personnel, même admin, ne donne pas accès au carnet client ; une session client ne donne aucun droit d’opération du personnel.
+
+## API et paiement
+
+Le schéma public est [`schema/v1.graphql`](schema/v1.graphql) : `operationsOrders`, `availableRiders`, `operationsRiderSummaries`, `operationsRider`, `me`, `staffLogin`, `staffLogout`, `simulateDemoPayment`, `transitionOrder` et `assignRider`. `PaymentProvider` est une abstraction locale dans `src/payment.ts`; seul `DemoPaymentProvider` est construit avec `DELIFAST_DEMO_PAYMENTS=true`. Aucun webhook ou fournisseur réel n'est simulé.
+
+### Catalogue opérationnel des livreurs
+
+- `operationsRiderSummaries(limit: Int = 20, after: ID, riderId: ID)` est **strictement ADMIN**. Il ne retourne que les comptes `role=RIDER` et `active=true`, dans l'ordre croissant de `id`, sous la forme `{ items { id name }, nextCursor }`.
+- La pagination est keyset : `limit` vaut de 1 à 50, la requête lit `limit+1` éléments et `nextCursor` est l'ID du dernier élément renvoyé lorsqu'une page suivante existe. Un curseur vide ou de plus de 128 caractères, comme un `riderId` vide ou de plus de 128 caractères, est rejeté (`INVALID_INPUT`). Un filtre `riderId` inconnu renvoie une page vide.
+- `operationsRider(id: ID!)` est également **strictement ADMIN** et renvoie seulement `{ id name role restaurantId }` pour un rider actif. Un rider inactif, un compte non-`RIDER` ou un ID inconnu renvoie `null`; les champs privés (mot de passe, email, téléphone, statut d'activité, etc.) ne font pas partie du schéma de ces opérations.
+- Les deux opérations utilisent l'index réentrant `staff_riders_active_id` (`role, active, id`) ; l'exécution attendue est bornée à `limit+1` documents, sans `SORT` ni `COLLSCAN`.
+- Les sessions anonymes, client, restaurant et rider sont refusées (`UNAUTHENTICATED` ou `FORBIDDEN` selon le contexte). `availableRiders` reste volontairement inchangé pour compatibilité legacy.
+
+### Audit des callsites `availableRiders`
+
+- L’endpoint public `availableRiders` reste un catalogue **non borné**, réservé à `ADMIN`, limité aux comptes `role=RIDER` et `active=true`, avec le schéma `StaffUser` historique. Il est couvert par un test API de compatibilité (plus de 50 résultats, rider inactif exclu, champs et permissions exacts) ; il ne doit donc pas être supprimé ni borné dans le cadre de cette migration.
+- Le seul usage applicatif local trouvé hors Web était l’export admin `GET_AVAILABLE_RIDERS`. Il n’était importé par aucun callsite et demandait des champs de l’ancien modèle (`_id`, `username`, `available`, `vehicleType`, `zone`) absents du schéma Delifast ; cet export mort a été retiré. Les fixtures de réponses admin qui contiennent `availableRiders: []` sont des données de test d’anciens snapshots, pas des requêtes réseau.
+- Les deux smoke tests Delifast utilisent désormais `operationsRiderSummaries(limit: 20, riderId: ...)` avec filtre exact, puis vérifient l’unique résultat ; ils ne dépendent donc pas de la position du livreur dans une page. Le test de contrat legacy reste intentionnel dans `delifast-api/test/operations.test.ts`. La Web est désormais migrée : sa page charge 20 résumés, permet la navigation précédente/suivante par ID, charge paresseusement le détail exact pour un admin assignable et le vérifie avant affectation ; le helper legacy reste présent mais inutilisé au runtime. Les scripts d’acceptance vérifient en outre qu’aucun chargement `availableRiders` n’est émis par les interfaces migrées.
+- Limite connue : `availableRiders` conserve volontairement sa lecture non paginée pour compatibilité ; les nouveaux callsites doivent utiliser `operationsRiderSummaries` puis `operationsRider` pour un détail vérifié.
+
+### Audit complémentaire et catalogue restaurants Web
+
+La recherche sur les sources suivies (`git grep -n availableRiders`) ne trouve aucun consommateur réseau first-party restant : les clients `enatega-multivendor-app`, `enatega-multivendor-store` et `enatega-multivendor-rider` n'ont aucune occurrence. Dans la Web, le helper historique est seulement appelé par son test de compatibilité et espionné par les tests qui interdisent son utilisation ; dans l'admin, seules subsistent des fixtures historiques. Le serveur, le schéma et les tests de permissions/compatibilité sont intentionnels. Il n'y a donc pas de nouvelle migration rider à effectuer sans changer le contrat public.
+
+Le repli reste dans le même périmètre : `app/delifast/operations/Catalogue.tsx` chargeait `operationsRestaurants` avec tous les menus pour l'admin. L'interface admin utilise désormais `operationsRestaurantSummaries(limit: 20, after, restaurantId)` avec navigation précédente/suivante et recherche exacte explicite, puis `operationsRestaurant(id)` pour le seul catalogue sélectionné. Le détail opérationnel conserve les plats et catégories archivés, contrairement au catalogue public ; son ID est vérifié avant édition. Les menus des autres restaurants ne sont pas préchargés.
+
+Les deux opérations bornées restent strictement `ADMIN`. Le rôle `RESTAURANT` conserve l'endpoint historique `operationsRestaurants`, déjà filtré côté serveur sur son unique `restaurantId` ; aucune permission n'est élargie. Les rôles non autorisés ne chargent pas ce catalogue. Les API historiques `availableRiders` et `operationsRestaurants` ne sont ni supprimées ni modifiées. Cette étape concerne uniquement la Web ; elle n'apporte aucune preuve d'exécution native Android/iOS.
+
+Comptes de démonstration : `admin@delifast.local / AdminDemo!2026`, `restaurant1@delifast.local / RestaurantDemo!2026`, `restaurant2@delifast.local / RestaurantDemo!2026`, `rider@delifast.local / RiderDemo!2026`.

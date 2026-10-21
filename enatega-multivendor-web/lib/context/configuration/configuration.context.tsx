@@ -12,8 +12,7 @@ import { Libraries } from "@react-google-maps/api";
 
 // Core
 import React, { ReactNode, useContext } from "react";
-import { APP_MODES, getModeEnvironment, useAppMode } from "@/lib/mode";
-import { SINGLE_VENDOR_CONFIGURATION } from "@/lib/api/graphql/single-vendor";
+import { APP_MODES, getModeEnvironment } from "@/lib/mode";
 
 const ConfigurationContext = React.createContext({} as IConfigProps);
 const GOOGLE_WEB_CLIENT_ID_REGEX =
@@ -24,25 +23,16 @@ export const ConfigurationProvider = ({
 }: {
   children: ReactNode;
 }) => {
-  const { mode, isSingleVendor } = useAppMode();
+  const mode = APP_MODES.MULTI;
   const modeEnvironment = getModeEnvironment(mode);
-  // Browser configuration is shared by both storefront modes. Only operational
-  // API traffic (auth, catalog, cart, orders, etc.) follows the active mode.
-  const sharedConfigurationQuery = useQuery(GET_CONFIG, {
-    context: isSingleVendor ? { appMode: APP_MODES.MULTI } : undefined,
-  });
-  const singleVendorConfigurationQuery = useQuery(SINGLE_VENDOR_CONFIGURATION, {
-    skip: !isSingleVendor,
-  });
+  const sharedConfigurationQuery = useQuery(GET_CONFIG);
   const sharedConfiguration =
     sharedConfigurationQuery.loading ||
     sharedConfigurationQuery.error ||
     !sharedConfigurationQuery.data?.configuration
       ? { currency: "", currencySymbol: "", deliveryRate: 0, costType: "perKM" }
       : sharedConfigurationQuery.data.configuration;
-  const commerceConfiguration = isSingleVendor
-    ? singleVendorConfigurationQuery.data?.configuration || sharedConfiguration
-    : sharedConfiguration;
+  const commerceConfiguration = sharedConfiguration;
 
   const configuredGoogleClientId = sharedConfiguration.webClientID;
   const GOOGLE_CLIENT_ID = GOOGLE_WEB_CLIENT_ID_REGEX.test(

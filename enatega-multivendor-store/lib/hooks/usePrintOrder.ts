@@ -15,7 +15,10 @@ import { selectPrinterAsync } from "../utils/methods/print";
 import { ConfigurationContext } from "../context/global/configuration.context";
 import Restaurant from "../context/global/restaurant";
 import ThermalPrinterModule from "react-native-thermal-printer";
-import { formatReceipt } from "../utils/methods/format-receipt";
+import {
+  formatReceipt,
+  type ReceiptOrder,
+} from "../utils/methods/format-receipt";
 import { FlashMessageComponent } from "../ui/useable-components";
 
 export default function usePrintOrder() {
@@ -25,13 +28,16 @@ export default function usePrintOrder() {
   const ordersById = useMemo(
     () =>
       Object.fromEntries(
-        (data?.restaurantOrders ?? []).map((order: IOrder) => [order._id, order]),
+        (data?.restaurantOrders ?? []).map((order: IOrder) => [
+          order._id,
+          order,
+        ]),
       ) as Record<string, IOrder>,
     [data?.restaurantOrders],
   );
 
   // States
-  const [status, setStatus] = useState("Idle");
+  const [, setStatus] = useState("Idle");
 
   const requestBluetoothPermissions = async (): Promise<boolean> => {
     if (Platform.OS === "android") {
@@ -58,7 +64,7 @@ export default function usePrintOrder() {
     return false;
   };
 
-  const printReceipt = async (order: IOrder) => {
+  const printReceipt = async (order: ReceiptOrder) => {
     try {
       const text = formatReceipt(order);
 
@@ -70,8 +76,10 @@ export default function usePrintOrder() {
         // beep: false,
       });
       setStatus(`Printed successfully`);
-    } catch (err: any) {
-      setStatus("Print failed: " + err.message);
+    } catch (err: unknown) {
+      setStatus(
+        "Print failed: " + (err instanceof Error ? err.message : String(err)),
+      );
     }
   };
 
@@ -122,7 +130,9 @@ export default function usePrintOrder() {
     } catch (err) {
       FlashMessageComponent({
         message:
-          err?.message || "Something went wrong while printing the receipt.",
+          err instanceof Error && err.message
+            ? err.message
+            : "Something went wrong while printing the receipt.",
       });
       return false;
     }

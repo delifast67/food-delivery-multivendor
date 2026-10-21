@@ -1,0 +1,230 @@
+name: Delifast local — API, web et mobile
+
+on:
+  # La garde inspecte tous les manifestes suivis, y compris ceux ajoutés hors des apps.
+  # Ne pas filtrer les chemins : un nouveau fichier de déploiement doit être contrôlé.
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-ordering:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      MONGODB_URI: mongodb://127.0.0.1:27017/delifast_ci?replicaSet=delifast-ci
+      DELIFAST_API_URL: http://127.0.0.1:4000/graphql
+      # Simulation réservée à cette base de test, jamais un paiement réel.
+      DELIFAST_DEMO_PAYMENTS: 'true'
+      # Les recettes dépassent 100 requêtes/minute ; limite normale inchangée.
+      RATE_LIMIT_MAX: '1000'
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            delifast-api/package-lock.json
+            enatega-multivendor-web/package-lock.json
+      - name: Installer l’API
+        run: npm ci --prefix delifast-api --ignore-scripts --no-audit --no-fund
+      - name: Prouver les limites et garanties MongoDB sur replica set réel isolé
+        run: |
+          npm run test:transactions --prefix delifast-api
+          node scripts/delifast-replset-dev-smoke.mjs
+      - name: Compiler et tester l’API
+        run: |
+          for script in scripts/delifast-*.mjs; do node --check "$script"; done
+          node --test scripts/delifast-documentation.test.mjs
+          node --test scripts/delifast-checkout-config.test.mjs
+          npm run build --prefix delifast-api
+          npm test --prefix delifast-api
+          node scripts/delifast-checkout-freshness-smoke.mjs
+          node scripts/delifast-payment-smoke.mjs
+          node scripts/delifast-persistence.mjs
+          node scripts/delifast-backup-test.mjs
+      - name: Installer le web
+        run: npm ci --prefix enatega-multivendor-web --ignore-scripts --no-audit --no-fund
+      - name: Tester le contrat et compiler le web local
+        run: |
+          node --test scripts/delifast-client-multivendor.test.mjs
+          node --test scripts/delifast-order-callers.test.mjs
+          node --test scripts/delifast-web-config.test.mjs
+          node --test scripts/delifast-proxy-boundary.test.mjs
+          node --test scripts/delifast-bounded-catalogues.test.mjs
+          node scripts/delifast-contract.mjs
+          npm test --prefix enatega-multivendor-web
+          npm run build --prefix enatega-multivendor-web
+      - name: Initialiser MongoDB
+        run: |
+          docker run -d --name delifast-ci-mongo -p 27017:27017 mongo:7.0 --replSet delifast-ci --bind_ip_all
+          for i in $(seq 1 30); do docker exec delifast-ci-mongo mongosh --quiet --eval 'db.adminCommand({ping:1}).ok' | grep -q 1 && break; sleep 1; done
+          docker exec delifast-ci-mongo mongosh --quiet --eval 'rs.initiate({_id:"delifast-ci",members:[{_id:0,host:"127.0.0.1:27017"}]})'
+          ready=0; for i in $(seq 1 30); do docker exec delifast-ci-mongo mongosh --quiet --eval 'rs.status().myState === 1' | grep -q true && ready=1 && break; sleep 1; done
+          test "$ready" = 1
+          npm run migrate --prefix delifast-api
+          npm run seed --prefix delifast-api
+      - name: Démarrer l’API et le web
+        env:
+          # Explicit opt-in for this synthetic HTTP server; lock tests override their own environment.
+          DELIFAST_ALLOW_NONATOMIC_CHECKOUT: 'true'
+        run: |
+          npm start --prefix delifast-api > /tmp/delifast-api.log 2>&1 &
+          npm start --prefix enatega-multivendor-web -- --port 3000 > /tmp/delifast-web.log 2>&1 &
+          node --input-type=module <<'JS'
+          for (const url of ['http://127.0.0.1:4000/health', 'http://127.0.0.1:3000/delifast']) {
+            let ready = false;
+            for (let i = 0; i < 60; i++) {
+              try { if ((await fetch(url)).ok) { ready = true; break; } } catch {}
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            if (!ready) throw new Error(`Service indisponible: ${url}`);
+          }
+          JS
+      - name: Tester le parcours HTTP de bout en bout
+        run: |
+          node scripts/delifast-smoke.mjs
+          node scripts/delifast-operations-smoke.mjs
+          node scripts/delifast-catalog-smoke.mjs
+          node scripts/delifast-options-smoke.mjs
+          node scripts/delifast-mobile-smoke.mjs
+      - name: Afficher les journaux en cas d’échec
+        if: failure()
+        run: cat /tmp/delifast-api.log /tmp/delifast-web.log 2>/dev/null || true
+
+  mobile-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: '1'
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_PUBLIC_DELIFAST_API_URL: http://127.0.0.1:4000/graphql
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            delifast-api/package-lock.json
+            enatega-multivendor-app/package-lock.json
+      - name: Installer les outils et dépendances mobiles
+        run: |
+          npm ci --prefix delifast-api --ignore-scripts --no-audit --no-fund
+          npm ci --prefix enatega-multivendor-app --ignore-scripts --no-audit --no-fund
+      - name: Tester le parcours mobile et son isolation
+        run: |
+          node --test scripts/delifast-client-multivendor.test.mjs
+          node --test scripts/delifast-order-callers.test.mjs
+          node --test scripts/delifast-mobile-entry.test.mjs
+          npm run test:delifast --prefix enatega-multivendor-app
+          node scripts/delifast-mobile-contract.mjs
+      - name: Produire les bundles JS Android et iOS sans publication
+        run: |
+          npm run build --prefix delifast-api
+          node scripts/delifast-customer-orders-smoke.mjs
+          node scripts/delifast-profile-smoke.mjs
+          node scripts/delifast-mobile-support-smoke.mjs
+          npm run export:delifast --prefix enatega-multivendor-app
+
+  restaurant-mobile-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: '1'
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_PUBLIC_DELIFAST_API_URL: http://127.0.0.1:4000/graphql
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            delifast-api/package-lock.json
+            enatega-multivendor-store/package-lock.json
+      - name: Installer API et restaurant
+        run: |
+          npm ci --prefix delifast-api --ignore-scripts --no-audit --no-fund
+          npm ci --prefix enatega-multivendor-store --ignore-scripts --no-audit --no-fund
+      - name: Tester le restaurant et son contrat
+        run: |
+          node --test scripts/delifast-store-entry.test.mjs
+          node --test scripts/delifast-staff-multivendor.test.mjs
+          node --test --test-name-pattern=enatega-multivendor-store scripts/delifast-mobile-tsconfig.test.mjs
+          npm run test:delifast --prefix enatega-multivendor-store
+          node scripts/delifast-store-contract.mjs
+          npm run build --prefix delifast-api
+          node scripts/delifast-store-smoke.mjs
+          node scripts/delifast-staff-support-smoke.mjs
+      - name: Exporter les bundles sans publication
+        working-directory: enatega-multivendor-store
+        run: npx expo export --platform android --platform ios --output-dir dist/delifast
+
+  rider-mobile-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: '1'
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_PUBLIC_DELIFAST_API_URL: http://127.0.0.1:4000/graphql
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            delifast-api/package-lock.json
+            enatega-multivendor-rider/package-lock.json
+      - name: Installer API et livreur
+        run: |
+          npm ci --prefix delifast-api --ignore-scripts --no-audit --no-fund
+          npm ci --prefix enatega-multivendor-rider --ignore-scripts --no-audit --no-fund
+      - name: Tester le livreur et son contrat
+        run: |
+          node --test scripts/delifast-rider-entry.test.mjs
+          node --test scripts/delifast-staff-multivendor.test.mjs
+          node --test --test-name-pattern=enatega-multivendor-rider scripts/delifast-mobile-tsconfig.test.mjs
+          npm run test:delifast --prefix enatega-multivendor-rider
+          node scripts/delifast-rider-contract.mjs
+          npm run build --prefix delifast-api
+          node scripts/delifast-rider-smoke.mjs
+      - name: Exporter les bundles sans publication
+        working-directory: enatega-multivendor-rider
+        run: npx expo export --platform android --platform ios --output-dir dist/delifast
+
+  admin-web-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DELIFAST_LOCAL_MODE: 'true'
+      DELIFAST_API_URL: http://127.0.0.1:4113/graphql
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            delifast-api/package-lock.json
+            enatega-multivendor-admin/package-lock.json
+      - name: Installer API et admin sans scripts historiques
+        run: |
+          npm ci --prefix delifast-api --ignore-scripts --no-audit --no-fund
+          npm ci --prefix enatega-multivendor-admin --ignore-scripts --no-audit --no-fund
+      - name: Compiler l’API et vérifier l’admin local
+        run: |
+          npm run build --prefix delifast-api
+          node --test scripts/delifast-admin-entry.test.mjs
+          node --test scripts/delifast-staff-multivendor.test.mjs
+          npm run test:delifast --prefix enatega-multivendor-admin
+          npm run build --prefix enatega-multivendor-admin
+      - name: Recette HTTP admin et MongoDB jetable, sans paiement
+        run: node scripts/delifast-admin-smoke.mjs

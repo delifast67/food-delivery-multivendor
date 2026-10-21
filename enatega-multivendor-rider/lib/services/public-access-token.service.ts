@@ -157,58 +157,60 @@ class PublicAccessTokenService {
 
     const generation = this.scopeGeneration;
     const scope = this.scope;
-    const refreshPromise = (async () => {
+    const operation = (async () => {
       const nonce = this.nonce ?? (await this.generateNonce());
       if (generation !== this.scopeGeneration || scope !== this.scope) return;
       this.nonce = nonce;
 
-      try {
-        const locale = (await AsyncStorage.getItem("lang")) || "en";
-        const { data } = await apolloClient.mutate({
-          mutation: METRICS_GENERAL,
-          context: {
-            headers: {
-              nonce,
-              "x-platform": Platform.OS,
-              "accept-language": locale,
-              "user-agent": RIDER_PUBLIC_ACCESS_USER_AGENT,
-              "x-skip-public-auth": "true",
-            },
+      const locale = (await AsyncStorage.getItem("lang")) || "en";
+      const { data } = await apolloClient.mutate({
+        mutation: METRICS_GENERAL,
+        context: {
+          headers: {
+            nonce,
+            "x-platform": Platform.OS,
+            "accept-language": locale,
+            "user-agent": RIDER_PUBLIC_ACCESS_USER_AGENT,
+            "x-skip-public-auth": "true",
           },
-          fetchPolicy: "no-cache",
-        });
+        },
+        fetchPolicy: "no-cache",
+      });
 
-        if (!data?.metricsGeneral?.experience || !data?.metricsGeneral?.hehe) {
-          throw new Error("No data returned from metricsGeneral");
-        }
+      if (!data?.metricsGeneral?.experience || !data?.metricsGeneral?.hehe) {
+        throw new Error("No data returned from metricsGeneral");
+      }
 
-        if (generation !== this.scopeGeneration || scope !== this.scope) return;
+      if (generation !== this.scopeGeneration || scope !== this.scope) return;
 
-        const token = data.metricsGeneral.experience as string;
-        this.token = token;
-        this.expiry = new Date(data.metricsGeneral.hehe).getTime();
+      const token = data.metricsGeneral.experience as string;
+      this.token = token;
+      this.expiry = new Date(data.metricsGeneral.hehe).getTime();
 
-        await Promise.all([
-          setSecureItem(this.scopedKey(PUBLIC_ACCESS_NONCE, scope), nonce),
-          setSecureItem(this.scopedKey(PUBLIC_ACCESS_TOKEN, scope), token),
-          setSecureItem(
-            this.scopedKey(PUBLIC_ACCESS_EXPIRY, scope),
-            this.expiry.toString(),
-          ),
-        ]);
+      await Promise.all([
+        setSecureItem(this.scopedKey(PUBLIC_ACCESS_NONCE, scope), nonce),
+        setSecureItem(this.scopedKey(PUBLIC_ACCESS_TOKEN, scope), token),
+        setSecureItem(
+          this.scopedKey(PUBLIC_ACCESS_EXPIRY, scope),
+          this.expiry.toString(),
+        ),
+      ]);
 
-        if (generation === this.scopeGeneration && scope === this.scope) {
-          this.scheduleRefresh(apolloClient);
-        }
-      } finally {
-        if (this.refreshPromise === refreshPromise) {
-          this.refreshPromise = null;
-        }
+      if (generation === this.scopeGeneration && scope === this.scope) {
+        this.scheduleRefresh(apolloClient);
       }
     })();
 
-    this.refreshPromise = refreshPromise;
-    return refreshPromise;
+    this.refreshPromise = operation;
+    operation.then(
+      () => {
+        if (this.refreshPromise === operation) this.refreshPromise = null;
+      },
+      () => {
+        if (this.refreshPromise === operation) this.refreshPromise = null;
+      },
+    );
+    return operation;
   }
 
   async getToken(

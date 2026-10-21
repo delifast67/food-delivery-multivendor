@@ -13,7 +13,7 @@ import { useStoreMode } from "@/lib/context/global/store-mode.context";
 
 export default function useNotification() {
   const [storeLookupComplete, setStoreLookupComplete] = useState(false);
-  const { mode, storeIdKey } = useStoreMode();
+  const { storeIdKey } = useStoreMode();
   const [getStore, { data }] = useLazyQuery(GET_RESTAURANT_BY_ID, {
     fetchPolicy: "cache-and-network",
     // variables: { id: userId },
@@ -87,7 +87,7 @@ export default function useNotification() {
       ) {
         const { _id } = response.notification.request.content.data;
         if (typeof _id !== "string") return;
-        const handledNotificationKey = `@enatega/store/${mode.toLowerCase()}/last-notification`;
+        const handledNotificationKey = "@enatega/store/multi/last-notification";
         const lastNotificationHandledId = await AsyncStorage.getItem(
           handledNotificationKey,
         );
@@ -95,7 +95,7 @@ export default function useNotification() {
         await AsyncStorage.setItem(handledNotificationKey, _id);
       }
     },
-    [mode],
+    [],
   );
 
   // Use Effect

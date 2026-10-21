@@ -44,8 +44,6 @@ export default function FirebaseForegroundHandler() {
     const { messaging } = setupFirebase(firebaseConfig);
 
     const unsubscribe = onMessage(messaging, (payload) => {
-      console.log("📩 Message received:", payload);
-
       if (Notification.permission === "granted") {
         const { title, body } = payload.notification || {};
         const { redirectUrl, vendorMode, orderId } = payload.data || {};

@@ -90,21 +90,6 @@ export const GET_RIDER = gql`
   }
 `;
 
-export const GET_AVAILABLE_RIDERS = gql`
-  query {
-    availableRiders {
-      _id
-      name
-      username
-      phone
-      available
-      vehicleType
-      zone {
-        _id
-      }
-    }
-  }
-`;
 export const GET_RIDERS_BY_ZONE = gql`
   query RidersByZone($id: String!) {
     ridersByZone(id: $id) {

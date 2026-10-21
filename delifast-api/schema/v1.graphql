@@ -1,0 +1,133 @@
+
+type Query {
+  restaurants(point: DeliveryPointInput): [Restaurant!]!
+  restaurant(id: ID!): Restaurant
+  publicRestaurantPage(point: DeliveryPointInput, search: String, openOnly: Boolean = false, limit: Int = 20, after: String): PublicRestaurantPage!
+  publicMenuPage(restaurantId: ID!, search: String, categoryId: ID, limit: Int = 20, after: String): PublicMenuPage!
+  publicMenuCategoryPage(restaurantId: ID!, limit: Int = 20, after: String): PublicMenuCategoryPage!
+  calculateCheckout(input: CartInput!): Checkout!
+  deliveryEligibility(restaurantId: ID!, point: DeliveryPointInput!): DeliveryEligibility!
+  deliveryZones(restaurantId: ID): [DeliveryZone!]!
+  order(id: ID!, accessToken: String!): Order
+  customerOrders(limit: Int = 20, after: String): CustomerOrderPage!
+  customerOrder(id: ID!): CustomerOrder
+  paymentSession(orderId: ID!, accessToken: String!): PaymentSession
+  operationsOrders: [Order!]!
+  operationsOrdersPage(limit: Int = 20, after: String, status: String, payment: String, restaurantId: ID, search: String): OperationOrderPage!
+  operationsOrder(id: ID!): Order
+  operationsRestaurants: [Restaurant!]!
+  operationsRestaurantSummaries(limit: Int = 20, after: ID, restaurantId: ID): RestaurantSummaryPage!
+  operationsRestaurant(id: ID!): Restaurant
+  operationsMenuItemSummaries(restaurantId: ID!, limit: Int = 20, after: ID, menuItemId: ID): MenuItemSummaryPage!
+  operationsMenuItem(restaurantId: ID!, id: ID!): MenuItem
+  operationsMenuCategorySummaries(restaurantId: ID!, limit: Int = 20, after: ID, categoryId: ID): MenuCategorySummaryPage!
+  operationsMenuCategory(restaurantId: ID!, id: ID!): MenuCategory
+  availableRiders: [StaffUser!]!
+  operationsRiderSummaries(limit: Int = 20, after: ID, riderId: ID): RiderSummaryPage!
+  operationsRider(id: ID!): StaffUser
+  me: StaffUser
+  customerMe: Customer
+  customerAddresses: [CustomerAddress!]!
+  customerSupportTickets(limit: Int = 20, offset: Int = 0): [SupportTicket!]!
+  customerSupportTicket(id: ID!): SupportTicket
+  staffSupportTickets(limit: Int = 20, offset: Int = 0): [SupportTicket!]!
+  staffSupportTicket(id: ID!): SupportTicket
+  operationsSupportTickets(limit: Int = 20, offset: Int = 0): [SupportTicket!]!
+  operationsSupportTicket(id: ID!): SupportTicket
+  operationsSupportTicketSummaries(limit: Int = 20, offset: Int = 0, ticketId: ID, status: SupportStatus): [SupportTicketSummary!]!
+}
+type Mutation {
+  placeOrder(input: PlaceOrderInput!): Order!
+  createDeliveryZone(restaurantId: ID!, input: DeliveryZoneInput!): DeliveryZone!
+  updateDeliveryZone(id: ID!, expectedVersion: Int!, input: DeliveryZoneInput!): DeliveryZone!
+  startPayment(input: StartPaymentInput!): PaymentSession!
+  refreshPayment(orderId: ID!, accessToken: String!): PaymentSession!
+  staffLogin(email: String!, password: String!): StaffSession!
+  staffLogout: Boolean!
+  simulateDemoPayment(orderId: ID!): Order!
+  transitionOrder(orderId: ID!, status: String!, expectedStatus: String!, expectedUpdatedAt: String): Order!
+  assignRider(orderId: ID!, riderId: ID!, expectedStatus: String!): Order!
+  createMenuItem(restaurantId: ID!, input: MenuItemInput!): MenuItem!
+  updateMenuItem(id: ID!, expectedVersion: Int!, input: MenuItemInput!): MenuItem!
+  setMenuItemArchived(id: ID!, expectedVersion: Int!, archived: Boolean!): MenuItem!
+  setRestaurantOpen(id: ID!, expectedVersion: Int!, open: Boolean!): Restaurant!
+  setRestaurantSchedule(id: ID!, expectedVersion: Int!, weeklySchedule: [RestaurantHoursInput!]): Restaurant!
+  createRestaurantProfile(input: RestaurantProfileInput!): Restaurant!
+  updateRestaurantProfile(id: ID!, expectedVersion: Int!, input: RestaurantProfileInput!): Restaurant!
+  createMenuCategory(restaurantId: ID!, input: MenuCategoryInput!): MenuCategory!
+  updateMenuCategory(id: ID!, expectedVersion: Int!, input: MenuCategoryInput!): MenuCategory!
+  setMenuCategoryArchived(id: ID!, expectedVersion: Int!, archived: Boolean!): MenuCategory!
+  requestCustomerOtp(phone: String!): CustomerOtpChallenge!
+  resendCustomerOtp(challengeId: ID!): CustomerOtpChallenge!
+  verifyCustomerOtp(challengeId: ID!, code: String!): CustomerSession!
+  updateCustomerProfile(input: CustomerProfileInput!): Customer!
+  customerLogout: Boolean!
+  createCustomerAddress(input: DeliveryAddressInput!): CustomerAddress!
+  updateCustomerAddress(id: ID!, input: DeliveryAddressInput!): CustomerAddress!
+  deleteCustomerAddress(id: ID!): Boolean!
+  createSupportTicket(input: CreateSupportTicketInput!): SupportTicket!
+  createStaffSupportTicket(input: CreateSupportTicketInput!): SupportTicket!
+  transitionSupportTicket(id: ID!, expectedVersion: Int!, status: SupportStatus!, note: String!): SupportTicket!
+}
+type Point { latitude: Float!, longitude: Float! }
+type Customer { id: ID!, phone: String!, firstName: String, lastName: String, email: String }
+type CustomerSession { token: String!, customer: Customer! }
+type CustomerOtpChallenge { challengeId: ID!, expiresIn: Int!, retryAfter: Int! }
+type CustomerAddress { id: ID!, recipientName: String!, phone: String!, city: String!, neighborhood: String!, landmark: String!, instructions: String!, point: Point! }
+enum SupportStatus { OPEN IN_PROGRESS RESOLVED }
+input CreateSupportTicketInput { subject: String!, description: String!, idempotencyKey: String!, restaurantId: ID }
+type SupportEvent { status: SupportStatus!, at: String!, actorRole: String!, note: String! }
+type SupportTicket { id: ID!, customerId: ID, creatorId: ID!, creatorRole: String!, restaurantId: ID, subject: String!, description: String!, status: SupportStatus!, version: Int!, createdAt: String!, updatedAt: String!, history: [SupportEvent!]! }
+type SupportTicketSummary { id: ID!, subject: String!, creatorRole: String!, status: SupportStatus!, version: Int!, createdAt: String!, updatedAt: String! }
+input DeliveryPointInput { latitude: Float!, longitude: Float! }
+input CustomerProfileInput { firstName: String, lastName: String, email: String }
+input RestaurantProfileInput { name: String!, description: String!, open: Boolean!, deliveryZoneIds: [ID!]! }
+input RestaurantHoursInput { day: Int!, startMinute: Int!, endMinute: Int! }
+type RestaurantHours { day: Int!, startMinute: Int!, endMinute: Int! }
+type Restaurant { id: ID!, name: String!, description: String!, open: Boolean!, version: Int!, weeklySchedule: [RestaurantHours!], deliveryZoneIds: [ID!]!, categories: [MenuCategory!]!, menu: [MenuItem!]! }
+type RestaurantSummary { id: ID!, name: String!, open: Boolean!, version: Int! }
+type RestaurantSummaryPage { items: [RestaurantSummary!]!, nextCursor: String }
+type PublicRestaurantSummary { id: ID!, name: String!, description: String!, open: Boolean!, version: Int! }
+type PublicRestaurantPage { items: [PublicRestaurantSummary!]!, nextCursor: String }
+type PublicMenuPage { sections: [PublicMenuSection!]!, nextCursor: String }
+type PublicMenuSection { category: MenuCategory, items: [MenuItem!]! }
+type PublicMenuCategoryPage { items: [MenuCategory!]!, nextCursor: String }
+type RiderSummary { id: ID!, name: String! }
+type RiderSummaryPage { items: [RiderSummary!]!, nextCursor: String }
+type MenuItemSummary { id: ID!, name: String!, priceXof: Int!, available: Boolean!, archived: Boolean!, version: Int!, categoryId: ID }
+type MenuItemSummaryPage { items: [MenuItemSummary!]!, nextCursor: ID }
+type MenuCategorySummaryPage { items: [MenuCategory!]!, nextCursor: ID }
+type MenuCategory { id: ID!, name: String!, sortOrder: Int!, archived: Boolean!, version: Int! }
+type MenuItem { id: ID!, name: String!, description: String!, priceXof: Int!, available: Boolean!, version: Int!, archived: Boolean!, categoryId: ID, optionGroups: [MenuOptionGroup!]! }
+input MenuCategoryInput { name: String!, sortOrder: Int! }
+type MenuOptionGroup { id: ID!, name: String!, minSelections: Int!, maxSelections: Int!, options: [MenuOption!]! }
+type MenuOption { id: ID!, name: String!, priceXof: Int!, available: Boolean! }
+input MenuOptionGroupInput { id: ID!, name: String!, minSelections: Int!, maxSelections: Int!, options: [MenuOptionInput!]! }
+input MenuOptionInput { id: ID!, name: String!, priceXof: Int!, available: Boolean! }
+input MenuItemInput { name: String!, description: String!, priceXof: Int!, available: Boolean!, categoryId: ID, optionGroups: [MenuOptionGroupInput!] }
+input CartInput { restaurantId: ID!, items: [CartItemInput!]!, point: DeliveryPointInput }
+input CartItemInput { menuItemId: ID!, quantity: Int!, selections: [OptionSelectionInput!] }
+input OptionSelectionInput { groupId: ID!, optionIds: [ID!]! }
+type Checkout { quoteHash: String, quoteToken: String, quoteIssuedAt: String, quoteExpiresAt: String, currency: String!, subtotal: Int!, deliveryFee: Int!, serviceFee: Int!, tax: Int!, discount: Int!, total: Int!, delivery: DeliverySnapshot, items: [CheckoutItem!]! }
+type DeliverySnapshot { zoneId: ID!, zoneName: String!, zoneVersion: Int!, deliveryFee: Int!, minimumOrderXof: Int!, estimatedMinutes: Int!, demo: Boolean! }
+type CheckoutItem { menuItemId: ID!, name: String!, quantity: Int!, unitPrice: Int!, baseUnitPrice: Int!, selectedOptions: [SelectedMenuOption!]!, total: Int! }
+type SelectedMenuOption { groupId: ID!, groupName: String!, optionId: ID!, name: String!, priceXof: Int! }
+input PlaceOrderInput { restaurantId: ID!, items: [CartItemInput!]!, idempotencyKey: String!, expectedQuoteHash: String, expectedQuoteToken: String, deliveryAddress: DeliveryAddressInput! }
+input DeliveryAddressInput { recipientName: String!, phone: String!, city: String!, neighborhood: String!, landmark: String!, instructions: String, point: DeliveryPointInput }
+type DeliveryAddress { recipientName: String!, phone: String!, city: String!, neighborhood: String!, landmark: String!, instructions: String!, point: Point }
+type DeliveryEligibility { zoneId: ID!, zoneName: String!, zoneVersion: Int!, deliveryFee: Int!, minimumOrderXof: Int!, estimatedMinutes: Int!, demo: Boolean! }
+enum DeliveryZoneShape { CIRCLE POLYGON }
+input DeliveryZoneHoursInput { day: Int!, startMinute: Int!, endMinute: Int! }
+type DeliveryZoneHours { day: Int!, startMinute: Int!, endMinute: Int! }
+input DeliveryZoneInput { name: String!, shape: DeliveryZoneShape!, center: DeliveryPointInput, radiusMeters: Float, polygon: [DeliveryPointInput!], enabled: Boolean!, feeXof: Int!, minimumOrderXof: Int!, estimatedMinutes: Int!, priority: Int!, demo: Boolean!, hours: [DeliveryZoneHoursInput!]! }
+type DeliveryZone { id: ID!, restaurantId: ID!, name: String!, shape: DeliveryZoneShape!, center: Point, radiusMeters: Float, polygon: [Point!], enabled: Boolean!, feeXof: Int!, minimumOrderXof: Int!, estimatedMinutes: Int!, priority: Int!, demo: Boolean!, hours: [DeliveryZoneHours!]!, version: Int! }
+type OrderEvent { status: String!, at: String!, actorRole: String! }
+type CustomerOrderPage { items: [CustomerOrder!]!, nextCursor: String }
+type OperationOrderPage { items: [Order!]!, nextCursor: String }
+type CustomerOrder { id: String!, status: String!, paymentStatus: String!, createdAt: String!, updatedAt: String!, restaurantId: String!, riderId: String, deliveryAddress: DeliveryAddress!, history: [OrderEvent!]!, checkout: Checkout! }
+type Order { id: String!, accessToken: String!, status: String!, paymentStatus: String!, createdAt: String!, updatedAt: String!, restaurantId: String!, riderId: String, deliveryAddress: DeliveryAddress!, history: [OrderEvent!]!, checkout: Checkout! }
+type StaffUser { id: ID!, name: String!, role: String!, restaurantId: String }
+type StaffSession { token: String!, user: StaffUser! }
+enum PaymentChannel { ORANGE_MONEY_BF MOOV_MONEY_BF }
+input StartPaymentInput { orderId: ID!, accessToken: String!, idempotencyKey: String!, channel: PaymentChannel! }
+type PaymentSession { orderId: ID!, phase: String!, channel: PaymentChannel!, mode: String!, checkoutUrl: String, providerStatus: String, paymentStatus: String! }

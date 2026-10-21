@@ -4,13 +4,13 @@ import { useTranslation } from 'react-i18next'
 
 import useMultivendorTheme from '../../../ui/designSystem/useMultivendorTheme'
 import { scale } from '../../../utils/scaling'
-import SectionHeader from '../../../singlevendor/components/SectionHeader'
-import { DISCOVERY_GUTTER } from '../../../singlevendor/components/Home/discoveryLayout'
+import SectionHeader from '../../../ui/designSystem/primitives/SectionHeader'
+const DISCOVERY_GUTTER = scale(16)
 import { discoverySpacing } from '../../../ui/designSystem/tokens'
 
 // Framed tile: a rounded-square photo inset in a softly tinted card, with the
 // name underneath. Uses only the app's brand and neutral surface colours.
-// Exported so single-vendor Home and its skeleton share the exact geometry.
+// Shared multivendor discovery geometry.
 export const TILE_WIDTH = scale(84)
 const TILE_PADDING = scale(4)
 export const IMAGE_HEIGHT = scale(64)

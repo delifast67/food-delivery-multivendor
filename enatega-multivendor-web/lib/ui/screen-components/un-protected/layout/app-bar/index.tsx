@@ -70,10 +70,8 @@ import { setUserLocale } from "@/lib/utils/methods/locale";
 import { Dialog } from "primereact/dialog";
 
 import CustomButton from "@/lib/ui/useable-components/button";
-import SingleVendorCart from "@/lib/ui/single-vendor/Cart";
 import { modeStorage, useAppMode } from "@/lib/mode";
 import { getModeHomeRoute } from "@/lib/mode/routes";
-import VendorModeToggle from "@/lib/ui/useable-components/vendor-mode-toggle";
 import { FiMoon, FiSun, FiUser } from "react-icons/fi";
 import { isMarketplaceLandingPath } from "@/lib/ui/screens/unprotected/landing/landing-state";
 
@@ -86,13 +84,12 @@ const AppTopbar = ({ handleModalToggle }: IAppBarProps) => {
   const t = useTranslations();
   const [, startTransition] = useTransition();
   const currentLocale = useLocale();
-  const { isSingleVendor, mode } = useAppMode();
+  const { mode } = useAppMode();
   const pathname = usePathname();
   const isMarketplaceLanding = isMarketplaceLandingPath(
     pathname,
-    isSingleVendor,
   );
-  const showHeaderSearch = !isMarketplaceLanding && !isSingleVendor;
+  const showHeaderSearch = !isMarketplaceLanding;
 
   // REf
   const menuRef = useRef<Menu>(null);
@@ -131,7 +128,7 @@ const AppTopbar = ({ handleModalToggle }: IAppBarProps) => {
     setRefetchProfileData,
   } = useAuth();
   const { queryData = [] } = useNearByRestaurantsPreview(
-    !isSingleVendor,
+    true,
     1,
     100,
   );
@@ -461,7 +458,6 @@ const AppTopbar = ({ handleModalToggle }: IAppBarProps) => {
                 <div className="order-3 w-full md:order-none md:w-auto">
                   {isMarketplaceLanding ? (
                     <div className="mx-auto flex w-full justify-center md:w-auto">
-                      <VendorModeToggle landing />
                     </div>
                   ) : (
                     <div
@@ -612,7 +608,6 @@ const AppTopbar = ({ handleModalToggle }: IAppBarProps) => {
                 )}
                 {!authToken && !isSearchFocused && !isMarketplaceLanding && (
                   <div className="order-1 hidden md:block">
-                    <VendorModeToggle compact />
                   </div>
                 )}
                 <div className="order-2 p-0">
@@ -731,7 +726,6 @@ const AppTopbar = ({ handleModalToggle }: IAppBarProps) => {
 
             {!isSearchFocused && !authToken && !isMarketplaceLanding && (
               <div className="mt-2 flex justify-center md:hidden">
-                <VendorModeToggle compact />
               </div>
             )}
 
@@ -852,18 +846,9 @@ const AppTopbar = ({ handleModalToggle }: IAppBarProps) => {
           window.dispatchEvent(new Event("orderInstructionsUpdated"));
         }}
         className={`!ml-0 !p-0 !m-0 w-full md:w-[430px] lg:w-[580px] dark:bg-gray-800`}
-        // The single-vendor cart draws its own header and close button.
-        showCloseIcon={!isSingleVendor}
-        pt={
-          isSingleVendor
-            ? { header: { className: "!hidden" }, content: { className: "!p-0" } }
-            : undefined
-        }
+        showCloseIcon
       >
-        {isSingleVendor ? (
-          <SingleVendorCart onClose={() => setIsCartOpen(false)} />
-        ) : (
-          <Cart
+        <Cart
             onClose={() => {
               setIsCartOpen(false);
               modeStorage.set(
@@ -874,7 +859,6 @@ const AppTopbar = ({ handleModalToggle }: IAppBarProps) => {
               window.dispatchEvent(new Event("orderInstructionsUpdated"));
             }}
           />
-        )}
       </Sidebar>
 
       {/* Logout Confirmation Dialog */}

@@ -28,7 +28,6 @@ import {
   faBars,
   faGlobe,
   faFaceFrown,
-  faArrowUpRightFromSquare,
 } from '@fortawesome/free-solid-svg-icons';
 import { useTheme } from 'next-themes';
 
@@ -80,10 +79,6 @@ import {
 import ThemeToggle from '@/lib/ui/useable-components/theme-button';
 import { clearStoredSessionState } from '@/lib/utils/methods/auth';
 import { clearMetricsData } from '@/lib/utils/methods/security';
-
-const singleVendorAdminUrl =
-  process.env.NEXT_PUBLIC_SINGLE_VENDOR_ADMIN_URL ??
-  'https://enatega-singlevendor-admin.netlify.app/';
 
 const AppTopbar = () => {
   // States
@@ -276,18 +271,6 @@ const AppTopbar = () => {
             onClick={() => onRedirectToPage('/dispatch')}
           />
         )}
-        <a
-          href={singleVendorAdminUrl}
-          className="inline-flex h-10 min-w-10 shrink-0 items-center justify-center gap-2 rounded-md border border-gray-200 px-2.5 text-sm font-medium text-gray-700 transition-colors hover:border-primary-color hover:bg-secondary-color hover:text-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-color focus-visible:ring-offset-2 dark:border-dark-600 dark:text-white dark:hover:border-primary-color dark:hover:bg-dark-600"
-          aria-label="Open Single Vendor Admin"
-          title="Open Single Vendor Admin"
-        >
-          <FontAwesomeIcon
-            icon={faArrowUpRightFromSquare}
-            className="h-3.5 w-3.5"
-          />
-          <span className="hidden xl:inline">Single Vendor Admin</span>
-        </a>
         <div className="relative z-50">
           <FontAwesomeIcon
             icon={faBell}
@@ -487,17 +470,6 @@ const AppTopbar = () => {
                 onClick={() => onRedirectToPage('/dispatch')}
               />
             )}
-            <a
-              href={singleVendorAdminUrl}
-              className="inline-flex min-h-11 w-full items-center gap-3 rounded-md bg-gray-50 px-3 text-sm font-medium text-gray-800 transition-colors hover:bg-secondary-color focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-color focus-visible:ring-offset-2 dark:bg-dark-600 dark:text-white dark:hover:bg-dark-500"
-              onClick={() => setIsMenuOpen(false)}
-            >
-              <FontAwesomeIcon
-                icon={faArrowUpRightFromSquare}
-                className="h-4 w-4 shrink-0"
-              />
-              <span>Single Vendor Admin</span>
-            </a>
             {/* <TextIconClickable className="justify-between" icon={faCog} /> */}
             {/* <TextIconClickable className="justify-between" icon={faGlobe} /> */}
             <TextIconClickable

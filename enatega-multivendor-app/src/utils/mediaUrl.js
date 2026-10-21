@@ -41,17 +41,10 @@ function normalizeManagedMediaUrl(remoteUrl, baseUrl = '') {
   }
 }
 
-function normalizeSingleVendorMediaUrl(remoteUrl) {
-  return normalizeManagedMediaUrl(
-    remoteUrl,
-    process.env.EXPO_PUBLIC_SINGLE_VENDOR_REST_URL
-  )
-}
 
 export {
   isAbsoluteMediaUrl,
   isDomainLikeMediaUrl,
   normalizeMediaUrl,
   normalizeManagedMediaUrl,
-  normalizeSingleVendorMediaUrl
 }

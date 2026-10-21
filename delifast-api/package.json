@@ -1,0 +1,38 @@
+{
+  "name": "delifast-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.19.0 <25"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && mkdir -p dist/schema && cp schema/v1.graphql dist/schema/v1.graphql",
+    "start": "node dist/src/server.js",
+    "dev": "tsx src/server.ts",
+    "dev:db": "tsx src/dev-db.ts",
+    "dev:db:replset": "tsx src/dev-db-replset.ts",
+    "migrate": "tsx migrations/index.ts",
+    "seed": "tsx migrations/seed.ts",
+    "test": "vitest run",
+    "test:transactions": "vitest run test/replica-set-transactions.test.ts test/checkout-fences-prototype.test.ts test/checkout-fences-runtime.test.ts test/checkout-session.test.ts test/checkout-policy.test.ts test/checkout-writer-gaps.test.ts test/checkout-writer-participation.test.ts test/checkout-atomic-order.test.ts test/checkout-atomic-api.test.ts test/checkout-coverage.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@apollo/server": "^5.5.1",
+    "@as-integrations/express4": "^1.1.2",
+    "express": "^4.21.2",
+    "graphql": "^16.10.0",
+    "mongodb": "^6.12.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.2",
+    "@types/supertest": "^7.2.1",
+    "mongodb-memory-server": "^10.1.4",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

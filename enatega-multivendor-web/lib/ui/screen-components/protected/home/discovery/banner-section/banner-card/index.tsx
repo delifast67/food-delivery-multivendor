@@ -1,6 +1,5 @@
 "use client";
 
-import { useAppMode } from "@/lib/mode";
 import Image from "@/lib/ui/useable-components/safe-image";
 import { IGetBannersResponse } from "@/lib/utils/interfaces";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
@@ -39,24 +38,6 @@ const isVideoFile = (file?: string) =>
     file?.includes("video"),
   );
 
-const parseParameters = (rawParameters?: string | string[]) => {
-  if (typeof rawParameters === "string") {
-    try {
-      return JSON.parse(rawParameters) as Record<string, string>;
-    } catch {
-      return {};
-    }
-  }
-  if (Array.isArray(rawParameters)) {
-    return Object.fromEntries(
-      rawParameters
-        .map((entry) => entry.split("="))
-        .filter(([key, value]) => key && value),
-    );
-  }
-  return {};
-};
-
 const primePreviewFrame = (event: SyntheticEvent<HTMLVideoElement>) => {
   const video = event.currentTarget;
   const duration = Number.isFinite(video.duration) ? video.duration : 0;
@@ -73,7 +54,6 @@ export default function OrbitBannerCarousel({
 }) {
   const router = useRouter();
   const t = useTranslations();
-  const { isSingleVendor } = useAppMode();
   const reduceMotion = useReducedMotion();
   const sectionRef = useRef<HTMLElement>(null);
   const heroVideoRef = useRef<HTMLVideoElement>(null);
@@ -174,23 +154,6 @@ export default function OrbitBannerCarousel({
   }, [activeIndex, items.length, move, shouldPlay]);
 
   const navigateForBanner = (item: Banner) => {
-    if (isSingleVendor) {
-      const parameters = parseParameters(item.parameters);
-      const screen = item.screen?.toLowerCase();
-      const categoryId = parameters.categoryId || parameters.id || item.slug;
-      const foodId = parameters.foodId || parameters.productId || parameters.id;
-      if (screen === "category" && categoryId) {
-        router.push(`/category/${categoryId}`);
-      } else if (screen === "product" && foodId) {
-        router.push(`/product/${foodId}`);
-      } else if (screen?.includes("deal")) {
-        router.push("/deals");
-      } else {
-        router.push("/browse");
-      }
-      return;
-    }
-
     if (item.action === "Navigate Specific Restaurant") {
       router.push(
         `/${item.shopType === "restaurant" ? "restaurant" : "store"}/${item.slug}/${item.screen}`,

@@ -10,6 +10,10 @@ import { FlashMessageComponent } from "../ui/useable-components";
 import { IOrder } from "../utils/interfaces/order.interface";
 import { getRemainingAcceptingTime } from "../utils/methods";
 
+type AssignOrderResponse = {
+  assignOrder: Pick<IOrder, "_id" | "orderStatus"> | null;
+};
+
 const useOrder = (order: IOrder) => {
   //   const { active } = useContext(TabsContext)
   const { refetchAssigned } = useContext(UserContext);
@@ -17,13 +21,13 @@ const useOrder = (order: IOrder) => {
   const router = useRouter();
   const secondsRef = useRef(0);
   const minutesRef = useRef(2);
-  const timerRef = useRef<NodeJS.Timeout>();
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [time, setTime] = useState("00:00");
 
   useEffect(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
-      timerRef.current = undefined;
+      timerRef.current = null;
     }
 
     if (order.acceptedAt) {
@@ -42,7 +46,7 @@ const useOrder = (order: IOrder) => {
             } else {
               if (timerRef.current) {
                 clearInterval(timerRef.current);
-                timerRef.current = undefined;
+                timerRef.current = null;
               }
               refetchAssigned();
             }
@@ -56,7 +60,12 @@ const useOrder = (order: IOrder) => {
       }
     }
 
-    return () => timerRef.current && clearInterval(timerRef.current);
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, [order.acceptedAt, refetchAssigned]);
 
   // Removed the per-card SUBSCRIPTION_ORDERS subscription: it opened one WebSocket
@@ -64,7 +73,7 @@ const useOrder = (order: IOrder) => {
   // and the same order data already flows through UserContext's assigned/zone
   // subscriptions into assignedOrders.
 
-  const [mutateAssignOrder, { loading: loadingAssignOrder }] = useMutation(
+  const [mutateAssignOrder, { loading: loadingAssignOrder }] = useMutation<AssignOrderResponse>(
     ASSIGN_ORDER,
     {
       onCompleted,
@@ -73,7 +82,7 @@ const useOrder = (order: IOrder) => {
     }
   );
 
-  async function onCompleted(result) {
+  function onCompleted(result: AssignOrderResponse) {
     if (result.assignOrder) {
       FlashMessageComponent({ message: "Order has been assigned to you." });
       router.replace("/(tabs)/home/orders/processing");

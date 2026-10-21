@@ -11,7 +11,7 @@ import useMultivendorTheme from '../../../ui/designSystem/useMultivendorTheme'
 import { calulateRemainingTime } from '../../../utils/customFunctions'
 import { scale } from '../../../utils/scaling'
 import TextDefault from '../../Text/TextDefault/TextDefault'
-import { LiveDot } from '../../../singlevendor/screens/Checkout/HomeCart'
+const LiveDot = ({ color = '#22C55E' }) => <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
 import styles from './styles'
 
 const ACTIVE_STATUSES = ['PENDING', 'ACCEPTED', 'ASSIGNED', 'PICKED']
@@ -44,7 +44,7 @@ const getRemainingTime = (order, currentTime) => {
   return Math.max(0, Math.ceil((targetDate.getTime() - currentTime.getTime()) / 60000))
 }
 
-// Mirrors the single-vendor Home "live activity" card (HomeCart) in a tighter
+// Mirrors the multivendor Home "live activity" card (HomeCart) in a tighter
 // footprint, fed by the multivendor orders context.
 const ActiveOrders = ({ onActiveOrdersChange }) => {
   const { t, i18n } = useTranslation()

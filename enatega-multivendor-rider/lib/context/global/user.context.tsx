@@ -17,11 +17,8 @@ import {
 import {
   RIDER_ORDERS,
   RIDER_PROFILE,
-  SINGLE_VENDOR_RIDER_ORDERS,
 } from "@/lib/apollo/queries";
 import {
-  SINGLE_VENDOR_SUBSCRIPTION_ASSIGNED_RIDER,
-  SINGLE_VENDOR_SUBSCRIPTION_ZONE_ORDERS,
   SUBSCRIPTION_ASSIGNED_RIDER,
   SUBSCRIPTION_ZONE_ORDERS,
 } from "@/lib/apollo/subscriptions";
@@ -46,16 +43,9 @@ const EMPTY_ORDERS: IOrder[] = [];
 export const UserProvider = ({ children }: IUserProviderProps) => {
   const { mode, riderIdKey } = useRiderMode();
   const { isAuthReady, logout, token } = useContext(AuthContext);
-  const isSingleVendor = mode === RIDER_SERVER_MODES.SINGLE;
-  const riderOrdersQuery = isSingleVendor
-    ? SINGLE_VENDOR_RIDER_ORDERS
-    : RIDER_ORDERS;
-  const assignedRiderSubscription = isSingleVendor
-    ? SINGLE_VENDOR_SUBSCRIPTION_ASSIGNED_RIDER
-    : SUBSCRIPTION_ASSIGNED_RIDER;
-  const zoneOrdersSubscription = isSingleVendor
-    ? SINGLE_VENDOR_SUBSCRIPTION_ZONE_ORDERS
-    : SUBSCRIPTION_ZONE_ORDERS;
+  const riderOrdersQuery = RIDER_ORDERS;
+  const assignedRiderSubscription = SUBSCRIPTION_ASSIGNED_RIDER;
+  const zoneOrdersSubscription = SUBSCRIPTION_ZONE_ORDERS;
   // States
   const [modalVisible, setModalVisible] = useState<
     IRiderEarnings & { bool: boolean }
@@ -73,7 +63,7 @@ export const UserProvider = ({ children }: IUserProviderProps) => {
   >([] as IRiderEarningsArray[]);
   const [userId, setUserId] = useState("");
   const [zoneId, setZoneId] = useState("");
-  const [hasMoreAssigned, setHasMoreAssigned] = useState(true);
+  const hasMoreAssigned = false;
 
   const {
     loading: loadingProfile,
@@ -96,32 +86,17 @@ export const UserProvider = ({ children }: IUserProviderProps) => {
     networkStatus: networkStatusAssigned,
     subscribeToMore,
     refetch: refetchAssigned,
-    fetchMore: fetchMoreAssigned,
   } = useQuery(riderOrdersQuery, {
     // Orders change constantly (status updates, new assignments), so every
     // fetch/refetch/poll must hit the network rather than falling back to
     // cache-first, which could serve stale order lists.
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
-    pollInterval: isSingleVendor ? 0 : 30000,
+    pollInterval: 30000,
     skip: !userId,
-    variables: isSingleVendor ? {limit: 50, offset: 0} : {userId},
+    variables: {userId},
   });
-  const loadMoreAssigned = useCallback(async () => {
-    if (!isSingleVendor || loadingAssigned || !hasMoreAssigned) return;
-    const existing = dataAssigned?.riderOrders ?? [];
-    const {data: nextPage} = await fetchMoreAssigned({
-      variables: {limit: 50, offset: existing.length},
-      updateQuery: (previous, {fetchMoreResult}) => {
-        const incoming = fetchMoreResult?.riderOrders ?? [];
-        const byId = new Map(
-          [...(previous.riderOrders ?? []), ...incoming].map((order: IOrder) => [order._id, order]),
-        );
-        return {riderOrders: [...byId.values()]};
-      },
-    });
-    setHasMoreAssigned((nextPage?.riderOrders?.length ?? 0) === 50);
-  }, [dataAssigned?.riderOrders, fetchMoreAssigned, hasMoreAssigned, isSingleVendor, loadingAssigned]);
+  const loadMoreAssigned = useCallback(async () => {}, []);
   const isRiderAvailable = Boolean(dataProfile?.rider?.available);
 
   const getUserId = useCallback(async () => {

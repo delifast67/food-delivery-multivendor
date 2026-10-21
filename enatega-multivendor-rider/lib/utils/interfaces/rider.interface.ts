@@ -21,6 +21,7 @@ export interface IRiderTransaction {
   status: string
   amountTransferred: number
   createdAt: string
+  _id?: string
 }
 
 export interface IRiderTransactionHistoryResponse {

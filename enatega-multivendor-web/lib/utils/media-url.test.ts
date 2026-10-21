@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { normalizeMediaUrl } from "./media-url";
 
-const API_URL = "https://single-vendor.example.com/";
+const API_URL = "https://legacy.example.com/";
 
 describe("normalizeMediaUrl", () => {
   it("maps an API public-media key to the managed media endpoint", () => {
     expect(normalizeMediaUrl("public-media/cart-item.jpg", API_URL)).toBe(
-      "https://single-vendor.example.com/media/cart-item.jpg",
+      "https://legacy.example.com/media/cart-item.jpg",
     );
   });
 
@@ -31,12 +31,12 @@ describe("normalizeMediaUrl", () => {
         "https://old-api.example.com/media/cart-item.jpg?v=2",
         API_URL,
       ),
-    ).toBe("https://single-vendor.example.com/media/cart-item.jpg?v=2");
+    ).toBe("https://legacy.example.com/media/cart-item.jpg?v=2");
   });
 
   it("normalizes other API-relative image paths", () => {
     expect(normalizeMediaUrl("uploads/item.jpg", API_URL)).toBe(
-      "https://single-vendor.example.com/uploads/item.jpg",
+      "https://legacy.example.com/uploads/item.jpg",
     );
   });
 });

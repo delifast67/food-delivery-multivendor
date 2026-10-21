@@ -1,0 +1,322 @@
+'use strict'
+const { test } = require('node:test')
+const assert = require('node:assert/strict')
+const { createClient } = require('./api')
+const { createController, CUSTOMER_TOKEN_KEY } = require('./controller')
+
+const response = body => ({ ok: true, status: 200, json: async () => ({ data: body }) })
+const storage = (db = {}) => ({ db, getItem: async k => db[k] ?? null, setItem: async (k, v) => { db[k] = v }, removeItem: async k => { delete db[k] } })
+const tick = () => new Promise(resolve => setImmediate(resolve))
+const deferred = () => { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j }); return { promise, resolve, reject } }
+const address = { id: 'old-id', customerId: 'must-not-leak', recipientName: 'Awa', phone: '+22670000000', city: 'Ouaga', neighborhood: 'Koulouba', landmark: 'Marché', instructions: '', point: { latitude: 12.37, longitude: -1.52, extra: 'drop-me' }, extra: 'drop-me' }
+
+function op(body) {
+  const match = body.query.match(/(?:query|mutation)\s+([A-Za-z0-9_]+)/)
+  return match && match[1]
+}
+
+test('les 9 opérations customer suivent le protocole Bearer privé/public et whitelistent les inputs imbriqués', async () => {
+  const sent = []
+  const api = createClient({ fetchImpl: async (url, init) => {
+    sent.push({ body: JSON.parse(init.body), authorization: init.headers.authorization })
+    const name = op(sent.at(-1).body)
+    const values = {
+      CustomerMe: { customerMe: { id: 'c', phone: '+22670000000' } },
+      CustomerAddresses: { customerAddresses: [{ id: 'a' }] },
+      RequestCustomerOtp: { requestCustomerOtp: { challengeId: 'ch', expiresIn: 30, retryAfter: 5 } },
+      ResendCustomerOtp: { resendCustomerOtp: { challengeId: 'ch2', expiresIn: 30, retryAfter: 5 } },
+      VerifyCustomerOtp: { verifyCustomerOtp: { token: 'server-token', customer: { id: 'c', phone: '+22670000000' } } },
+      CustomerLogout: { customerLogout: true },
+      CreateCustomerAddress: { createCustomerAddress: { id: 'new' } },
+      UpdateCustomerAddress: { updateCustomerAddress: { id: 'a' } },
+      DeleteCustomerAddress: { deleteCustomerAddress: true }
+    }
+    return response(values[name])
+  } })
+  api.setCustomerToken('memory-token')
+  await api.customerMe(); await api.customerAddresses()
+  await api.requestCustomerOtp('+22670000000'); await api.resendCustomerOtp('ch')
+  await api.verifyCustomerOtp('ch', '123456'); await api.customerLogout()
+  await api.createCustomerAddress(address); await api.updateCustomerAddress('a', address); await api.deleteCustomerAddress('a')
+  assert.equal(sent.length, 9)
+  const privateNames = new Set(['CustomerMe', 'CustomerAddresses', 'CustomerLogout', 'CreateCustomerAddress', 'UpdateCustomerAddress', 'DeleteCustomerAddress'])
+  for (const item of sent) assert.equal(item.authorization, privateNames.has(op(item.body)) ? 'Bearer memory-token' : undefined, op(item.body))
+  const create = sent.find(x => op(x.body) === 'CreateCustomerAddress').body.variables.input
+  const update = sent.find(x => op(x.body) === 'UpdateCustomerAddress').body.variables.input
+  assert.deepEqual(create, { recipientName: address.recipientName, phone: address.phone, city: address.city, neighborhood: address.neighborhood, landmark: address.landmark, instructions: '', point: { latitude: 12.37, longitude: -1.52 } })
+  assert.deepEqual(update, create)
+  assert.equal(sent.find(x => op(x.body) === 'UpdateCustomerAddress').body.variables.id, 'a')
+})
+
+test('la demande OTP valide strictement le téléphone +226 et le provider absent est normalisé sans appel', async () => {
+  let calls = 0
+  const controller = createController({ api: { requestCustomerOtp: async () => { calls++; return { challengeId: 'ch', expiresIn: 30, retryAfter: 5 } } }, storage: storage() })
+  await assert.rejects(controller.requestCustomerOtp('70000000'), /Téléphone BF invalide/)
+  await assert.rejects(controller.requestCustomerOtp('+2267000000'), /Téléphone BF invalide/)
+  await assert.rejects(controller.requestCustomerOtp('+22670000000x'), /Téléphone BF invalide/)
+  await controller.requestCustomerOtp('+22670000000')
+  assert.equal(calls, 1)
+  for (const action of ['requestCustomerOtp', 'resendCustomerOtp', 'verifyCustomerOtp']) {
+    const unavailable = createController({ api: {}, storage: storage() })
+    await assert.rejects(action === 'requestCustomerOtp' ? unavailable[action]('+22670000000') : action === 'resendCustomerOtp' ? unavailable[action]('ch') : unavailable[action]('ch', '123456'), /connexion réelle est momentanément indisponible/)
+  }
+})
+
+test('le code OTP est exactement à 6 chiffres, rejeté avant API, et seul le token est stocké', async () => {
+  const store = storage(); let calls = 0
+  const controller = createController({ storage: store, api: {
+    setCustomerToken: () => {},
+    verifyCustomerOtp: async (challenge, code) => { calls++; assert.equal(code, '123456'); return { token: 'server-token', customer: { id: 'c', phone: '+22670000000' } } },
+    customerAddresses: async () => [],
+    requestCustomerOtp: async () => ({ challengeId: 'challenge', expiresIn: 30, retryAfter: 0 })
+  } })
+  for (const bad of ['1234', '12345', '1234567', '12a456', '']) await assert.rejects(controller.verifyCustomerOtp('challenge', bad), /Code de vérification invalide/)
+  assert.equal(calls, 0)
+  await controller.requestCustomerOtp('+22670000000')
+  await controller.verifyCustomerOtp('challenge', '123456')
+  assert.equal(store.db[CUSTOMER_TOKEN_KEY], 'server-token')
+  assert.equal(store.db.otp, undefined)
+})
+
+test('les appels auth concurrents sont exclusifs : la seconde action est rejetée et ne partage pas la première', async () => {
+  const wait = deferred(); let calls = 0
+  const controller = createController({ storage: storage(), api: { requestCustomerOtp: async () => { calls++; return wait.promise } } })
+  const first = controller.requestCustomerOtp('+22670000000'); await tick()
+  await assert.rejects(controller.requestCustomerOtp('+22670000000'), /action|cours|occup|busy/i)
+  assert.equal(calls, 1)
+  wait.resolve({ challengeId: 'ch', expiresIn: 30, retryAfter: 0 }); await first
+})
+
+test('un challenge OTP mobile expiré est rejeté avant tout appel provider', async () => {
+  const realNow = Date.now; let now = 1000; let verifies = 0
+  Date.now = () => now
+  try {
+    const controller = createController({ storage: storage(), api: {
+      requestCustomerOtp: async () => ({ challengeId: 'expired', expiresIn: 1, retryAfter: 0 }),
+      verifyCustomerOtp: async () => { verifies++; return { token: 'server-token', customer: { id: 'c', phone: '+22670000000' } } }
+    } })
+    await controller.requestCustomerOtp('+22670000000')
+    now += 1001
+    await assert.rejects(controller.verifyCustomerOtp('expired', '123456'), /expiré/)
+    assert.equal(verifies, 0)
+  } finally { Date.now = realNow }
+})
+
+for (const method of ['requestCustomerOtp', 'resendCustomerOtp']) {
+  test(`${method} tardif après logout ne réinstalle pas un challenge utilisable`, async () => {
+    const wait = deferred(); let verifies = 0
+    const challenge = { challengeId: 'ch', expiresIn: 30, retryAfter: 0 }
+    const controller = createController({ storage: storage(), api: {
+      setCustomerToken: () => {},
+      requestCustomerOtp: async () => method === 'requestCustomerOtp' ? wait.promise : challenge,
+      resendCustomerOtp: async () => wait.promise,
+      verifyCustomerOtp: async () => { verifies++; throw new Error('Appel interdit') },
+      customerLogout: async () => true
+    } })
+    if (method === 'resendCustomerOtp') await controller.requestCustomerOtp('+22670000000')
+    const pending = controller[method](method === 'requestCustomerOtp' ? '+22670000000' : 'ch')
+    await tick()
+    await controller.logoutCustomer()
+    wait.resolve(challenge)
+    await assert.rejects(pending, /annulée/)
+    await assert.rejects(controller.verifyCustomerOtp('ch', '123456'), /expiré/)
+    assert.equal(verifies, 0)
+  })
+}
+
+test('restoreCustomer ignore une restauration obsolète après logout et ne réinstalle pas les anciennes adresses', async () => {
+  const wait = deferred(); const store = storage({ [CUSTOMER_TOKEN_KEY]: 'old-token' }); let currentToken
+  const controller = createController({ storage: store, api: {
+    setCustomerToken: token => { currentToken = token },
+    customerMe: async () => wait.promise,
+    customerAddresses: async () => [{ id: 'old-address' }],
+    customerLogout: async () => true
+  } })
+  const restoring = controller.restoreCustomer(); await tick()
+  const logout = controller.logoutCustomer(); await logout
+  wait.resolve({ id: 'c', phone: '+22670000000' }); await restoring
+  assert.equal(currentToken, null)
+  assert.equal(store.db[CUSTOMER_TOKEN_KEY], undefined)
+  assert.deepEqual(controller.getState().addresses, [])
+  assert.equal(controller.getState().customer, null)
+})
+
+test('verify obsolète après logout ne restaure pas session ni stockage, et logout révoque le token courant', async () => {
+  const wait = deferred(); const store = storage(); let token
+  const controller = createController({ storage: store, api: {
+    setCustomerToken: value => { token = value },
+    requestCustomerOtp: async () => ({ challengeId: 'ch', expiresIn: 30, retryAfter: 0 }),
+    verifyCustomerOtp: async () => wait.promise,
+    customerAddresses: async () => [{ id: 'stale' }],
+    customerLogout: async () => true
+  } })
+  await controller.requestCustomerOtp('+22670000000')
+  const verifying = controller.verifyCustomerOtp('ch', '123456'); await tick()
+  const logout = controller.logoutCustomer(); await logout
+  wait.resolve({ token: 'late-token', customer: { id: 'c', phone: '+22670000000' } })
+  await assert.rejects(verifying, /annulée|connexion/i)
+  assert.equal(token, null); assert.equal(store.db[CUSTOMER_TOKEN_KEY], undefined); assert.equal(controller.getState().customer, null)
+})
+
+test('CRUD après restauration utilise des fixtures de session explicites, whitelist et ne ressuscite pas de vieilles adresses', async () => {
+  const store = storage({ [CUSTOMER_TOKEN_KEY]: 'restored-token' }); const calls = []
+  const controller = createController({ storage: store, api: {
+    setCustomerToken: () => {}, customerMe: async () => ({ id: 'c', phone: '+22670000000' }), customerAddresses: async () => [{ id: 'old' }],
+    createCustomerAddress: async input => { calls.push(['create', input]); return { ...input, id: 'new' } },
+    updateCustomerAddress: async (id, input) => { calls.push(['update', id, input]); return { ...input, id } },
+    deleteCustomerAddress: async id => { calls.push(['delete', id]); return true }
+  } })
+  await controller.restoreCustomer()
+  await controller.createCustomerAddress(address); await controller.updateCustomerAddress('new', address); await controller.deleteCustomerAddress('new')
+  assert.deepEqual(calls[0][1], { recipientName: address.recipientName, phone: address.phone, city: address.city, neighborhood: address.neighborhood, landmark: address.landmark, instructions: '', point: { latitude: 12.37, longitude: -1.52 } })
+  assert.deepEqual(controller.getState().addresses, [{ id: 'old' }])
+})
+
+test('un CRUD refusé pour session révoquée efface le compte local et son token', async () => {
+  const store = storage({ [CUSTOMER_TOKEN_KEY]: 'revoked-token' }); let token = 'revoked-token'
+  const revoked = Object.assign(new Error('Session révoquée'), { kind: 'auth', code: 'UNAUTHENTICATED' })
+  const controller = createController({ storage: store, api: {
+    setCustomerToken: value => { token = value },
+    customerMe: async () => ({ id: 'c', phone: '+22670000000' }),
+    customerAddresses: async () => [{ id: 'old' }],
+    updateCustomerAddress: async () => { throw revoked }
+  } })
+  await controller.restoreCustomer()
+  await assert.rejects(controller.updateCustomerAddress('old', address), /révoquée/)
+  assert.equal(token, null)
+  assert.equal(store.db[CUSTOMER_TOKEN_KEY], undefined)
+  assert.equal(controller.getState().customer, null)
+  assert.deepEqual(controller.getState().addresses, [])
+})
+
+test('le client HTTP distingue une réponse GraphQL UNAUTHENTICATED', async () => {
+  const api = createClient({ fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ errors: [{ message: 'Session révoquée', extensions: { code: 'UNAUTHENTICATED' } }] }) }) })
+  await assert.rejects(api.customerMe(), error => error.kind === 'auth' && error.code === 'UNAUTHENTICATED')
+})
+
+for (const method of ['createCustomerAddress', 'deleteCustomerAddress']) {
+  test(`${method} refuse une session révoquée et efface les données privées`, async () => {
+    const store = storage({ [CUSTOMER_TOKEN_KEY]: 'revoked-test-token' }); let token
+    const controller = createController({ storage: store, api: {
+      setCustomerToken: value => { token = value },
+      customerMe: async () => ({ id: 'c', phone: '+22670000000' }),
+      customerAddresses: async () => [{ id: 'old' }],
+      [method]: async () => { throw Object.assign(new Error('Session refusée'), { kind: 'auth' }) }
+    } })
+    await controller.restoreCustomer()
+    await assert.rejects(method === 'createCustomerAddress' ? controller[method](address) : controller[method]('old'), /Session refusée/)
+    assert.equal(token, null)
+    assert.equal(store.db[CUSTOMER_TOKEN_KEY], undefined)
+    assert.equal(controller.getState().customer, null)
+    assert.deepEqual(controller.getState().addresses, [])
+  })
+}
+
+test('une panne réseau du carnet ne supprime pas la session client', async () => {
+  const store = storage({ [CUSTOMER_TOKEN_KEY]: 'valid-test-token' }); let token
+  const customer = { id: 'c', phone: '+22670000000' }
+  const controller = createController({ storage: store, api: {
+    setCustomerToken: value => { token = value },
+    customerMe: async () => customer,
+    customerAddresses: async () => [{ id: 'old' }],
+    updateCustomerAddress: async () => { throw Object.assign(new Error('Connexion interrompue'), { kind: 'unavailable' }) }
+  } })
+  await controller.restoreCustomer()
+  await assert.rejects(controller.updateCustomerAddress('old', address), /Connexion interrompue/)
+  assert.equal(token, 'valid-test-token')
+  assert.equal(store.db[CUSTOMER_TOKEN_KEY], 'valid-test-token')
+  assert.deepEqual(controller.getState().customer, customer)
+  assert.deepEqual(controller.getState().addresses, [{ id: 'old' }])
+})
+
+test('une panne réseau pendant la restauration du carnet conserve la session et l’identité', async () => {
+  const store = storage({ [CUSTOMER_TOKEN_KEY]: 'valid-restore-token' }); let token = null
+  const customer = { id: 'c', phone: '+22670000000' }
+  const unavailable = Object.assign(new Error('Connexion interrompue'), { kind: 'unavailable' })
+  const controller = createController({ storage: store, api: {
+    setCustomerToken: value => { token = value },
+    customerMe: async () => customer,
+    customerAddresses: async () => { throw unavailable }
+  } })
+  await assert.rejects(controller.restoreCustomer(), /Connexion interrompue/)
+  assert.equal(token, 'valid-restore-token')
+  assert.equal(store.db[CUSTOMER_TOKEN_KEY], 'valid-restore-token')
+  assert.deepEqual(controller.getState().customer, customer)
+  assert.deepEqual(controller.getState().addresses, [])
+})
+
+for (const status of [401, 403]) {
+  test(`le client HTTP classe le statut ${status} en refus d'authentification`, async () => {
+    const api = createClient({ fetchImpl: async () => ({ ok: false, status, json: async () => ({ errors: [{ message: 'Accès refusé' }] }) }) })
+    await assert.rejects(api.customerAddresses(), error => error.kind === 'auth' && error.status === status)
+  })
+}
+
+test('un refus obsolète du carnet après logout ne purge pas une seconde fois le stockage', async () => {
+  const wait = deferred(); let removals = 0
+  const store = storage({ [CUSTOMER_TOKEN_KEY]: 'old-token' })
+  const remove = store.removeItem
+  store.removeItem = async key => { removals++; await remove(key) }
+  const controller = createController({ storage: store, api: {
+    setCustomerToken: () => {},
+    customerMe: async () => ({ id: 'c', phone: '+22670000000' }),
+    customerAddresses: async () => [{ id: 'old' }],
+    customerLogout: async () => true,
+    updateCustomerAddress: async () => wait.promise
+  } })
+  await controller.restoreCustomer()
+  const updating = controller.updateCustomerAddress('old', address)
+  const rejected = assert.rejects(updating, /Session refusée/)
+  await tick()
+  await controller.logoutCustomer()
+  const removalsAfterLogout = removals
+  assert.ok(removalsAfterLogout >= 2)
+  wait.reject(Object.assign(new Error('Session refusée'), { kind: 'auth' }))
+  await rejected
+  assert.equal(removals, removalsAfterLogout)
+  assert.equal(controller.getState().customer, null)
+})
+
+test('profil client whiteliste les trois champs et conserve omission/effacement', async () => {
+  const sent = []
+  const api = createClient({ fetchImpl: async (url, init) => {
+    const body = JSON.parse(init.body); sent.push(body)
+    return response({ updateCustomerProfile: { id: 'c', phone: '+22670000000', firstName: '', lastName: null, email: null } })
+  } })
+  api.setCustomerToken('profile-token')
+  await api.updateCustomerProfile({ firstName: '', lastName: undefined, email: null, ignored: 'drop' })
+  assert.deepEqual(sent[0].variables.input, { firstName: '', email: null })
+  assert.match(sent[0].query, /CustomerProfileInput/)
+})
+
+test('édition profil valide, ne persiste aucun profil et une réponse stale ne change pas la session', async () => {
+  const store = storage({ [CUSTOMER_TOKEN_KEY]: 'profile-token' }); const wait = deferred(); let sent
+  const controller = createController({ storage: store, api: {
+    setCustomerToken: () => {}, customerMe: async () => ({ id: 'c', phone: '+22670000000', firstName: null, lastName: null, email: null }), customerAddresses: async () => [],
+    updateCustomerProfile: async input => { sent = input; return wait.promise }
+  } })
+  await controller.restoreCustomer()
+  const saving = controller.updateCustomerProfile({ firstName: ' Awa ', lastName: 'K.', email: '' }); await tick()
+  assert.deepEqual(sent, { firstName: 'Awa', lastName: 'K.', email: null })
+  await controller.logoutCustomer(); wait.resolve({ id: 'c', phone: '+22670000000', firstName: 'Awa', lastName: 'K.', email: '' }); await assert.rejects(saving, /Connexion annulée/)
+  assert.equal(controller.getState().customer, null)
+  assert.equal(store.db['delifast-customer-profile'], undefined)
+  const invalid = createController({ storage: storage(), api: { updateCustomerProfile: async () => { throw new Error('must not call') } } })
+  await assert.rejects(invalid.updateCustomerProfile({ email: 'not-an-email' }), /Connexion client requise/)
+})
+
+test('profil accepte null et bornes 2..255/254, mais refuse les types et dépassements', async () => {
+  const sent = []
+  const controller = createController({ storage: storage({ [CUSTOMER_TOKEN_KEY]: 'profile-token' }), api: {
+    setCustomerToken: () => {}, customerMe: async () => ({ id: 'c', phone: '+22670000000' }), customerAddresses: async () => [], updateCustomerProfile: async value => { sent.push(value); return { id: 'c' } }
+  } })
+  await controller.restoreCustomer()
+  await assert.rejects(controller.updateCustomerProfile({ firstName: 1 }), /Prénom invalide/)
+  await assert.rejects(controller.updateCustomerProfile({ firstName: 'x' }), /2 à 255/)
+  await assert.rejects(controller.updateCustomerProfile({ lastName: 'x'.repeat(256) }), /2 à 255/)
+  await assert.rejects(controller.updateCustomerProfile({ email: 'a'.repeat(250) + '@x.com' }), /254/)
+  await controller.updateCustomerProfile({ firstName: ' Aw ', lastName: 'N'.repeat(255), email: '' })
+  assert.deepEqual(sent[0], { firstName: 'Aw', lastName: 'N'.repeat(255), email: null })
+  await controller.updateCustomerProfile({ firstName: null, lastName: null, email: null })
+  assert.deepEqual(sent[1], { firstName: null, lastName: null, email: null })
+})

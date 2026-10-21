@@ -1,6 +1,6 @@
 import "react-native-get-random-values";
 
-import { ApolloClient, gql, NormalizedCacheObject } from "@apollo/client";
+import { ApolloClient, gql } from "@apollo/client";
 import * as SecureStore from "expo-secure-store";
 import * as Device from "expo-device";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -51,8 +51,8 @@ class PublicAccessTokenService {
     return PublicAccessTokenService.instance;
   }
 
-  async initialize(
-    apolloClient: ApolloClient<NormalizedCacheObject>,
+  async initialize<TCacheShape>(
+    apolloClient: ApolloClient<TCacheShape>,
     scope: string,
   ): Promise<void> {
     if (this.scope !== scope) {
@@ -92,8 +92,8 @@ class PublicAccessTokenService {
     return `${base}.${safeScope}`;
   }
 
-  private scheduleRefresh(
-    apolloClient: ApolloClient<NormalizedCacheObject>,
+  private scheduleRefresh<TCacheShape>(
+    apolloClient: ApolloClient<TCacheShape>,
   ): void {
     if (this.refreshTimer) {
       clearTimeout(this.refreshTimer);
@@ -148,8 +148,8 @@ class PublicAccessTokenService {
     return Date.now() >= this.expiry;
   }
 
-  async refreshToken(
-    apolloClient: ApolloClient<NormalizedCacheObject>,
+  async refreshToken<TCacheShape>(
+    apolloClient: ApolloClient<TCacheShape>,
   ): Promise<void> {
     if (this.refreshPromise) {
       return this.refreshPromise;
@@ -162,59 +162,57 @@ class PublicAccessTokenService {
       if (generation !== this.scopeGeneration || scope !== this.scope) return;
       this.nonce = nonce;
 
-      try {
-        const locale = (await AsyncStorage.getItem("lang")) || "en";
-        const { data } = await apolloClient.mutate({
-          mutation: METRICS_GENERAL,
-          context: {
-            headers: {
-              nonce,
-              "x-platform": Platform.OS,
-              "accept-language": locale,
-              "user-agent": STORE_PUBLIC_ACCESS_USER_AGENT,
-              "x-skip-public-auth": "true",
-            },
+      const locale = (await AsyncStorage.getItem("lang")) || "en";
+      const { data } = await apolloClient.mutate({
+        mutation: METRICS_GENERAL,
+        context: {
+          headers: {
+            nonce,
+            "x-platform": Platform.OS,
+            "accept-language": locale,
+            "user-agent": STORE_PUBLIC_ACCESS_USER_AGENT,
+            "x-skip-public-auth": "true",
           },
-          fetchPolicy: "no-cache",
-        });
+        },
+        fetchPolicy: "no-cache",
+      });
 
-        if (
-          data?.metricsGeneral &&
-          generation === this.scopeGeneration &&
-          scope === this.scope
-        ) {
-          const token = data.metricsGeneral.experience;
-          if (typeof token !== "string") return;
-          this.token = token;
-          const expiryTime = new Date(data.metricsGeneral.hehe).getTime();
-          this.expiry = expiryTime;
+      if (
+        data?.metricsGeneral &&
+        generation === this.scopeGeneration &&
+        scope === this.scope
+      ) {
+        const token = data.metricsGeneral.experience;
+        if (typeof token !== "string") return;
+        this.token = token;
+        const expiryTime = new Date(data.metricsGeneral.hehe).getTime();
+        this.expiry = expiryTime;
 
-          await Promise.all([
-            SecureStore.setItemAsync(this.scopedKey(KEYS.NONCE, scope), nonce),
-            SecureStore.setItemAsync(this.scopedKey(KEYS.TOKEN, scope), token),
-            SecureStore.setItemAsync(
-              this.scopedKey(KEYS.EXPIRY, scope),
-              expiryTime.toString(),
-            ),
-          ]);
+        await Promise.all([
+          SecureStore.setItemAsync(this.scopedKey(KEYS.NONCE, scope), nonce),
+          SecureStore.setItemAsync(this.scopedKey(KEYS.TOKEN, scope), token),
+          SecureStore.setItemAsync(
+            this.scopedKey(KEYS.EXPIRY, scope),
+            expiryTime.toString(),
+          ),
+        ]);
 
-          if (generation === this.scopeGeneration && scope === this.scope) {
-            this.scheduleRefresh(apolloClient);
-          }
-        }
-      } finally {
-        if (this.refreshPromise === refreshPromise) {
-          this.refreshPromise = null;
+        if (generation === this.scopeGeneration && scope === this.scope) {
+          this.scheduleRefresh(apolloClient);
         }
       }
-    })();
+    })().finally(() => {
+      if (this.refreshPromise === refreshPromise) {
+        this.refreshPromise = null;
+      }
+    });
 
     this.refreshPromise = refreshPromise;
     return refreshPromise;
   }
 
-  async getToken(
-    apolloClient: ApolloClient<NormalizedCacheObject>,
+  async getToken<TCacheShape>(
+    apolloClient: ApolloClient<TCacheShape>,
   ): Promise<string | null> {
     if (!this.token || this.isExpired()) {
       await this.refreshToken(apolloClient);
@@ -247,8 +245,8 @@ class PublicAccessTokenService {
     ]);
   }
 
-  async reset(
-    apolloClient: ApolloClient<NormalizedCacheObject>,
+  async reset<TCacheShape>(
+    apolloClient: ApolloClient<TCacheShape>,
   ): Promise<void> {
     const scope = this.scope;
     await this.clearTokens();

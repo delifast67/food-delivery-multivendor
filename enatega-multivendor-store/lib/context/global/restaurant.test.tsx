@@ -4,7 +4,7 @@ import { AppState, AppStateStatus } from "react-native";
 import TestRenderer, { act } from "react-test-renderer";
 
 import { getStoreId } from "@/lib/services";
-import RestaurantProvider from "./restaurant";
+import RestaurantProvider, { useRestaurantContext } from "./restaurant";
 
 let mockAppStateListener: ((state: AppStateStatus) => void) | undefined;
 const mockRemoveAppStateListener = jest.fn();
@@ -28,7 +28,6 @@ jest.mock("@/lib/services", () => ({
 
 jest.mock("@/lib/context/global/store-mode.context", () => ({
   useStoreMode: () => ({
-    isSingleVendor: false,
     storeIdKey: "store-id",
   }),
 }));
@@ -45,12 +44,12 @@ describe("RestaurantProvider app state reconciliation", () => {
       configurable: true,
       value: "active",
     });
-    jest.spyOn(AppState, "addEventListener").mockImplementation(
-      (_event, listener) => {
+    jest
+      .spyOn(AppState, "addEventListener")
+      .mockImplementation((_event, listener) => {
         mockAppStateListener = listener;
         return { remove: mockRemoveAppStateListener };
-      },
-    );
+      });
     jest.mocked(getStoreId).mockResolvedValue("restaurant-1");
     refetch.mockResolvedValue({ data: { restaurantOrders: [] } });
     subscribeToMore.mockReturnValue(unsubscribe);
@@ -92,5 +91,38 @@ describe("RestaurantProvider app state reconciliation", () => {
 
     act(() => renderer!.unmount());
     expect(mockRemoveAppStateListener).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps loadMoreOrders as a no-op for non-paginated multivendor orders", async () => {
+    const fetchMore = jest.fn();
+    jest.mocked(useQuery).mockReturnValue({
+      loading: false,
+      error: undefined,
+      data: { restaurantOrders: [] },
+      subscribeToMore,
+      refetch,
+      fetchMore,
+      networkStatus: 7,
+    } as never);
+    let context: ReturnType<typeof useRestaurantContext> | undefined;
+    const Probe = () => {
+      context = useRestaurantContext();
+      return null;
+    };
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <RestaurantProvider.Provider>
+          <Probe />
+        </RestaurantProvider.Provider>,
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await context?.loadMoreOrders();
+    });
+    expect(context?.hasMoreOrders).toBe(false);
+    expect(fetchMore).not.toHaveBeenCalled();
+    act(() => renderer!.unmount());
   });
 });

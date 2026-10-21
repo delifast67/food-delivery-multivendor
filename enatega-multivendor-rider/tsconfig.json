@@ -5,7 +5,6 @@
       "ESNext"
     ],
     "jsx": "react-jsx",
-    "module": "commonjs",
     "strict": true,
     "paths": {
       "@/*": [

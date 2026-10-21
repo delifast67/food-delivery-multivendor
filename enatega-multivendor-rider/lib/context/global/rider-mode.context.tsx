@@ -2,7 +2,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   createContext,
   ReactNode,
-  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -12,10 +11,8 @@ import {
 import { getSecureItem } from "@/lib/services/secure-storage";
 import {
   DEFAULT_RIDER_SERVER_MODE,
-  getForcedRiderServerMode,
   getRiderIdKey,
   getRiderTokenKey,
-  isRiderServerMode,
   migrateLegacyRiderStorage,
   RIDER_SERVER_MODE_STORAGE_KEY,
   RiderServerMode,
@@ -26,8 +23,6 @@ interface RiderModeContextValue {
   modeReady: boolean;
   riderIdKey: string;
   tokenKey: string;
-  isModeToggleEnabled: boolean;
-  selectMode: (mode: RiderServerMode) => Promise<boolean>;
 }
 
 const RiderModeContext = createContext<RiderModeContextValue | undefined>(
@@ -35,7 +30,6 @@ const RiderModeContext = createContext<RiderModeContextValue | undefined>(
 );
 
 export function RiderModeProvider({ children }: { children: ReactNode }) {
-  const forcedMode = getForcedRiderServerMode();
   const [mode, setMode] = useState<RiderServerMode>(DEFAULT_RIDER_SERVER_MODE);
   const [modeReady, setModeReady] = useState(false);
 
@@ -44,15 +38,11 @@ export function RiderModeProvider({ children }: { children: ReactNode }) {
 
     const hydrate = async () => {
       await migrateLegacyRiderStorage();
-      const persistedMode = await AsyncStorage.getItem(
+      await AsyncStorage.setItem(
         RIDER_SERVER_MODE_STORAGE_KEY,
+        DEFAULT_RIDER_SERVER_MODE,
       );
-      if (forcedMode) {
-        await AsyncStorage.setItem(RIDER_SERVER_MODE_STORAGE_KEY, forcedMode);
-        if (mounted) setMode(forcedMode);
-      } else if (mounted && isRiderServerMode(persistedMode)) {
-        setMode(persistedMode);
-      }
+      if (mounted) setMode(DEFAULT_RIDER_SERVER_MODE);
       if (mounted) setModeReady(true);
     };
 
@@ -60,24 +50,7 @@ export function RiderModeProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, [forcedMode]);
-
-  const selectMode = useCallback(
-    async (nextMode: RiderServerMode) => {
-      if (forcedMode && nextMode !== forcedMode) return false;
-      if (nextMode === mode) return true;
-
-      // A rider session is deliberately pinned to one backend. The login screen
-      // can switch freely; authenticated riders must log out first.
-      const activeToken = await getSecureItem(getRiderTokenKey(mode));
-      if (activeToken) return false;
-
-      await AsyncStorage.setItem(RIDER_SERVER_MODE_STORAGE_KEY, nextMode);
-      setMode(nextMode);
-      return true;
-    },
-    [forcedMode, mode],
-  );
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -85,10 +58,8 @@ export function RiderModeProvider({ children }: { children: ReactNode }) {
       modeReady,
       riderIdKey: getRiderIdKey(mode),
       tokenKey: getRiderTokenKey(mode),
-      isModeToggleEnabled: forcedMode === null,
-      selectMode,
     }),
-    [forcedMode, mode, modeReady, selectMode],
+    [mode, modeReady],
   );
 
   return (

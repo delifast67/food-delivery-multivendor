@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+.local-data
+coverage
+cypress/videos
+cypress/screenshots
+test-results
+npm-debug.log

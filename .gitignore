@@ -73,3 +73,18 @@ enatega-multivendor-app/.env
 goodbite-multivendor-app
 **/*service-account*.json
 **/serviceAccountKey*.json
+# Toutes les variantes locales peuvent contenir des identifiants ; seuls les exemples restent versionnables.
+.env.*
+!.env.example
+!.env.*.example
+# Les journaux et dumps de diagnostic peuvent contenir des tokens ou des données client.
+*.log
+*.log.*
+report.[0-9]*.json
+
+# Delifast local: données privées et artefacts reproductibles
+**/.local-data/
+delifast-api/dist/
+delifast-api/coverage/
+test-results/
+playwright-report/
