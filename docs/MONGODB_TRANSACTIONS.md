@@ -6,6 +6,8 @@ Un **replica set MongoDB 7.0.24 réel**, à un membre et stockage WiredTiger, es
 
 **Le checkout applicatif n’a pas été migré vers les transactions. Sa fenêtre de concurrence catalogue → insertion reste ouverte.** Un replica set ne corrige pas cette course à lui seul. Aucune topologie de production n’a été inspectée ni validée, aucun déploiement effectué.
 
+Le [protocole cible et l’inventaire des writers à migrer](ATOMIC_CHECKOUT_PROTOCOL.md) détaillent maintenant les guards communs, les zones partagées, les frais hors base, l’admission horaire et les reprises. Le prototype associé est réservé aux tests ; aucun de ces guards n’est activé dans `placeOrder`.
+
 ## Démarrer sans toucher à la base existante
 
 Depuis la racine du dépôt :
