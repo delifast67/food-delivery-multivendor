@@ -15,7 +15,7 @@
     "migrate": "tsx migrations/index.ts",
     "seed": "tsx migrations/seed.ts",
     "test": "vitest run",
-    "test:transactions": "vitest run test/replica-set-transactions.test.ts test/checkout-fences-prototype.test.ts test/checkout-fences-runtime.test.ts test/checkout-session.test.ts test/checkout-policy.test.ts test/checkout-writer-gaps.test.ts",
+    "test:transactions": "vitest run test/replica-set-transactions.test.ts test/checkout-fences-prototype.test.ts test/checkout-fences-runtime.test.ts test/checkout-session.test.ts test/checkout-policy.test.ts test/checkout-writer-gaps.test.ts test/checkout-writer-participation.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

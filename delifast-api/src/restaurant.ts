@@ -3,6 +3,7 @@ import type { Db } from "mongodb";
 import type { Staff } from "./auth.js";
 import { fail } from "./validation.js";
 import { isRestaurantOpen, normalizeRestaurantSchedule, resolvedRestaurantSchedule, type RestaurantHours } from "./restaurant-hours.js";
+import { checkoutWriterOptions, type CheckoutWriterContext } from "./checkout-writer.js";
 
 const MAX_NAME = 160;
 const MAX_DESCRIPTION = 2000;
@@ -27,9 +28,9 @@ export function viewRestaurant(r: any, effectiveOpen = false) {
   return { ...r, open: effectiveOpen ? isRestaurantOpen(r) : r.open !== false, weeklySchedule: resolvedRestaurantSchedule(r), version: Number.isInteger(r.version) ? r.version : 0 };
 }
 function view(r: any) { return viewRestaurant(r); }
-async function validateZones(db: Db, ids: string[]) {
+async function validateZones(db: Db, ids: string[], options: { session?: import("mongodb").ClientSession } = {}) {
   if (!ids.length) return;
-  const found = await db.collection("delivery_zones").find({ id: { $in: ids } }).project({ id: 1 }).toArray();
+  const found = await db.collection("delivery_zones").find({ id: { $in: ids } }, options).project({ id: 1 }).toArray();
   if (found.length !== ids.length) fail("ZONE_NOT_FOUND", "Zone de livraison introuvable");
 }
 function audit(user: Staff, action: string, version: number) { return { actor: { id: user.id, role: user.role }, action, version, at: new Date().toISOString() }; }
@@ -39,15 +40,16 @@ export async function createRestaurantProfile(db: Db, user: Staff, raw: unknown)
   await db.collection("restaurants").insertOne(item);
   return view(item);
 }
-export async function updateRestaurantProfile(db: Db, user: Staff, idRaw: unknown, expectedRaw: unknown, raw: unknown) {
+export async function updateRestaurantProfile(db: Db, user: Staff, idRaw: unknown, expectedRaw: unknown, raw: unknown, context?: CheckoutWriterContext) {
   admin(user); const id = idOf(idRaw, "id");
+  const options = checkoutWriterOptions(db, context, id);
   if (!Number.isInteger(expectedRaw) || (expectedRaw as number) < 0) fail("INVALID_INPUT", "Version invalide");
-  const input = normalizeRestaurantProfile(raw); await validateZones(db, input.deliveryZoneIds);
+  const input = normalizeRestaurantProfile(raw); await validateZones(db, input.deliveryZoneIds, options);
   const expected = expectedRaw as number; const version = expected + 1;
   const filter: any = { id, ...(expected === 0 ? { $or: [{ version: 0 }, { version: { $exists: false } }] } : { version: expected }) };
-  const result = await db.collection<any>("restaurants").findOneAndUpdate(filter, { $set: { ...input, version, updatedAt: new Date() }, $push: { audit: { $each: [audit(user, "RESTAURANT_PROFILE_UPDATED", version)], $slice: -100 } } } as any, { returnDocument: "after" });
+  const result = await db.collection<any>("restaurants").findOneAndUpdate(filter, { $set: { ...input, version, updatedAt: new Date() }, $push: { audit: { $each: [audit(user, "RESTAURANT_PROFILE_UPDATED", version)], $slice: -100 } } } as any, { returnDocument: "after", ...options });
   if (!result) {
-    const exists = await db.collection("restaurants").findOne({ id }, { projection: { id: 1 } });
+    const exists = await db.collection("restaurants").findOne({ id }, { projection: { id: 1 }, ...options });
     if (!exists) fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
     fail("CONCURRENT_MODIFICATION", "Version modifiée, rechargez le restaurant");
   }
@@ -58,13 +60,14 @@ export async function restaurantZoneIds(db: Db, restaurant: any, session?: impor
   return (await db.collection<any>("delivery_zones").find({ restaurantId: restaurant.id }, session ? { session } : {}).project({ id: 1, _id: 0 }).toArray()).map(x => x.id);
 }
 
-export async function setRestaurantSchedule(db: Db, user: Staff, idRaw: unknown, expectedRaw: unknown, raw: unknown) {
+export async function setRestaurantSchedule(db: Db, user: Staff, idRaw: unknown, expectedRaw: unknown, raw: unknown, context?: CheckoutWriterContext) {
   if (user.role !== "ADMIN" && user.role !== "RESTAURANT") fail("FORBIDDEN", "Droits insuffisants");
   const id = idOf(idRaw, "id");
+  const options = checkoutWriterOptions(db, context, id);
   if (!Number.isInteger(expectedRaw) || (expectedRaw as number) < 0) fail("INVALID_INPUT", "Version invalide");
   if (user.role === "RESTAURANT" && user.restaurantId !== id) fail("FORBIDDEN", "Restaurant hors portée");
   const schedule = normalizeRestaurantSchedule(raw) as RestaurantHours[] | null;
-  const old = await db.collection<any>("restaurants").findOne({ id });
+  const old = await db.collection<any>("restaurants").findOne({ id }, options);
   if (!old) fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
   const expected = expectedRaw as number;
   const oldVersion = Number.isInteger(old.version) ? old.version : 0;
@@ -74,7 +77,7 @@ export async function setRestaurantSchedule(db: Db, user: Staff, idRaw: unknown,
   const result = await db.collection<any>("restaurants").findOneAndUpdate(filter, {
     $set: { weeklySchedule: schedule, version, updatedAt: new Date() },
     $push: { audit: { $each: [audit(user, "RESTAURANT_SCHEDULE_UPDATED", version)], $slice: -100 } },
-  } as any, { returnDocument: "after" });
+  } as any, { returnDocument: "after", ...options });
   if (!result) fail("CONCURRENT_MODIFICATION", "Version modifiée, rechargez le restaurant");
   return view(result);
 }

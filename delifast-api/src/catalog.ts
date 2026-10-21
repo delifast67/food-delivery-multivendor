@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { Db } from "mongodb";
+import { checkoutWriterOptions, type CheckoutWriterContext } from "./checkout-writer.js";
 import type { Staff } from "./auth.js";
 import { fail, assertIntAmount } from "./validation.js";
 import { isRestaurantOpen, resolvedRestaurantSchedule } from "./restaurant-hours.js";
@@ -612,17 +613,19 @@ export async function createMenuItem(
   user: Staff,
   restaurantIdRaw: unknown,
   input: any,
+  context?: CheckoutWriterContext,
 ) {
   const restaurantId = idOf(restaurantIdRaw, "restaurantId");
   requireRestaurant(user, restaurantId);
-  if (!(await db.collection("restaurants").findOne({ id: restaurantId })))
+  const options = checkoutWriterOptions(db, context, restaurantId);
+  if (!(await db.collection("restaurants").findOne({ id: restaurantId }, options)))
     fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
   const value = normalizeMenuInput(input);
   if (
     value.categoryId &&
     !(await db
       .collection("menu_categories")
-      .findOne({ id: value.categoryId, restaurantId, archived: { $ne: true } }))
+      .findOne({ id: value.categoryId, restaurantId, archived: { $ne: true } }, options))
   )
     fail("CATEGORY_NOT_FOUND", "Catégorie introuvable");
   const id = crypto.randomUUID(),
@@ -635,14 +638,16 @@ export async function createMenuItem(
     archived: false,
     audit: [at],
   };
-  await db.collection("menu_items").insertOne(item);
+  await db.collection("menu_items").insertOne(item, options);
   return viewMenu(item);
 }
-async function itemForUpdate(db: Db, user: Staff, idRaw: unknown) {
+async function itemForUpdate(db: Db, user: Staff, idRaw: unknown, context?: CheckoutWriterContext) {
   const id = idOf(idRaw, "id");
-  const item = await db.collection<any>("menu_items").findOne({ id });
+  const options = checkoutWriterOptions(db, context);
+  const item = await db.collection<any>("menu_items").findOne({ id }, options);
   if (!item) fail("ITEM_NOT_FOUND", "Plat introuvable");
   requireRestaurant(user, item.restaurantId);
+  checkoutWriterOptions(db, context, item.restaurantId);
   return { id, item };
 }
 export async function updateMenuItem(
@@ -651,8 +656,10 @@ export async function updateMenuItem(
   idRaw: unknown,
   expectedRaw: unknown,
   input: any,
+  context?: CheckoutWriterContext,
 ) {
-  const { id, item } = await itemForUpdate(db, user, idRaw);
+  const { id, item } = await itemForUpdate(db, user, idRaw, context);
+  const options = checkoutWriterOptions(db, context, item.restaurantId);
   if (!Number.isInteger(expectedRaw) || (expectedRaw as number) < 0)
     fail("INVALID_INPUT", "Version invalide");
   const value = normalizeMenuInput(input);
@@ -667,7 +674,7 @@ export async function updateMenuItem(
       ...(value.categoryId === item.categoryId
         ? {}
         : { archived: { $ne: true } }),
-    }))
+    }, options))
   )
     fail("CATEGORY_NOT_FOUND", "Catégorie introuvable");
   const version = (Number.isInteger(item.version) ? item.version : 0) + 1;
@@ -688,7 +695,7 @@ export async function updateMenuItem(
         },
       },
     } as any,
-    { returnDocument: "after" },
+    { ...options, returnDocument: "after" },
   );
   if (!result)
     fail("CONCURRENT_MODIFICATION", "Version modifiée, rechargez le plat");
@@ -700,8 +707,10 @@ export async function setMenuItemArchived(
   idRaw: unknown,
   expectedRaw: unknown,
   archived: unknown,
+  context?: CheckoutWriterContext,
 ) {
-  const { id, item } = await itemForUpdate(db, user, idRaw);
+  const { id, item } = await itemForUpdate(db, user, idRaw, context);
+  const options = checkoutWriterOptions(db, context, item.restaurantId);
   if (
     !Number.isInteger(expectedRaw) ||
     (expectedRaw as number) < 0 ||
@@ -733,7 +742,7 @@ export async function setMenuItemArchived(
         },
       },
     } as any,
-    { returnDocument: "after" },
+    { ...options, returnDocument: "after" },
   );
   if (!result)
     fail("CONCURRENT_MODIFICATION", "Version modifiée, rechargez le plat");
@@ -745,6 +754,7 @@ export async function setRestaurantOpen(
   idRaw: unknown,
   expectedRaw: unknown,
   open: unknown,
+  context?: CheckoutWriterContext,
 ) {
   const id = idOf(idRaw, "id");
   if (
@@ -754,7 +764,8 @@ export async function setRestaurantOpen(
   )
     fail("INVALID_INPUT", "Entrée invalide");
   requireRestaurant(user, id);
-  const r = await db.collection<any>("restaurants").findOne({ id });
+  const options = checkoutWriterOptions(db, context, id);
+  const r = await db.collection<any>("restaurants").findOne({ id }, options);
   if (!r) fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
   const oldVersion = Number.isInteger(r.version) ? r.version : 0;
   if (expectedRaw !== oldVersion)
@@ -784,7 +795,7 @@ export async function setRestaurantOpen(
         },
       },
     } as any,
-    { returnDocument: "after" },
+    { ...options, returnDocument: "after" },
   );
   if (!result)
     fail(

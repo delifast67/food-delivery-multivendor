@@ -4,6 +4,7 @@ import type { Staff } from "./auth.js";
 import { fail } from "./validation.js";
 import { restaurantZoneIds } from "./restaurant.js";
 import { isRestaurantOpen } from "./restaurant-hours.js";
+import { checkoutWriterOptions, type CheckoutWriterContext } from "./checkout-writer.js";
 
 export type Point = { latitude: number; longitude: number };
 export type DeliveryPointInput = Point;
@@ -103,12 +104,13 @@ export async function listDeliveryZones(db:Db,user:Staff,restaurantId?:unknown){
   const ids = await restaurantZoneIds(db,r);
   return (await db.collection("delivery_zones").find({id:{$in:ids}}).sort({priority:1,id:1}).toArray()).map(view);
 }
-export async function createDeliveryZone(db:Db,user:Staff,restaurantIdRaw:unknown,input:any){
+export async function createDeliveryZone(db:Db,user:Staff,restaurantIdRaw:unknown,input:any,context?:CheckoutWriterContext){
   if(user.role!=="ADMIN") fail("FORBIDDEN","Droits insuffisants"); const restaurantId=id(restaurantIdRaw,"restaurantId"); scope(user,restaurantId);
-  const restaurant = await db.collection<any>("restaurants").findOne({id:restaurantId});
+  const options = checkoutWriterOptions(db, context, restaurantId);
+  const restaurant = await db.collection<any>("restaurants").findOne({id:restaurantId}, options);
   if(!restaurant) fail("RESTAURANT_NOT_FOUND","Restaurant introuvable");
   const value=normalizeZoneInput(input), item={id:crypto.randomUUID(),restaurantId,...value,version:0,audit:[audit(user,"DELIVERY_ZONE_CREATED",0)],createdAt:new Date(),updatedAt:new Date()};
-  await db.collection("delivery_zones").insertOne(item);
+  await db.collection("delivery_zones").insertOne(item, options);
   const expectedVersion = Number.isInteger(restaurant.version) ? restaurant.version : 0;
   // Keep legacy ownership lookup until a profile explicitly selects zones.
   // Materialising concurrent, not-yet-committed inserts could retain orphan IDs
@@ -121,17 +123,18 @@ export async function createDeliveryZone(db:Db,user:Staff,restaurantIdRaw:unknow
       {id:restaurantId, ...versionFilter(expectedVersion)},
       {$set:{...refs,version:expectedVersion+1,updatedAt:new Date()},
        $push:{audit:{$each:[audit(user,"DELIVERY_ZONE_CREATED",expectedVersion+1)],$slice:-100}}} as any,
+      options,
     );
     if (result.matchedCount !== 1) fail("CONCURRENT_MODIFICATION","Version modifiée, rechargez le restaurant");
   } catch (error) {
-    await db.collection("delivery_zones").deleteOne({id:item.id});
+    if (context === undefined) await db.collection("delivery_zones").deleteOne({id:item.id});
     throw error;
   }
   return view(item);
 }
-export async function updateDeliveryZone(db:Db,user:Staff,idRaw:unknown,expectedRaw:unknown,input:any){
-  if(user.role!=="ADMIN") fail("FORBIDDEN","Droits insuffisants"); const zid=id(idRaw,"id"); const current=await db.collection<any>("delivery_zones").findOne({id:zid}); if(!current) fail("ZONE_NOT_FOUND","Zone introuvable"); scope(user,current.restaurantId); if(!Number.isInteger(expectedRaw)||(expectedRaw as number)<0) fail("INVALID_INPUT","Version invalide"); const old=Number.isInteger(current.version)?current.version:0; if(expectedRaw!==old) fail("CONCURRENT_MODIFICATION","Version modifiée"); const value=normalizeZoneInput(input), next=old+1;
-  const result=await db.collection<any>("delivery_zones").findOneAndUpdate({id:zid,...versionFilter(old)},{$set:{...value,version:next,updatedAt:new Date()},$push:{audit:{$each:[audit(user,"DELIVERY_ZONE_UPDATED",next)],$slice:-100}}} as any,{returnDocument:"after"});
+export async function updateDeliveryZone(db:Db,user:Staff,idRaw:unknown,expectedRaw:unknown,input:any,context?:CheckoutWriterContext){
+  if(user.role!=="ADMIN") fail("FORBIDDEN","Droits insuffisants"); const zid=id(idRaw,"id"); const options=checkoutWriterOptions(db,context); const current=await db.collection<any>("delivery_zones").findOne({id:zid}, options); if(!current) fail("ZONE_NOT_FOUND","Zone introuvable"); scope(user,current.restaurantId); if(!Number.isInteger(expectedRaw)||(expectedRaw as number)<0) fail("INVALID_INPUT","Version invalide"); const old=Number.isInteger(current.version)?current.version:0; if(expectedRaw!==old) fail("CONCURRENT_MODIFICATION","Version modifiée"); const value=normalizeZoneInput(input), next=old+1;
+  const result=await db.collection<any>("delivery_zones").findOneAndUpdate({id:zid,...versionFilter(old)},{$set:{...value,version:next,updatedAt:new Date()},$push:{audit:{$each:[audit(user,"DELIVERY_ZONE_UPDATED",next)],$slice:-100}}} as any,{returnDocument:"after",...options});
   if(!result) fail("CONCURRENT_MODIFICATION","Version modifiée"); return view(result);
 }
 function distance(a:Point,b:Point){const p=Math.PI/180,dLat=(b.latitude-a.latitude)*p,dLon=(b.longitude-a.longitude)*p;const x=Math.sin(dLat/2)**2+Math.cos(a.latitude*p)*Math.cos(b.latitude*p)*Math.sin(dLon/2)**2;return 2*EARTH_M*Math.asin(Math.sqrt(Math.min(1,Math.max(0,x))));}
