@@ -59,6 +59,10 @@ jobs:
             enatega-multivendor-web/package-lock.json
       - name: Installer l’API
         run: npm ci --prefix delifast-api --ignore-scripts --no-audit --no-fund
+      - name: Prouver les limites et garanties MongoDB sur replica set réel isolé
+        run: |
+          npm run test:transactions --prefix delifast-api
+          node scripts/delifast-replset-dev-smoke.mjs
       - name: Compiler et tester l’API
         run: |
           for script in scripts/delifast-*.mjs; do node --check "$script"; done

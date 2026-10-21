@@ -11,9 +11,11 @@
     "start": "node dist/src/server.js",
     "dev": "tsx src/server.ts",
     "dev:db": "tsx src/dev-db.ts",
+    "dev:db:replset": "tsx src/dev-db-replset.ts",
     "migrate": "tsx migrations/index.ts",
     "seed": "tsx migrations/seed.ts",
     "test": "vitest run",
+    "test:transactions": "vitest run test/replica-set-transactions.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

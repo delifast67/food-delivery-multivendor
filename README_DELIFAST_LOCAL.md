@@ -136,6 +136,8 @@ npm ci --prefix enatega-multivendor-web --ignore-scripts --no-audit --no-fund
 npm run dev:db --prefix delifast-api
 ```
 
+**Replica set optionnel, isolé :** `npm run dev:db:replset --prefix delifast-api` utilise le port 27018 et un autre répertoire de données. Exporter ensuite `MONGODB_URI='mongodb://127.0.0.1:27018/delifast?replicaSet=delifast-dev-rs'` dans chaque terminal API/migration/seed. Voir [les preuves transactionnelles et prérequis de production](docs/MONGODB_TRANSACTIONS.md). Le checkout reste non transactionnel : cette configuration ne ferme pas sa course catalogue → insertion et ne valide aucune topologie de production. Le mode standalone ci-dessus et Docker restent inchangés.
+
 Le premier lancement télécharge un binaire MongoDB réservé au développement. Dans un autre terminal :
 
 ```bash
