@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { Db } from "mongodb";
+import type { ClientSession, Db } from "mongodb";
 import type { Staff } from "./auth.js";
 import { fail } from "./validation.js";
 import { restaurantZoneIds } from "./restaurant.js";
@@ -13,6 +13,7 @@ export type DeliveryZoneInput = {
   enabled: boolean; feeXof: number; minimumOrderXof: number;
   estimatedMinutes: number; priority: number; demo: boolean;
 };
+export type EligibilityReadContext = { session?: ClientSession; admissionAt?: Date };
 
 const MAX_INT = 2147483647;
 const EARTH_M = 6371008.8;
@@ -136,13 +137,16 @@ export async function updateDeliveryZone(db:Db,user:Staff,idRaw:unknown,expected
 function distance(a:Point,b:Point){const p=Math.PI/180,dLat=(b.latitude-a.latitude)*p,dLon=(b.longitude-a.longitude)*p;const x=Math.sin(dLat/2)**2+Math.cos(a.latitude*p)*Math.cos(b.latitude*p)*Math.sin(dLon/2)**2;return 2*EARTH_M*Math.asin(Math.sqrt(Math.min(1,Math.max(0,x))));}
 function insidePolygon(p:Point,poly:Point[]){let inside=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++){const a=poly[i],b=poly[j], hit=((a.latitude>p.latitude)!==(b.latitude>p.latitude)) && p.longitude < (b.longitude-a.longitude)*(p.latitude-a.latitude)/(b.latitude-a.latitude)+a.longitude;if(hit)inside=!inside;if(onSegment(a,b,p))return true;}return inside;}
 function active(hours:ZoneHours[],now:Date){if(!hours.length)return true;const day=now.getUTCDay(),minute=now.getUTCHours()*60+now.getUTCMinutes();return hours.some(h=>h.day===day&&minute>=h.startMinute&&minute<h.endMinute);}
-export async function prepareEligibility(db:Db,restaurantIdRaw:unknown,p:unknown,subtotal?:unknown,now=new Date()){
+export async function prepareEligibility(db:Db,restaurantIdRaw:unknown,p:unknown,subtotal?:unknown,nowOrContext:Date|EligibilityReadContext=new Date(),context:EligibilityReadContext={}){
+  const now = nowOrContext instanceof Date ? nowOrContext : (nowOrContext.admissionAt ?? new Date());
+  const readContext = nowOrContext instanceof Date ? context : nowOrContext;
+  const session = readContext.session;
   const restaurantId=id(restaurantIdRaw,"restaurantId"); if(p===undefined||p===null) fail("DELIVERY_POINT_REQUIRED","Point de livraison requis"); const pointValue=normalizePoint(p); const subtotalValue=subtotal==null?undefined:subtotal; if(subtotalValue!==undefined&&(!Number.isInteger(subtotalValue)||(subtotalValue as number)<0)) fail("INVALID_INPUT","Sous-total invalide");
-  const restaurant = await db.collection<any>("restaurants").findOne({id:restaurantId});
+  const restaurant = await db.collection<any>("restaurants").findOne({id:restaurantId}, session ? {session} : {});
   if (!restaurant) fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
   if (!isRestaurantOpen(restaurant, now)) fail("RESTAURANT_CLOSED", "Restaurant fermé");
-  const zoneIds = await restaurantZoneIds(db, restaurant);
-  const zones=await db.collection<any>("delivery_zones").find({id:{$in:zoneIds},enabled:true}).toArray(); const matched=zones.map(view).filter(z=>active(Array.isArray(z.hours)?z.hours:[],now)&& (z.shape==="CIRCLE"?distance(pointValue,z.center)<=z.radiusMeters+1e-7: z.shape==="POLYGON"&&insidePolygon(pointValue,z.polygon))).sort((a,b)=>(a.priority??0)-(b.priority??0)||String(a.id).localeCompare(String(b.id)));
+  const zoneIds = await restaurantZoneIds(db, restaurant, session);
+  const zones=await db.collection<any>("delivery_zones").find({id:{$in:zoneIds},enabled:true}, session ? {session} : {}).toArray(); const matched=zones.map(view).filter(z=>active(Array.isArray(z.hours)?z.hours:[],now)&& (z.shape==="CIRCLE"?distance(pointValue,z.center)<=z.radiusMeters+1e-7: z.shape==="POLYGON"&&insidePolygon(pointValue,z.polygon))).sort((a,b)=>(a.priority??0)-(b.priority??0)||String(a.id).localeCompare(String(b.id)));
   if(!matched.length) fail("OUT_OF_DELIVERY_ZONE","Point hors zone de livraison"); const z=matched[0]; if(subtotalValue!==undefined&&(subtotalValue as number)<z.minimumOrderXof) fail("MINIMUM_ORDER_NOT_MET","Minimum de commande non atteint"); return { delivery: {zoneId:z.id,zoneName:z.name,zoneVersion:Number.isInteger(z.version)?z.version:0,deliveryFee:z.feeXof,minimumOrderXof:z.minimumOrderXof,estimatedMinutes:z.estimatedMinutes,demo:z.demo===true},
     // Bind the quote to the exact eligible zone configuration read, not only its fee.
     sources: { zoneIds: [...zoneIds].sort(), zones: zones.map(zone => {
@@ -151,6 +155,6 @@ export async function prepareEligibility(db:Db,restaurantIdRaw:unknown,p:unknown
     }).sort((a,b) => String(a.id).localeCompare(String(b.id))) } };
 }
 
-export async function eligibility(db:Db,restaurantIdRaw:unknown,p:unknown,subtotal?:unknown,now=new Date()){
-  return (await prepareEligibility(db,restaurantIdRaw,p,subtotal,now)).delivery;
+export async function eligibility(db:Db,restaurantIdRaw:unknown,p:unknown,subtotal?:unknown,nowOrContext:Date|EligibilityReadContext=new Date(),context:EligibilityReadContext={}){
+  return (await prepareEligibility(db,restaurantIdRaw,p,subtotal,nowOrContext,context)).delivery;
 }

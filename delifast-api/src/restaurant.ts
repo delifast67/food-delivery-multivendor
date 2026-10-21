@@ -53,9 +53,9 @@ export async function updateRestaurantProfile(db: Db, user: Staff, idRaw: unknow
   }
   return view(result);
 }
-export async function restaurantZoneIds(db: Db, restaurant: any) {
+export async function restaurantZoneIds(db: Db, restaurant: any, session?: import("mongodb").ClientSession) {
   if (Array.isArray(restaurant.deliveryZoneIds)) return restaurant.deliveryZoneIds;
-  return (await db.collection<any>("delivery_zones").find({ restaurantId: restaurant.id }).project({ id: 1, _id: 0 }).toArray()).map(x => x.id);
+  return (await db.collection<any>("delivery_zones").find({ restaurantId: restaurant.id }, session ? { session } : {}).project({ id: 1, _id: 0 }).toArray()).map(x => x.id);
 }
 
 export async function setRestaurantSchedule(db: Db, user: Staff, idRaw: unknown, expectedRaw: unknown, raw: unknown) {

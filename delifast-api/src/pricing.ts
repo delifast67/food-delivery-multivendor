@@ -37,19 +37,20 @@ export type Checkout = {
   items: CheckoutItem[];
   delivery: Awaited<ReturnType<typeof eligibility>> | null;
 };
+export type CheckoutReadContext = { session?: import("mongodb").ClientSession; admissionAt?: Date };
 export async function calculateCheckout(db: Db, cart: Cart): Promise<Checkout> {
   return (await prepareCheckout(db, cart)).checkout;
 }
 /** Server-only expectations accompany the calculation, not the public quote. */
-export async function prepareCheckout(db: Db, cart: Cart) {
+export async function prepareCheckout(db: Db, cart: Cart, context: CheckoutReadContext = {}) {
   const restaurant = await db
     .collection("restaurants")
-    .findOne({ id: cart.restaurantId });
+    .findOne({ id: cart.restaurantId }, context.session ? { session: context.session } : {});
   if (!restaurant) fail("RESTAURANT_NOT_FOUND", "Restaurant introuvable");
-  if (!isRestaurantOpen(restaurant)) fail("RESTAURANT_CLOSED", "Restaurant fermé");
+  if (!isRestaurantOpen(restaurant, context.admissionAt ?? new Date())) fail("RESTAURANT_CLOSED", "Restaurant fermé");
   const menu = await db
     .collection<any>("menu_items")
-    .find({ id: { $in: cart.items.map((x) => x.menuItemId) } })
+    .find({ id: { $in: cart.items.map((x) => x.menuItemId) } }, context.session ? { session: context.session } : {})
     .toArray();
   if (menu.length !== new Set(cart.items.map((x) => x.menuItemId)).size)
     fail("ITEM_NOT_FOUND", "Plat introuvable");
@@ -124,7 +125,7 @@ export async function prepareCheckout(db: Db, cart: Cart) {
   const subtotal = assertIntAmount(
       items.reduce((n, x) => assertIntAmount(n + x.total), 0),
     );
-  const deliveryState = cart.point ? await prepareEligibility(db, cart.restaurantId, cart.point, subtotal) : null;
+  const deliveryState = cart.point ? await prepareEligibility(db, cart.restaurantId, cart.point, subtotal, context.admissionAt, context) : null;
   const delivery = deliveryState?.delivery ?? null;
   const deliveryFee = delivery?.deliveryFee ?? 0;
   const fees = assertIntAmount(deliveryFee + config.serviceFee + config.tax),
