@@ -47,6 +47,9 @@ const menu = (
 });
 const checkout = {
   quoteHash: "a".repeat(64),
+  quoteToken: "opaque-quote-token",
+  quoteIssuedAt: "2020-01-01T00:00:00.000Z",
+  quoteExpiresAt: "2099-01-01T00:05:00.000Z",
   currency: "XOF",
   subtotal: 1000,
   deliveryFee: 0,

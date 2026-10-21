@@ -4,6 +4,7 @@ import request from "supertest";
 import { passwordHash } from "../src/auth.js";
 import { seedCatalog } from "../migrations/seed.js";
 import { updateMenuItem } from "../src/catalog.js";
+import { quoteInput } from "./quote-helper.js";
 
 let mongo: MongoMemoryServer;
 let app: any;
@@ -317,7 +318,7 @@ describe("catalogue GraphQL", () => {
     const first = (
       await gql(
         "mutation($i:PlaceOrderInput!){placeOrder(input:$i){id checkout{total}}}",
-        { i: orderInput },
+        { i: await quoteInput(gql, orderInput) },
       )
     ).data.placeOrder;
     const closed = await gql(

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { assertQuote } from "./quote.js";
 import type { Db } from "mongodb";
 import { prepareCheckout } from "./pricing.js";
 import { assertCheckoutCurrent } from "./checkout-guard.js";
@@ -93,6 +94,7 @@ export async function placeOrder(
   idempotencyKey: unknown,
   customerId?: string,
   expectedQuoteHash?: unknown,
+  expectedQuoteToken?: unknown,
 ) {
   if (
     typeof idempotencyKey !== "string" ||
@@ -148,13 +150,8 @@ export async function placeOrder(
   }
   if (!address.point) fail("DELIVERY_POINT_REQUIRED", "Un point GPS de livraison est requis");
   const { checkout, guard } = await prepareCheckout(db, { ...cart, point: address.point });
-  // Optional only for legacy consumers. Updated clients must send the exact
-  // displayed quote; a mismatching quote never creates an order. Existing
-  // idempotent attempts above still recover their immutable original snapshot.
-  if (expectedQuoteHash != null &&
-      (typeof expectedQuoteHash !== "string" || !/^[a-f0-9]{64}$/.test(expectedQuoteHash) ||
-       expectedQuoteHash !== checkout.quoteHash))
-    fail("CHECKOUT_CHANGED", "Le devis a changé. Vérifiez le nouveau total avant de confirmer.");
+  // Historical omission is recovery-only: no new insertion without a server-issued quote.
+  const acceptedQuote = assertQuote(expectedQuoteToken, expectedQuoteHash, checkout.quoteHash);
   const raw = crypto.randomBytes(24).toString("hex");
   const timestamp = now();
   const order = {
@@ -166,7 +163,7 @@ export async function placeOrder(
     createdAt: timestamp,
     updatedAt: timestamp,
     restaurantId: cart.restaurantId,
-    checkout,
+    checkout: { ...checkout, ...acceptedQuote },
     idempotencyKey,
     fingerprint,
     deliveryAddress: address,
@@ -179,6 +176,8 @@ export async function placeOrder(
     // Final conditional state/version checks work on standalone MongoDB too.
     // They narrow, but cannot atomically close, the check-to-insert window.
     await assertCheckoutCurrent(db, guard);
+    // Database reads may have crossed the expiry boundary. Still not an atomic commit fence.
+    assertQuote(expectedQuoteToken, expectedQuoteHash, checkout.quoteHash);
     await orders.insertOne(order);
     return customerView(order, raw);
   } catch (error: any) {

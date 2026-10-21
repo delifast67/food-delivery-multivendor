@@ -1,7 +1,7 @@
 'use strict'
 
 const DEFAULT_ENDPOINT = 'http://localhost:4000/graphql'
-const VALIDATION_CODES = new Set(['INVALID_INPUT', 'INVALID_CART', 'INVALID_QUANTITY', 'INVALID_PRICE', 'AMOUNT_OVERFLOW', 'RESTAURANT_NOT_FOUND', 'RESTAURANT_CLOSED', 'ITEM_NOT_FOUND', 'ITEM_RESTAURANT_MISMATCH', 'ITEM_UNAVAILABLE', 'OUT_OF_DEMO_ZONE', 'INVALID_PHONE', 'INVALID_ADDRESS', 'INVALID_IDEMPOTENCY_KEY', 'INVALID_OPTIONS', 'CATEGORY_NOT_FOUND', 'DELIVERY_POINT_REQUIRED', 'OUT_OF_DELIVERY_ZONE', 'MINIMUM_ORDER_NOT_MET', 'CHECKOUT_CHANGED', 'GRAPHQL_VALIDATION_FAILED', 'GRAPHQL_PARSE_FAILED', 'BAD_USER_INPUT'])
+const VALIDATION_CODES = new Set(['INVALID_INPUT', 'INVALID_CART', 'INVALID_QUANTITY', 'INVALID_PRICE', 'AMOUNT_OVERFLOW', 'RESTAURANT_NOT_FOUND', 'RESTAURANT_CLOSED', 'ITEM_NOT_FOUND', 'ITEM_RESTAURANT_MISMATCH', 'ITEM_UNAVAILABLE', 'OUT_OF_DEMO_ZONE', 'INVALID_PHONE', 'INVALID_ADDRESS', 'INVALID_IDEMPOTENCY_KEY', 'INVALID_OPTIONS', 'CATEGORY_NOT_FOUND', 'DELIVERY_POINT_REQUIRED', 'OUT_OF_DELIVERY_ZONE', 'MINIMUM_ORDER_NOT_MET', 'CHECKOUT_CHANGED', 'CHECKOUT_EXPIRED', 'QUOTE_REQUIRED', 'GRAPHQL_VALIDATION_FAILED', 'GRAPHQL_PARSE_FAILED', 'BAD_USER_INPUT'])
 const AUTH_CODES = new Set(['UNAUTHENTICATED', 'FORBIDDEN'])
 class DelifastApiError extends Error {
   constructor(message, kind = 'unknown', code, status) {
@@ -18,7 +18,7 @@ const categoryFields = 'id name sortOrder archived version'
 const restaurantFields = `id name description open version categories { ${categoryFields} } menu { id name description priceXof available archived version categoryId optionGroups { ${groupFields} } }`
 const restaurantMetaFields = 'id name description open version'
 const menuItemFields = `id name description priceXof available archived version categoryId optionGroups { ${groupFields} }`
-const checkout = 'currency quoteHash subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } }'
+const checkout = 'currency quoteHash quoteToken quoteIssuedAt quoteExpiresAt subtotal deliveryFee serviceFee tax discount total items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } }'
 const deliveryFields = 'delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo }'
 const paymentSessionFields = 'orderId phase channel mode checkoutUrl providerStatus paymentStatus'
 const orderFields = `id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions point { latitude longitude } } history { status at actorRole } checkout { ${checkout} ${deliveryFields} }`
@@ -148,6 +148,9 @@ function createClient({ endpoint = DEFAULT_ENDPOINT, fetchImpl = globalThis.fetc
       const hash = input?.expectedQuoteHash
       if (typeof hash !== 'string' || (!/^[a-f0-9]{64}$/.test(hash) && hash !== 'legacy-recovery-only')) {
         throw new DelifastApiError('Rechargez le devis serveur avant de confirmer la commande.', 'validation', 'CHECKOUT_CHANGED')
+      }
+      if (hash !== 'legacy-recovery-only' && (typeof input?.expectedQuoteToken !== 'string' || !input.expectedQuoteToken)) {
+        throw new DelifastApiError('Confirmez le devis serveur avant de confirmer la commande.', 'validation', 'QUOTE_REQUIRED')
       }
       return field('placeOrder', { input }, true)
     },

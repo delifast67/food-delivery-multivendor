@@ -13,12 +13,15 @@ const point = { latitude: 12.3714, longitude: -1.5197 };
 const cart = (items = [{ menuItemId: "dish", quantity: 1, selections: [{ groupId: "size", optionIds: ["large"] }] }]) => ({ restaurantId: "r1", point, items });
 const address = { recipientName: "Test synthétique", phone: "+22670000000", city: "Ouagadougou", neighborhood: "Démo", landmark: "Aucun", instructions: "Test", point };
 const groups = () => [{ id: "size", name: "Format", minSelections: 1, maxSelections: 1, options: [{ id: "large", name: "Grand", priceXof: 200, available: true }] }];
+const issuedQuotes = new Map<string, { quoteHash: string; quoteToken: string }>();
 
 async function independentUpdate(fn: (d: Db) => Promise<unknown>) {
   await fn(second.db(db.databaseName));
 }
-async function place(key = `key-${Math.random().toString(36).slice(2)}`, c = cart(), expectedQuoteHash?: string) {
-  return orders.placeOrder(db, c as any, address as any, key, undefined, expectedQuoteHash);
+async function place(key = `key-${Math.random().toString(36).slice(2)}`, c = cart(), expectedQuoteHash?: string, expectedQuoteToken?: string) {
+  const quote = issuedQuotes.get(key) ?? await pricing.calculateCheckout(db, c as any);
+  issuedQuotes.set(key, quote);
+  return orders.placeOrder(db, c as any, address as any, key, undefined, expectedQuoteHash ?? quote.quoteHash, expectedQuoteToken ?? quote.quoteToken);
 }
 async function rejected(p: Promise<unknown>, code = "CHECKOUT_CHANGED") {
   await expect(p).rejects.toMatchObject({ extensions: { code } });
@@ -27,7 +30,7 @@ async function rejected(p: Promise<unknown>, code = "CHECKOUT_CHANGED") {
 }
 /** Run a real quote, then mutate via another MongoClient before the real guard. */
 async function mutateBetween(mutation: (d: Db) => Promise<unknown>, c = cart(), key = `race-${Math.random().toString(36).slice(2)}`) {
-  const expectedQuoteHash = (await pricing.calculateCheckout(db, c as any)).quoteHash;
+  const quote = await pricing.calculateCheckout(db, c as any);
   const real = pricing.prepareCheckout;
   const spy = vi.spyOn(pricing, "prepareCheckout");
   const assertion = vi.spyOn(guardModule, "assertCheckoutCurrent");
@@ -37,7 +40,7 @@ async function mutateBetween(mutation: (d: Db) => Promise<unknown>, c = cart(), 
     return prepared;
   });
   try {
-    await rejected(place(key, c, expectedQuoteHash));
+    await rejected(place(key, c, quote.quoteHash, quote.quoteToken));
     expect(assertion).toHaveBeenCalledOnce();
   } finally { spy.mockRestore(); assertion.mockRestore(); }
 }
@@ -56,6 +59,7 @@ beforeAll(async () => {
 }, 60000);
 
 beforeEach(async () => {
+  issuedQuotes.clear();
   for (const name of ["restaurants", "menu_items", "delivery_zones", "orders", "payment_events", "stock_events", "audit_logs"]) await db.collection(name).deleteMany({});
   await db.collection("restaurants").insertOne({ _id: "restaurant-doc", id: "r1", name: "Restaurant synthétique", open: true } as any);
   await db.collection("menu_items").insertMany([

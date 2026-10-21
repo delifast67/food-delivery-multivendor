@@ -87,6 +87,8 @@ const knownCodes = new Set([
   "INVALID_IDEMPOTENCY_KEY",
   "IDEMPOTENCY_CONFLICT",
   "CHECKOUT_CHANGED",
+  "CHECKOUT_EXPIRED",
+  "QUOTE_REQUIRED",
   "UNAUTHENTICATED",
   "FORBIDDEN",
   "PAYMENT_DISABLED",
@@ -246,6 +248,7 @@ const resolvers: any = {
         input.idempotencyKey,
         ctx.customer?.id,
         input.expectedQuoteHash,
+        input.expectedQuoteToken,
       );
     },
     startPayment: (_: any, { input }: any, ctx: any) =>

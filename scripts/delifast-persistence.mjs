@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Nécessite l'API compilée et ses dépendances de développement. N'utilise jamais la base de travail. */
 import assert from 'node:assert/strict';
+import { withQuote } from './delifast-quote-helper.mjs';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -76,7 +77,7 @@ try {
   const input = { restaurantId: restaurant.id, items: [{ menuItemId: item.id, quantity: 1, selections }], idempotencyKey: 'restart-proof-0001', deliveryAddress: { recipientName: 'Test de persistance', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Démo', landmark: 'Aucune livraison réelle', instructions: '', point: { latitude: 12.3714, longitude: -1.5197 } } };
   const fields = 'id accessToken status paymentStatus deliveryAddress{recipientName phone city neighborhood landmark instructions point{latitude longitude}} checkout{currency subtotal deliveryFee serviceFee tax discount total delivery{zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo} items{menuItemId name quantity baseUnitPrice unitPrice total selectedOptions{groupId groupName optionId name priceXof}}}';
   const mutation = `mutation($input:PlaceOrderInput!){placeOrder(input:$input){${fields}}}`;
-  const original = (await gql(mutation, { input })).placeOrder;
+  const original = (await gql(mutation, { input: await withQuote(gql, { restaurantId: input.restaurantId, items: input.items, point: input.deliveryAddress.point }, input) })).placeOrder;
   assert.deepEqual(original.deliveryAddress.point, { latitude: 12.3714, longitude: -1.5197 });
   assert.equal(original.checkout.delivery.zoneId, zone.id);
   assert.equal(original.checkout.delivery.deliveryFee, 500);

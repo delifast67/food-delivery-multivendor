@@ -33,7 +33,7 @@ const otherItem = second.menu.find(item => item.available);
 ok('catalogue autonome : deux restaurants et menus');
 
 const cart = { restaurantId: first.id, items: [{ menuItemId: item.id, quantity: 2 }], point: { latitude: 12.3714, longitude: -1.5197 } };
-const quoteQuery = `query Quote($input: CartInput!) { calculateCheckout(input: $input) { ${fields} } }`;
+const quoteQuery = `query Quote($input: CartInput!) { calculateCheckout(input: $input) { quoteHash quoteToken ${fields} } }`;
 const quote = data(await request(quoteQuery, { input: cart })).calculateCheckout;
 assert.equal(quote.currency, 'XOF');
 for (const field of ['subtotal', 'deliveryFee', 'serviceFee', 'tax', 'discount', 'total']) {
@@ -55,6 +55,7 @@ ok('quantités invalides refusées');
 
 const input = {
   restaurantId: cart.restaurantId, items: cart.items,
+  expectedQuoteHash: quote.quoteHash, expectedQuoteToken: quote.quoteToken,
   idempotencyKey: `smoke-${randomUUID()}`,
   deliveryAddress: {
     point: { latitude: 12.3714, longitude: -1.5197 },

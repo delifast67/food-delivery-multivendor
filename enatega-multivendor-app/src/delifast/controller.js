@@ -9,6 +9,13 @@ const clone = (value) => (value == null ? value : JSON.parse(JSON.stringify(valu
 const errorView = (error) => ({ message: error?.message || String(error), kind: error?.kind || 'unknown', code: error?.code })
 const validQuote = (quote) => quote && quote.currency === 'XOF' && Number.isSafeInteger(quote.total) && quote.total >= 0 && Array.isArray(quote.items)
 const validQuoteHash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+const validQuoteToken = value => typeof value === 'string' && value.length > 0
+const validQuoteMetadata = quote => {
+  if (!quote || typeof quote.quoteIssuedAt !== 'string' || typeof quote.quoteExpiresAt !== 'string') return false
+  const issued = Date.parse(quote.quoteIssuedAt)
+  const expires = Date.parse(quote.quoteExpiresAt)
+  return Number.isFinite(issued) && Number.isFinite(expires) && expires > issued
+}
 const validReference = (ref) => ref && typeof ref.id === 'string' && ref.id.length > 0 && typeof ref.accessToken === 'string' && ref.accessToken.length >= 16
 const validPageCursor = cursor => cursor == null || (typeof cursor === 'string' && cursor.length > 0 && cursor.length <= 512)
 
@@ -216,8 +223,8 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
     if (typeof attempt.idempotencyKey !== 'string' || attempt.idempotencyKey.length < 8 || attempt.idempotencyKey.length > 128 || !payload || typeof payload.restaurantId !== 'string' || !Array.isArray(payload.items) || !payload.items.length || !validateAddress(payload.deliveryAddress).ok) {
       throw new Error('Tentative locale invalide ; création bloquée pour éviter un doublon')
     }
-    if (Object.keys(payload).some((key) => !['restaurantId', 'items', 'deliveryAddress', 'expectedQuoteHash'].includes(key))) throw new Error('Tentative locale incompatible')
-    if (payload.expectedQuoteHash !== undefined && !validQuoteHash(payload.expectedQuoteHash)) throw new Error('Tentative locale invalide ; création bloquée pour éviter un doublon')
+    if (Object.keys(payload).some((key) => !['restaurantId', 'items', 'deliveryAddress', 'expectedQuoteHash', 'expectedQuoteToken'].includes(key))) throw new Error('Tentative locale incompatible')
+    if (payload.expectedQuoteHash !== undefined && !validQuoteHash(payload.expectedQuoteHash) && payload.expectedQuoteHash !== 'legacy-recovery-only') throw new Error('Tentative locale invalide ; création bloquée pour éviter un doublon')
   }
   async function restoreAttempt() {
     if (restorePromise) return restorePromise
@@ -279,11 +286,17 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
       const requestPayload = { ...clone(attempt.payload), idempotencyKey: attempt.idempotencyKey }
       // Les brouillons historiques sont récupérables idempotemment, mais la
       // sentinelle ne peut pas créer une nouvelle commande côté serveur.
-      if (requestPayload.expectedQuoteHash === undefined) requestPayload.expectedQuoteHash = 'legacy-recovery-only'
+      // Any draft without the opaque token is historical recovery only. Never
+      // replay a hash-only draft as a new order; the server sentinel can only
+      // recover an existing idempotent order.
+      if (requestPayload.expectedQuoteHash === undefined || !validQuoteToken(requestPayload.expectedQuoteToken)) {
+        requestPayload.expectedQuoteHash = 'legacy-recovery-only'
+        delete requestPayload.expectedQuoteToken
+      }
       if (requestPayload.expectedQuoteHash !== 'legacy-recovery-only' && !validQuoteHash(requestPayload.expectedQuoteHash)) throw new Error('Devis approuvé manquant ; actualisez le panier et confirmez manuellement')
       const result = await api.placeOrder(requestPayload)
       if (!current()) throw Object.assign(new Error('Commande annulée après changement de session'), { kind: 'stale' })
-      if (!validReference(result) || !validQuote(result.checkout) || (requestPayload.expectedQuoteHash !== 'legacy-recovery-only' && result.checkout.quoteHash !== requestPayload.expectedQuoteHash)) throw new Error('Réponse de commande incohérente ; reprendre la même tentative')
+      if (!validReference(result) || !validQuote(result.checkout) || (requestPayload.expectedQuoteHash !== 'legacy-recovery-only' && (result.checkout.quoteHash !== requestPayload.expectedQuoteHash || result.checkout.quoteToken !== requestPayload.expectedQuoteToken))) throw new Error('Réponse de commande incohérente ; reprendre la même tentative')
       const reference = { id: result.id, accessToken: result.accessToken }
       const guestAttempt = (attempt.sessionScope == null || attempt.sessionScope === 'guest-legacy') && !attempt.customerId
       // Une commande authentifiée ne doit jamais devenir une référence invitée persistée.
@@ -690,11 +703,22 @@ function createController({ api, storage = {}, catalogueCache = null, random, fi
         storageReady()
         if (!state.cart.restaurantId || !state.cart.items.length) throw new Error('Panier vide')
         if (!validQuote(state.quote)) throw new Error('Devis serveur requis : actualisez le panier avant de confirmer')
-        if (!validQuoteHash(state.quote.quoteHash)) throw new Error('Devis serveur sans empreinte : actualisez le panier avant de confirmer')
+        const quoteInvalid = !validQuoteHash(state.quote.quoteHash) || !validQuoteToken(state.quote.quoteToken) || !validQuoteMetadata(state.quote)
+        const quoteFuture = validQuoteMetadata(state.quote) && Date.now() < Date.parse(state.quote.quoteIssuedAt)
+        const quoteExpired = validQuoteMetadata(state.quote) && Date.now() >= Date.parse(state.quote.quoteExpiresAt)
+        if (quoteInvalid || quoteFuture || quoteExpired) {
+          const code = quoteExpired ? 'CHECKOUT_EXPIRED' : (!validQuoteHash(state.quote.quoteHash) || !validQuoteToken(state.quote.quoteToken) ? 'QUOTE_REQUIRED' : 'CHECKOUT_CHANGED')
+          const refresh = refreshQuote().catch(() => null)
+          return refresh.then(() => {
+            const error = Object.assign(new Error('Le devis a expiré ou est incomplet : actualisez le devis puis confirmez manuellement.'), { kind: 'validation', code })
+            set({ error: errorView(error) })
+            throw error
+          })
+        }
         const validation = validateAddress(address, { requirePoint: true })
         if (!validation.ok) throw new Error(validation.message)
         if (JSON.stringify(validation.address.point) !== JSON.stringify(state.deliveryPoint)) throw new Error('Le point a changé : rechargez les restaurants et le devis')
-        const payload = { ...clone(state.cart), deliveryAddress: validation.address, expectedQuoteHash: state.quote.quoteHash }
+        const payload = { ...clone(state.cart), deliveryAddress: validation.address, expectedQuoteHash: state.quote.quoteHash, expectedQuoteToken: state.quote.quoteToken }
         const version = state.quoteVersion
         const key = makeIdempotencyKey(random)
         if (key.length < 8 || key.length > 128) throw new Error('Clé d’idempotence invalide')

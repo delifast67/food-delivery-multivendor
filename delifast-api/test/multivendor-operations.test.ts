@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import request from "supertest";
 import { passwordHash } from "../src/auth.js";
+import { quoteInput } from "./quote-helper.js";
 
 let mongo: MongoMemoryServer | undefined;
 let app: any;
@@ -73,7 +74,7 @@ it("deux restaurants restent isolés, un admin et un livreur traitent les deux c
   for (const restaurantId of ["r1", "r2"]) {
     const result = await success(
       "mutation($input:PlaceOrderInput!){placeOrder(input:$input){id restaurantId}}",
-      { input: {
+      { input: await quoteInput(gql, {
         restaurantId, items: [{ menuItemId: `menu-${restaurantId}`, quantity: 1 }],
         idempotencyKey: `multivendor-${restaurantId}`,
         deliveryAddress: {
@@ -81,7 +82,7 @@ it("deux restaurants restent isolés, un admin et un livreur traitent les deux c
           city: "Ouagadougou", neighborhood: "Test", landmark: "Test",
           point: { latitude: 12.3714, longitude: -1.5197 },
         },
-      } },
+      }) },
     );
     expect(result.placeOrder.restaurantId).toBe(restaurantId);
     orders.push(result.placeOrder.id);

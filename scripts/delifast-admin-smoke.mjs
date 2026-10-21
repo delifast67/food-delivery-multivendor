@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // MongoDB jetable uniquement. Ne touche ni la base de travail ni un paiement.
 import assert from 'node:assert/strict';
+import { withQuote } from './delifast-quote-helper.mjs';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -161,10 +162,11 @@ try {
   await rejected('query($r:ID!,$p:DeliveryPointInput!){deliveryEligibility(restaurantId:$r,point:$p){zoneId}}', { r: profile.id, p: zoneInput.center }, undefined, 'OUT_OF_DELIVERY_ZONE');
   ok('profils restaurant : création/modification via proxy, droits, validation, zone inconnue, rattachement sans déplacement, persistance et conflit');
   async function place() {
-    return (await gql('mutation($input:PlaceOrderInput!){placeOrder(input:$input){id status accessToken checkout{total}}}', { input: {
+    const input = {
       restaurantId: own.id, items: [{ menuItemId: 'riz-gras', quantity: 2 }], idempotencyKey: `admin-${randomUUID()}`,
       deliveryAddress: { recipientName: 'Recette admin fictive', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Démo', landmark: 'Ne pas livrer', instructions: 'Test sans livraison', point: { latitude: 12.3714, longitude: -1.5197 } },
-    } })).placeOrder;
+    };
+    return (await gql('mutation($input:PlaceOrderInput!){placeOrder(input:$input){id status accessToken checkout{total}}}', { input: await withQuote(gql, { restaurantId: input.restaurantId, items: input.items, point: input.deliveryAddress.point }, input) })).placeOrder;
   }
   const pending = await place();
   const snapshot = (await gql(ordersQuery, {}, admin.token)).operationsOrders;

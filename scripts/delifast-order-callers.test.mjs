@@ -49,13 +49,17 @@ test('consommateurs actifs Web et Expo conservent et transmettent le devis affic
   const expo = read(active[1]);
   assert.match(expo, /validQuoteHash\(requestPayload\.expectedQuoteHash\)/);
   assert.match(expo, /api\.placeOrder\(requestPayload\)/);
+  assert.match(expo, /expectedQuoteToken:\s*state\.quote\.quoteToken/);
   const web = read(active[2]);
   assert.match(web, /expectedQuoteHash:\s*checkout\?\.quoteHash/);
   assert.match(web, /payload\.expectedQuoteHash\s*\?\?\s*LEGACY_RECOVERY_QUOTE_HASH/);
+  assert.match(web, /expectedQuoteToken:\s*checkout\?\.quoteToken/);
   const transport = read(active[3]);
   assert.match(transport, /expectedQuoteHash: string;/);
   assert.match(transport, /typeof input\.expectedQuoteHash !== "string"/);
+  assert.match(transport, /input\.expectedQuoteToken/);
   assert.match(read(active[0]), /expectedQuoteHash/);
+  assert.match(read(active[0]), /input\?\.expectedQuoteToken/);
 });
 
 test('les anciennes créations Enatega restent hors des points d’entrée Delifast', () => {

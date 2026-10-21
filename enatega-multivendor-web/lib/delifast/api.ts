@@ -152,6 +152,10 @@ export type SelectedMenuOption = {
 export type Checkout = {
   /** Server-bound quote identity; null is retained for historical responses only. */
   quoteHash: string | null;
+  /** Opaque server token; clients must preserve it without decoding. */
+  quoteToken?: string | null;
+  quoteIssuedAt?: string | null;
+  quoteExpiresAt?: string | null;
   currency: string;
   subtotal: number;
   deliveryFee: number;
@@ -290,13 +294,13 @@ const CATEGORY_FIELDS = `id name sortOrder archived version`;
 const RESTAURANT_FIELDS = `id name description open version categories { ${CATEGORY_FIELDS} } menu { id name description priceXof available archived version categoryId optionGroups { ${GROUP_FIELDS} } }`;
 const RESTAURANTS = `query Restaurants($point: DeliveryPointInput) { restaurants(point: $point) { ${RESTAURANT_FIELDS} } }`;
 const RESTAURANT = `query Restaurant($id: ID!) { restaurant(id: $id) { ${RESTAURANT_FIELDS} } }`;
-const CHECKOUT = `query CalculateCheckout($input: CartInput!) { calculateCheckout(input: $input) { quoteHash currency subtotal deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } }`;
-const PLACE_ORDER = `mutation PlaceOrder($input: PlaceOrderInput!) { placeOrder(input: $input) { id accessToken status paymentStatus createdAt restaurantId checkout { quoteHash currency subtotal deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } } }`;
-const ORDER = `query Order($id: ID!, $accessToken: String!) { order(id: $id, accessToken: $accessToken) { id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions point { latitude longitude } } history { status at actorRole } checkout { quoteHash currency subtotal deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } } }`;
+const CHECKOUT = `query CalculateCheckout($input: CartInput!) { calculateCheckout(input: $input) { quoteHash quoteToken quoteIssuedAt quoteExpiresAt currency deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } }`;
+const PLACE_ORDER = `mutation PlaceOrder($input: PlaceOrderInput!) { placeOrder(input: $input) { id accessToken status paymentStatus createdAt restaurantId checkout { quoteHash quoteToken quoteIssuedAt quoteExpiresAt currency deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } } }`;
+const ORDER = `query Order($id: ID!, $accessToken: String!) { order(id: $id, accessToken: $accessToken) { id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions point { latitude longitude } } history { status at actorRole } checkout { quoteHash quoteToken quoteIssuedAt quoteExpiresAt currency deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } } } }`;
 const PAYMENT_SESSION = `query PaymentSession($orderId: ID!, $accessToken: String!) { paymentSession(orderId: $orderId, accessToken: $accessToken) { orderId phase channel mode checkoutUrl providerStatus paymentStatus } }`;
 const START_PAYMENT = `mutation StartPayment($input: StartPaymentInput!) { startPayment(input: $input) { orderId phase channel mode checkoutUrl providerStatus paymentStatus } }`;
 const REFRESH_PAYMENT = `mutation RefreshPayment($orderId: ID!, $accessToken: String!) { refreshPayment(orderId: $orderId, accessToken: $accessToken) { orderId phase channel mode checkoutUrl providerStatus paymentStatus } }`;
-const ORDER_OPERATIONS_FIELDS = `id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions point { latitude longitude } } history { status at actorRole } checkout { quoteHash currency subtotal deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } }`;
+const ORDER_OPERATIONS_FIELDS = `id accessToken status paymentStatus createdAt updatedAt restaurantId riderId deliveryAddress { recipientName phone city neighborhood landmark instructions point { latitude longitude } } history { status at actorRole } checkout { quoteHash quoteToken quoteIssuedAt quoteExpiresAt currency deliveryFee serviceFee tax discount total delivery { zoneId zoneName zoneVersion deliveryFee minimumOrderXof estimatedMinutes demo } items { menuItemId name quantity unitPrice total baseUnitPrice selectedOptions { groupId groupName optionId name priceXof } } }`;
 const STAFF_LOGIN = `mutation StaffLogin($email: String!, $password: String!) { staffLogin(email: $email, password: $password) { token user { id name role restaurantId } } }`;
 const OPERATIONS_ORDERS = `query OperationsOrders { operationsOrders { ${ORDER_OPERATIONS_FIELDS} } }`;
 const OPERATIONS_RESTAURANTS = `query OperationsRestaurants { operationsRestaurants { ${RESTAURANT_FIELDS} } }`;
@@ -445,6 +449,8 @@ async function request<T>(
       "INVALID_ADDRESS",
       "INVALID_IDEMPOTENCY_KEY",
       "CHECKOUT_CHANGED",
+      "CHECKOUT_EXPIRED",
+      "QUOTE_REQUIRED",
       "CUSTOMER_PROFILE_REQUIRED",
       "INVALID_OPTIONS",
       "CATEGORY_NOT_FOUND",
@@ -562,6 +568,8 @@ export const delifastApi = {
     idempotencyKey: string;
     deliveryAddress: DeliveryAddress;
     expectedQuoteHash: string;
+    /** Required for new orders; absent only for legacy recovery. */
+    expectedQuoteToken?: string;
   }) => {
     // The nullable GraphQL field is external legacy compatibility, not an app bypass.
     // The sentinel can only recover an existing order; the server rejects insertion.
@@ -573,6 +581,13 @@ export const delifastApi = {
       return Promise.reject(new DelifastApiError(
         "Rechargez le devis serveur avant de confirmer la commande.",
         "validation", undefined, "CHECKOUT_CHANGED",
+      ));
+    }
+    if (input.expectedQuoteHash !== LEGACY_RECOVERY_QUOTE_HASH &&
+        (typeof input.expectedQuoteToken !== "string" || !input.expectedQuoteToken)) {
+      return Promise.reject(new DelifastApiError(
+        "Confirmez le devis serveur avant de confirmer la commande.",
+        "validation", undefined, "QUOTE_REQUIRED",
       ));
     }
     return request<{ placeOrder: Order }>(PLACE_ORDER, {
@@ -904,6 +919,8 @@ export type OrderPayload = {
   deliveryAddress: DeliveryAddress;
   /** Required for newly created attempts; absent only on legacy recoveries. */
   expectedQuoteHash?: string;
+  /** Opaque token retained exactly for new-order retries; absent only in legacy recovery. */
+  expectedQuoteToken?: string;
 };
 export const LEGACY_RECOVERY_QUOTE_HASH = "legacy-recovery-only";
 export type OrderAttempt = {

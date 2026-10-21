@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // API et MongoDB jetables : aucune base de travail ni livraison réelle.
 import assert from "node:assert/strict";
+import { withQuote } from "./delifast-quote-helper.mjs";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -197,7 +198,7 @@ try {
     return (
       await gql(
         "mutation($input:PlaceOrderInput!){placeOrder(input:$input){id accessToken status checkout{total}}}",
-        { input },
+        { input: await withQuote(gql, { restaurantId: input.restaurantId, items: input.items, point: input.deliveryAddress.point }, input) },
       )
     ).placeOrder;
   }

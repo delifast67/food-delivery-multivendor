@@ -93,7 +93,7 @@ describe("Delifast helpers", () => {
     vi.stubGlobal("fetch", fetchMock);
     await delifastApi.placeOrder({
       restaurantId: "r1", items: [{ menuItemId: "m1", quantity: 1 }],
-      idempotencyKey: "stable", expectedQuoteHash: "b".repeat(64),
+      idempotencyKey: "stable", expectedQuoteHash: "b".repeat(64), expectedQuoteToken: "opaque-token",
       deliveryAddress: { recipientName: "A", phone: "+22670123456", city: "Ouagadougou", neighborhood: "Koulouba", landmark: "Mairie", instructions: "" },
     });
     expect(fetchMock).toHaveBeenCalledWith("/api/delifast/graphql", expect.objectContaining({
@@ -121,7 +121,7 @@ describe("Delifast helpers", () => {
     vi.stubGlobal("fetch", fetchMock);
     const input = {
       restaurantId: "r1", items: [{ menuItemId: "m1", quantity: 1 }],
-      idempotencyKey: "stable", expectedQuoteHash: "d".repeat(64),
+      idempotencyKey: "stable", expectedQuoteHash: "d".repeat(64), expectedQuoteToken: "opaque-token",
       deliveryAddress: { recipientName: "A", phone: "+22670123456", city: "Ouagadougou", neighborhood: "Koulouba", landmark: "Mairie", instructions: "" },
     };
     await expect(delifastApi.placeOrder(input)).rejects.toMatchObject({ kind: "unavailable" });

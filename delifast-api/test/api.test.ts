@@ -5,6 +5,12 @@ let mongod: MongoMemoryServer;
 let app: any;
 const call = (query: string, variables: any = {}) =>
   request(app).post("/graphql").send({ query, variables });
+const quoteInput = async (input: any) => {
+  const body = (await call("query($i:CartInput!){calculateCheckout(input:$i){quoteHash quoteToken}}", {
+    i: { restaurantId: input.restaurantId, items: input.items, point: input.deliveryAddress?.point },
+  })).body;
+  return { ...input, expectedQuoteHash: body.data.calculateCheckout.quoteHash, expectedQuoteToken: body.data.calculateCheckout.quoteToken };
+};
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
   mongod = await MongoMemoryServer.create();
@@ -72,8 +78,9 @@ it("reject unavailable and replay idempotently", async () => {
   };
   const q =
     "mutation($i:PlaceOrderInput!){placeOrder(input:$i){id accessToken checkout{total}}}";
-  const a = (await call(q, { i })).body.data.placeOrder;
-  const b = (await call(q, { i })).body.data.placeOrder;
+  const quoted = await quoteInput(i);
+  const a = (await call(q, { i: quoted })).body.data.placeOrder;
+  const b = (await call(q, { i: quoted })).body.data.placeOrder;
   expect(a.id).toBe(b.id);
   expect(
     (
@@ -99,7 +106,8 @@ it("concurrent same key is atomic", async () => {
     },
   };
   const q = "mutation($i:PlaceOrderInput!){placeOrder(input:$i){id}}";
-  const x = await Promise.all([call(q, { i }), call(q, { i })]);
+  const quoted = await quoteInput(i);
+  const x = await Promise.all([call(q, { i: quoted }), call(q, { i: quoted })]);
   expect(x[0].body.data.placeOrder.id).toBe(x[1].body.data.placeOrder.id);
 });
 
@@ -198,12 +206,13 @@ it("replays historical price after menu change and rejects a changed canonical p
   };
   const q =
     "mutation($i:PlaceOrderInput!){placeOrder(input:$i){id checkout{total}}}";
-  const first = (await call(q, { i })).body.data.placeOrder;
+  const quoted = await quoteInput(i);
+  const first = (await call(q, { i: quoted })).body.data.placeOrder;
   const db = (await import("../src/db.js")).getDb();
   await db
     .collection("menu_items")
     .updateOne({ id: "m1" }, { $set: { priceXof: 9000 } });
-  const replay = (await call(q, { i })).body.data.placeOrder;
+  const replay = (await call(q, { i: quoted })).body.data.placeOrder;
   expect(replay.id).toBe(first.id);
   expect(replay.checkout.total).toBe(first.checkout.total);
   const conflict = await call(q, {

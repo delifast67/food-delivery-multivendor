@@ -64,6 +64,7 @@ try {
   const input = { restaurantId: 'rest-koudougou', items: [{ menuItemId: 'riz-gras', quantity: 1 }], deliveryAddress: { ...address, landmark: 'Repère fictif', point: { latitude: 12.3714, longitude: -1.5197 } }, idempotencyKey: 'mobile-history-create-unique' }
   const quote = await mobile.calculateCheckout({ restaurantId: input.restaurantId, items: input.items, point: input.deliveryAddress.point })
   input.expectedQuoteHash = quote.quoteHash
+  input.expectedQuoteToken = quote.quoteToken
   const placed = await mobile.placeOrder(input)
   assert.equal(placed.checkout.quoteHash, quote.quoteHash)
   assert.equal((await db.collection('orders').findOne({ id: placed.id })).customerId, 'customer-a')

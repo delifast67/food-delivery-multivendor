@@ -14,7 +14,7 @@ const address = {
   point: { latitude: 12.3714, longitude: -1.5197 }
 }
 const checkout = () => ({
-  currency: 'XOF', quoteHash: 'a'.repeat(64), total: 100, subtotal: 100, deliveryFee: 0, serviceFee: 0, tax: 0,
+  currency: 'XOF', quoteHash: 'a'.repeat(64), quoteToken: 'token-a', quoteIssuedAt: '2026-01-01T00:00:00.000Z', quoteExpiresAt: '2099-01-01T00:05:00.000Z', total: 100, subtotal: 100, deliveryFee: 0, serviceFee: 0, tax: 0,
   discount: 0, items: [{ menuItemId: 'i', quantity: 1, unitPrice: 100, total: 100 }]
 })
 const result = (id = 'o') => ({ id, accessToken: '01234567890123456789', checkout: checkout() })
@@ -214,7 +214,7 @@ test('submit persists exact idempotent payload before network', async () => {
   await controller.submit({ ...address, phone: '70000000' })
   const attempt = JSON.parse(observed)
   assert.equal(attempt.idempotencyKey, 'key-test-0001')
-  assert.deepEqual(attempt.payload, { restaurantId: 'r', items: [{ menuItemId: 'i', quantity: 1, selections: [] }], deliveryAddress: { ...address, phone: '+22670000000', instructions: '' }, expectedQuoteHash: 'a'.repeat(64) })
+  assert.deepEqual(attempt.payload, { restaurantId: 'r', items: [{ menuItemId: 'i', quantity: 1, selections: [] }], deliveryAddress: { ...address, phone: '+22670000000', instructions: '' }, expectedQuoteHash: 'a'.repeat(64), expectedQuoteToken: 'token-a' })
   assert.equal(JSON.stringify(attempt).includes('total'), false)
 })
 test('double submit shares one in-flight request and sets busy synchronously', async () => {
@@ -440,4 +440,85 @@ test('arrêter le suivi invalide une lecture encore en vol', async () => {
   assert.equal(await stale, null)
   assert.equal(controller.getState().order.id, 'current')
   assert.equal(controller.getState().lastOrder.id, 'current')
+})
+
+for (const invalid of ['expired', 'future', 'missing', 'malformed']) {
+  test(`quote ${invalid}: refresh without POST then require manual confirmation`, async () => {
+    const now = Date.now()
+    const fresh = { ...checkout(), quoteIssuedAt: new Date(now - 1000).toISOString(), quoteExpiresAt: new Date(now + 299000).toISOString() }
+    const stale = { ...fresh }
+    if (invalid === 'expired') stale.quoteExpiresAt = new Date(now - 1).toISOString()
+    if (invalid === 'future') stale.quoteIssuedAt = new Date(now + 60000).toISOString()
+    if (invalid === 'missing') delete stale.quoteExpiresAt
+    if (invalid === 'malformed') stale.quoteExpiresAt = 'not-a-date'
+    let quoteCalls = 0; const orders = []
+    const { controller } = setup({
+      calculateCheckout: async () => (++quoteCalls === 1 ? stale : fresh),
+      placeOrder: async input => { orders.push(input); return { ...result(), checkout: fresh } }
+    })
+    await seeded(controller)
+    await assert.rejects(controller.submit(address), error => error.kind === 'validation' && /confirmez manuellement/.test(error.message))
+    assert.equal(quoteCalls, 2)
+    assert.equal(orders.length, 0)
+    assert.equal(controller.getState().pending, null)
+    assert.deepEqual(controller.getState().quote, fresh)
+    await controller.submit(address)
+    assert.equal(orders.length, 1)
+    assert.equal(orders[0].expectedQuoteToken, fresh.quoteToken)
+  })
+}
+
+for (const code of ['CHECKOUT_EXPIRED', 'QUOTE_REQUIRED']) {
+  test(`server ${code} never silently submits a replacement`, async () => {
+    let calls = 0
+    const { controller } = setup({ placeOrder: async () => {
+      calls++
+      throw Object.assign(new Error('Reconfirmez le devis'), { kind: 'validation', code })
+    } })
+    await seeded(controller)
+    await assert.rejects(controller.submit(address), error => error.code === code)
+    assert.equal(calls, 1)
+    assert.equal(controller.getState().quote, null)
+    assert.equal(controller.getState().pending, null)
+    await controller.refreshQuote()
+    assert.equal(calls, 1)
+  })
+}
+
+test('lost response retries the identical signed payload after expiry', async t => {
+  const now = Date.now()
+  const quote = { ...checkout(), quoteIssuedAt: new Date(now - 1000).toISOString(), quoteExpiresAt: new Date(now + 299000).toISOString() }
+  const calls = []; const storage = makeStorage()
+  const api = {
+    calculateCheckout: async () => quote,
+    placeOrder: async input => {
+      calls.push(structuredClone(input))
+      if (calls.length === 1) throw Object.assign(new Error('Réponse perdue'), { kind: 'unavailable' })
+      return { ...result(), checkout: quote }
+    }
+  }
+  let controller = setup(api, {}, { storage }).controller
+  await seeded(controller)
+  await assert.rejects(controller.submit(address))
+  assert.ok(controller.getState().pending)
+  t.mock.method(Date, 'now', () => Date.parse(quote.quoteExpiresAt) + 1)
+  controller = setup(api, {}, { storage }).controller
+  await controller.restoreAttempt()
+  const accepted = await controller.retryPending()
+  assert.equal(accepted.id, 'o')
+  assert.equal(calls.length, 2)
+  assert.deepEqual(calls[1], calls[0])
+})
+
+test('a hash-only historical draft uses recovery-only without a token', async () => {
+  const payload = { restaurantId: 'r', items: [{ menuItemId: 'i', quantity: 1, selections: [] }], deliveryAddress: address, expectedQuoteHash: 'a'.repeat(64) }
+  const storage = makeStorage({ [ATTEMPT_KEY]: JSON.stringify({ idempotencyKey: 'old-hash-only', payload }) })
+  const calls = []
+  const { controller } = setup({ placeOrder: async input => { calls.push(input); return result() } }, {}, { storage })
+  await controller.restoreAttempt()
+  await controller.retryPending()
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].idempotencyKey, 'old-hash-only')
+  assert.equal(calls[0].expectedQuoteHash, 'legacy-recovery-only')
+  assert.equal(calls[0].expectedQuoteToken, undefined)
 })

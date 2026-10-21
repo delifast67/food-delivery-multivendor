@@ -77,6 +77,30 @@ function estimatedPrice(item: MenuItem, selections: OptionSelection[]) {
     )
   );
 }
+function quoteInvalidForNewOrder(
+  quote: Awaited<ReturnType<typeof delifastApi.checkout>> | null,
+  now = Date.now(),
+) {
+  if (
+    !quote ||
+    !/^[a-f0-9]{64}$/.test(quote.quoteHash ?? "") ||
+    typeof quote.quoteToken !== "string" ||
+    !quote.quoteToken
+  )
+    return "Le devis serveur est incomplet. Il vient d’être actualisé : vérifiez-le avant de confirmer.";
+  const issuedAt = Date.parse(quote.quoteIssuedAt ?? "");
+  const expiresAt = Date.parse(quote.quoteExpiresAt ?? "");
+  if (
+    !Number.isFinite(issuedAt) ||
+    !Number.isFinite(expiresAt) ||
+    issuedAt > now ||
+    expiresAt <= issuedAt
+  )
+    return "Les métadonnées du devis serveur sont invalides. Il vient d’être actualisé : vérifiez-le avant de confirmer.";
+  if (now >= expiresAt)
+    return "Le devis a expiré. Il vient d’être actualisé : vérifiez le nouveau total avant de confirmer.";
+  return null;
+}
 const statusTitle: Record<string, string> = {
   PAYMENT_PENDING: "Votre commande est en attente de paiement.",
   CONFIRMED: "Votre commande est confirmée (démo).",
@@ -452,6 +476,18 @@ export default function DelifastPage() {
   const place = async () => {
     if (submittingRef.current) return;
     if (!locked && (!selected || !cart.length || !checkout)) return;
+    // An unresolved attempt is an idempotent recovery contract: never block it
+    // because its original quote has since expired or lacks new metadata.
+    if (!locked) {
+      const quoteError = quoteInvalidForNewOrder(checkout);
+      if (quoteError) {
+        setCheckout(null);
+        setCheckoutRevision((value) => value + 1);
+        setError(quoteError);
+        setNotice(quoteError);
+        return;
+      }
+    }
     const payload: OrderPayload = locked
       ? attempt!.payload
       : {
@@ -459,14 +495,8 @@ export default function DelifastPage() {
           items: cart,
           deliveryAddress: address,
           expectedQuoteHash: checkout?.quoteHash ?? undefined,
+          expectedQuoteToken: checkout?.quoteToken ?? undefined,
         };
-    // A null/absent hash is historical data only: never create a new order from it.
-    if (!locked && !/^[a-f0-9]{64}$/.test(checkout?.quoteHash ?? "")) {
-      setCheckout(null);
-      setCheckoutRevision((value) => value + 1);
-      setError("Le devis serveur n’a pas d’identifiant valide. Rechargez-le avant de confirmer.");
-      return;
-    }
     if (
       !locked &&
       (!address.recipientName ||
@@ -499,7 +529,9 @@ export default function DelifastPage() {
         ...payload,
         // Legacy attempts may be replayed only with the invalid sentinel; it cannot insert.
         expectedQuoteHash:
-          payload.expectedQuoteHash ?? LEGACY_RECOVERY_QUOTE_HASH,
+          payload.expectedQuoteToken
+            ? payload.expectedQuoteHash ?? LEGACY_RECOVERY_QUOTE_HASH
+            : LEGACY_RECOVERY_QUOTE_HASH,
         idempotencyKey: current.idempotencyKey,
       });
       const saved = {

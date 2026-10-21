@@ -2,6 +2,7 @@
 /** Base locale fictive du seed uniquement. Aucun encaissement ni service externe. */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { withQuote } from './delifast-quote-helper.mjs';
 const web = process.env.DELIFAST_SMOKE_WEB_URL || 'http://127.0.0.1:3000';
 const url = `${web}/api/delifast/graphql`;
 let checks = 0;
@@ -26,7 +27,7 @@ const create = `mutation($r:ID!,$input:MenuItemInput!){createMenuItem(restaurant
 const update = `mutation($id:ID!,$v:Int!,$input:MenuItemInput!){updateMenuItem(id:$id,expectedVersion:$v,input:$input){${itemFields}}}`;
 const archive = `mutation($id:ID!,$v:Int!,$a:Boolean!){setMenuItemArchived(id:$id,expectedVersion:$v,archived:$a){${itemFields}}}`;
 const opening = 'mutation($id:ID!,$v:Int!,$open:Boolean!){setRestaurantOpen(id:$id,expectedVersion:$v,open:$open){id open version}}';
-const checkout = 'query($input:CartInput!){calculateCheckout(input:$input){total items{unitPrice name}}}';
+const checkout = 'query($input:CartInput!){calculateCheckout(input:$input){quoteHash quoteToken total items{unitPrice name}}}';
 const place = 'mutation($input:PlaceOrderInput!){placeOrder(input:$input){id accessToken checkout{total items{unitPrice name}}}}';
 const sessions = [];
 let item, store, closedVersion;
@@ -64,7 +65,8 @@ try {
   ok('création visible côté client, prix entier serveur et validation des champs');
   const orderInput = { restaurantId: cart.restaurantId, items: cart.items, idempotencyKey: `catalog-${randomUUID()}`, deliveryAddress: { recipientName: 'Test catalogue fictif', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Démo', landmark: 'Ne pas livrer — test automatisé', instructions: '', point: { latitude: 12.3714, longitude: -1.5197 } } };
 
-  const placed = (await gql(place, { input: orderInput })).placeOrder;
+  const quotedOrderInput = await withQuote(gql, { restaurantId: orderInput.restaurantId, items: orderInput.items, point: orderInput.deliveryAddress.point }, orderInput);
+  const placed = (await gql(place, { input: quotedOrderInput })).placeOrder;
   const changes = await Promise.all([1500, 1700].map(priceXof => raw(update, { id: item.id, v: item.version, input: { ...input, priceXof } }, restaurant.token)));
   assert.equal(changes.filter(x => x.data?.updateMenuItem).length, 1);
   assert.equal(changes.filter(x => x.errors?.[0]?.extensions?.code === 'CONCURRENT_MODIFICATION').length, 1);
@@ -92,8 +94,8 @@ try {
   const closed = (await gql(opening, { id: store.id, v: store.version, open: false }, restaurant.token)).setRestaurantOpen;
   closedVersion = closed.version;
   await denied(checkout, { input: cart }, undefined, 'RESTAURANT_CLOSED');
-  await denied(place, { input: { ...orderInput, idempotencyKey: `catalog-closed-${randomUUID()}` } }, undefined, 'RESTAURANT_CLOSED');
-  assert.equal((await gql(place, { input: orderInput })).placeOrder.id, placed.id);
+  await denied(place, { input: { ...quotedOrderInput, idempotencyKey: `catalog-closed-${randomUUID()}` } }, undefined, 'RESTAURANT_CLOSED');
+  assert.equal((await gql(place, { input: quotedOrderInput })).placeOrder.id, placed.id);
   await denied(opening, { id: store.id, v: store.version, open: true }, restaurant.token, 'CONCURRENT_MODIFICATION');
   const reopened = (await gql(opening, { id: store.id, v: closedVersion, open: true }, restaurant.token)).setRestaurantOpen;
   closedVersion = undefined;

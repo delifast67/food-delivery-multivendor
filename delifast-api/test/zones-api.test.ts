@@ -2,6 +2,7 @@ import { beforeAll, afterAll, expect, it } from "vitest";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import request from "supertest";
 import crypto from "node:crypto";
+import { quoteInput } from "./quote-helper.js";
 let mongo: MongoMemoryServer, app: any, db: any, token: string, zone: any;
 const point = { latitude: 12.3714, longitude: -1.5197 };
 const call = async (query: string, variables: any = {}, auth?: string) => (await request(app).post('/graphql').set(auth ? {authorization:`Bearer ${auth}`} : {}).send({query, variables})).body;
@@ -9,6 +10,7 @@ const address = { recipientName:'Essai fictif', phone:'+22670000000', city:'Vill
 const cart = {restaurantId:'rest-koudougou',items:[{menuItemId:'riz-gras',quantity:1}]};
 const input = (key: string, p: any = point) => ({...cart,idempotencyKey:key,deliveryAddress:{...address,point:p}});
 const place = 'mutation($i:PlaceOrderInput!){placeOrder(input:$i){id accessToken checkout{total deliveryFee delivery{zoneId zoneVersion deliveryFee demo}}}}';
+const quoted = (i: any) => quoteInput(call, i);
 const zoneFields = 'id restaurantId name shape center{latitude longitude} radiusMeters polygon{latitude longitude} enabled feeXof minimumOrderXof estimatedMinutes priority demo hours{day startMinute endMinute} version';
 const update = async (changes: any) => {
   const {id,restaurantId,version,...data} = zone;
@@ -31,7 +33,7 @@ it('requires GPS before insertion, rejects a foreign point and does not trust th
  expect((await call(place,{i:missing})).errors[0].extensions.code).toBe('DELIVERY_POINT_REQUIRED');
  expect((await call(place,{i:input('outside-point',{latitude:0,longitude:0})})).errors[0].extensions.code).toBe('OUT_OF_DELIVERY_ZONE');
  expect(await db.collection('orders').countDocuments()).toBe(before);
- const valid=await call(place,{i:input('valid-free-city')});
+ const valid=await call(place,{i:await quoted(input('valid-free-city'))});
  expect(valid.errors).toBeUndefined(); expect(valid.data.placeOrder.checkout.delivery.demo).toBe(true);
 });
 it('filters discovery per restaurant and checks current fees, minimum and availability again at placement',async()=>{
@@ -47,11 +49,12 @@ it('filters discovery per restaurant and checks current fees, minimum and availa
  const q=await call('query($i:CartInput!){calculateCheckout(input:$i){deliveryFee delivery{zoneVersion}}}',{i:{...cart,point}});
  expect(q.data.calculateCheckout.deliveryFee).toBe(731);
  await update({feeXof:913});
- const placed=await call(place,{i:input('current-fee-proof')});
+ const current=await quoted(input('current-fee-proof'));
+ const placed=await call(place,{i:current});
  expect(placed.data.placeOrder.checkout.deliveryFee).toBe(913);
  expect(placed.data.placeOrder.checkout.delivery.zoneVersion).toBe(zone.version);
  await update({enabled:false,feeXof:123});
- expect((await call(place,{i:input('current-fee-proof')})).data.placeOrder).toEqual(placed.data.placeOrder);
+ expect((await call(place,{i:current})).data.placeOrder).toEqual(placed.data.placeOrder);
  const changed=input('current-fee-proof',{latitude:12.372,longitude:-1.52});
  expect((await call(place,{i:changed})).errors[0].extensions.code).toBe('IDEMPOTENCY_CONFLICT');
  await update({enabled:true,feeXof:500});
@@ -70,7 +73,7 @@ it('stores the exact submitted delivery point and protects the address with the 
  const selected = input('chosen-address-snapshot', { ...chosen });
  selected.deliveryAddress.instructions = 'Adresse fictive choisie pour cette commande';
  const fields = 'id accessToken deliveryAddress{recipientName phone city neighborhood landmark instructions point{latitude longitude}} checkout{delivery{zoneId deliveryFee}}';
- const result = await call(`mutation($i:PlaceOrderInput!){placeOrder(input:$i){${fields}}}`, { i: selected });
+ const result = await call(`mutation($i:PlaceOrderInput!){placeOrder(input:$i){${fields}}}`, { i: await quoted(selected) });
  expect(result.errors).toBeUndefined();
  const order = result.data.placeOrder;
  expect(order.deliveryAddress).toEqual(selected.deliveryAddress);

@@ -218,6 +218,7 @@ describe("customer transport protocol", () => {
       items: [{ menuItemId: "protocol-item", quantity: 1 }],
       idempotencyKey: "protocol-idempotency-key",
       expectedQuoteHash: "c".repeat(64),
+      expectedQuoteToken: "opaque-token",
       deliveryAddress: {
         ...address,
         id: "server-address-id",

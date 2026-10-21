@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Recette Web riders autonome : netns privé, Mongo jetable, fixtures sans fournisseur externe. */
 import assert from 'node:assert/strict';
+import { withQuote } from './delifast-quote-helper.mjs';
 import { spawn, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createRequire } from 'node:module';
@@ -87,7 +88,8 @@ try {
   const apiUrl = `http://127.0.0.1:${api.address().port}/graphql`;
   async function gql(query, variables = {}, token) { const response = await fetch(apiUrl, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ query, variables }) }); const body = await response.json(); assert.ok(!body.errors, JSON.stringify(body.errors)); return body.data; }
   const admin = (await gql('mutation($e:String!,$p:String!){staffLogin(email:$e,password:$p){token}}', { e: 'admin@delifast.local', p: 'AdminDemo!2026' })).staffLogin;
-  const order = (await gql('mutation($i:PlaceOrderInput!){placeOrder(input:$i){id}}', { i: { restaurantId: 'rest-koudougou', items: [{ menuItemId: 'riz-gras', quantity: 1 }], idempotencyKey: 'web-riders-acceptance-order', deliveryAddress: { recipientName: 'Fixture riders', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Recette', landmark: 'Aucun', instructions: 'Fixture uniquement', point: { latitude: 12.3714, longitude: -1.5197 } } } })).placeOrder;
+  const orderInput = { restaurantId: 'rest-koudougou', items: [{ menuItemId: 'riz-gras', quantity: 1 }], idempotencyKey: 'web-riders-acceptance-order', deliveryAddress: { recipientName: 'Fixture riders', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Recette', landmark: 'Aucun', instructions: 'Fixture uniquement', point: { latitude: 12.3714, longitude: -1.5197 } } };
+  const order = (await gql('mutation($i:PlaceOrderInput!){placeOrder(input:$i){id}}', { i: await withQuote(gql, { restaurantId: orderInput.restaurantId, items: orderInput.items, point: orderInput.deliveryAddress.point }, orderInput) })).placeOrder;
   const now = new Date().toISOString();
   await db.collection('orders').updateOne({ id: order.id }, { $set: { status: 'ACCEPTED', paymentStatus: 'PAID', updatedAt: now }, $push: { history: { status: 'ACCEPTED', at: now, actorRole: 'ADMIN' } } });
   await writeFile(fixture, JSON.stringify({ orderId: order.id, adminToken: admin.token }), { mode: 0o600 });

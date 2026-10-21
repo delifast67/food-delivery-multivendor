@@ -25,11 +25,11 @@ test('création conserve le mode invité, puis rattache les nouvelles commandes 
     headers.push(options.headers)
     return { ok: true, json: async () => ({ data: { placeOrder: { id: 'fixture' } } }) }
   } })
-  await client.placeOrder({ idempotencyKey: 'fixture-guest', expectedQuoteHash: 'a'.repeat(64) })
+  await client.placeOrder({ idempotencyKey: 'fixture-guest', expectedQuoteHash: 'a'.repeat(64), expectedQuoteToken: 'token-a' })
   client.setCustomerToken('fixture-session-a')
-  await client.placeOrder({ idempotencyKey: 'fixture-auth', expectedQuoteHash: 'b'.repeat(64) })
+  await client.placeOrder({ idempotencyKey: 'fixture-auth', expectedQuoteHash: 'b'.repeat(64), expectedQuoteToken: 'token-b' })
   client.setCustomerToken(null)
-  await client.placeOrder({ idempotencyKey: 'fixture-guest-again', expectedQuoteHash: 'c'.repeat(64) })
+  await client.placeOrder({ idempotencyKey: 'fixture-guest-again', expectedQuoteHash: 'c'.repeat(64), expectedQuoteToken: 'token-c' })
   assert.deepEqual(headers.map(value => value.authorization), [undefined, 'Bearer fixture-session-a', undefined])
 })
 
@@ -51,7 +51,7 @@ test('transport garde exactement le hash serveur et la clé lors d’une reprise
     return { ok: true, json: async () => ({ data: { placeOrder: { id: 'original' } } }) }
   } })
   const payload = { restaurantId: 'r1', items: [{ menuItemId: 'm1', quantity: 1 }],
-    deliveryAddress: { landmark: 'Fixture' }, idempotencyKey: 'same-durable-key', expectedQuoteHash: 'd'.repeat(64) }
+    deliveryAddress: { landmark: 'Fixture' }, idempotencyKey: 'same-durable-key', expectedQuoteHash: 'd'.repeat(64), expectedQuoteToken: 'token-d' }
   await assert.rejects(client.placeOrder(payload), error => error.kind === 'unavailable')
   assert.equal(calls.length, 1, 'aucun rejeu automatique après réponse incertaine')
   assert.deepEqual(await client.placeOrder(payload), { id: 'original' })

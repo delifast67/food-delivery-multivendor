@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import request from "supertest";
 import { closeDb, connect, getDb } from "../src/db.js";
+import { quoteInput } from "./quote-helper.js";
 
 let mongo: MongoMemoryServer;
 let app: any;
@@ -75,7 +76,7 @@ it("refuse discovery/devis/placeOrder fermé sans insertion, puis rejoue exactem
   expect(await db.collection("orders").countDocuments()).toBe(before);
   const closedVersion = (await db.collection("restaurants").findOne({ id: "rest-koudougou" }))!.version;
   await call(scheduleMutation, { id: "rest-koudougou", v: closedVersion, s: null }, "ADMIN");
-  const firstBody = await call("mutation($i:PlaceOrderInput!){placeOrder(input:$i){id accessToken checkout{total subtotal}}}", { i: input });
+  const firstBody = await call("mutation($i:PlaceOrderInput!){placeOrder(input:$i){id accessToken checkout{total subtotal}}}", { i: await quoteInput(call, input) });
   expect(firstBody.errors).toBeUndefined();
   const first = firstBody.data.placeOrder;
   const openVersion = (await db.collection("restaurants").findOne({ id: "rest-koudougou" }))!.version;

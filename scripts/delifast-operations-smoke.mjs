@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Local uniquement : comptes fictifs du seed et DELIFAST_DEMO_PAYMENTS=true requis. */
 import assert from 'node:assert/strict';
+import { withQuote } from './delifast-quote-helper.mjs';
 import { randomUUID } from 'node:crypto';
 const webUrl = process.env.DELIFAST_SMOKE_WEB_URL || 'http://127.0.0.1:3000';
 const url = `${webUrl}/api/delifast/graphql`;
@@ -39,7 +40,7 @@ try {
   const item = store.menu.find(entry => entry.available);
   async function place() {
     const input = { restaurantId: store.id, items: [{ menuItemId: item.id, quantity: 1 }], idempotencyKey: `operations-${randomUUID()}`, deliveryAddress: { recipientName: 'Parcours opérations fictif', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Démo', landmark: 'Ne pas livrer — test automatisé', instructions: '', point: { latitude: 12.3714, longitude: -1.5197 } } };
-    return (await gql(`mutation Place($input:PlaceOrderInput!){placeOrder(input:$input){${fields}}}`, { input })).placeOrder;
+    return (await gql(`mutation Place($input:PlaceOrderInput!){placeOrder(input:$input){${fields}}}`, { input: await withQuote(gql, { restaurantId: input.restaurantId, items: input.items, point: input.deliveryAddress.point }, input) })).placeOrder;
   }
   let order = await place();
   const customerToken = order.accessToken;

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Vraie recette admin Chromium, MongoMemoryServer jetable, aucun fournisseur externe. */
 import assert from 'node:assert/strict';
+import { withQuote } from './delifast-quote-helper.mjs';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -54,7 +55,7 @@ try {
   const admin = (await login('admin@delifast.local', 'AdminDemo!2026')).staffLogin;
   const restaurant = (await login('restaurant1@delifast.local', 'RestaurantDemo!2026')).staffLogin;
   const rider = (await login('rider@delifast.local', 'RiderDemo!2026')).staffLogin;
-  const place = async (restaurantId, menuItemId, key) => (await gql('mutation($i:PlaceOrderInput!){placeOrder(input:$i){id checkout{total} status}}', { i: { restaurantId, items: [{ menuItemId, quantity: 1 }], idempotencyKey: key, deliveryAddress: { recipientName: `Fixture ${key}`, phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Recette', landmark: 'Aucun', instructions: 'Fixture uniquement', point: { latitude: 12.3714, longitude: -1.5197 } } } })).placeOrder;
+  const place = async (restaurantId, menuItemId, key) => { const input = { restaurantId, items: [{ menuItemId, quantity: 1 }], idempotencyKey: key, deliveryAddress: { recipientName: `Fixture ${key}`, phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Recette', landmark: 'Aucun', instructions: 'Fixture uniquement', point: { latitude: 12.3714, longitude: -1.5197 } } }; return (await gql('mutation($i:PlaceOrderInput!){placeOrder(input:$i){id checkout{total} status}}', { i: await withQuote(gql, { restaurantId, items: input.items, point: input.deliveryAddress.point }, input) })).placeOrder; };
   const orders = [await place('rest-koudougou', 'riz-gras', 'admin-acceptance-r1'), await place('rest-ouaga-centre', 'burger-faso', 'admin-acceptance-r2')];
   for (const order of orders) await db.collection('orders').updateOne({ id: order.id }, { $set: { status: 'CONFIRMED', paymentStatus: 'PAID' }, $push: { history: { status: 'CONFIRMED', at: new Date().toISOString(), actorRole: 'SYSTEM' } } });
   // 48 old, paid orders exercise the server cursor (never a client-side slice).  They

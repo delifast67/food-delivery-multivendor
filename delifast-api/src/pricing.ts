@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import { eligibility } from "./zones.js";
+import { issueQuote } from "./quote.js";
+import { eligibility, prepareEligibility } from "./zones.js";
 import type { Db } from "mongodb";
 import { config } from "./config.js";
 import { assertIntAmount, Cart, fail } from "./validation.js";
@@ -23,6 +24,9 @@ export type CheckoutItem = {
 };
 export type Checkout = {
   quoteHash: string;
+  quoteToken: string;
+  quoteIssuedAt: string;
+  quoteExpiresAt: string;
   currency: "XOF";
   subtotal: number;
   deliveryFee: number;
@@ -120,7 +124,8 @@ export async function prepareCheckout(db: Db, cart: Cart) {
   const subtotal = assertIntAmount(
       items.reduce((n, x) => assertIntAmount(n + x.total), 0),
     );
-  const delivery = cart.point ? await eligibility(db, cart.restaurantId, cart.point, subtotal) : null;
+  const deliveryState = cart.point ? await prepareEligibility(db, cart.restaurantId, cart.point, subtotal) : null;
+  const delivery = deliveryState?.delivery ?? null;
   const deliveryFee = delivery?.deliveryFee ?? 0;
   const fees = assertIntAmount(deliveryFee + config.serviceFee + config.tax),
     total = assertIntAmount(subtotal + fees);
@@ -135,14 +140,16 @@ export async function prepareCheckout(db: Db, cart: Cart) {
     total,
     items,
   };
+  const guard = captureCheckoutGuard(restaurant, menu.sort((a,b) => String(a.id).localeCompare(String(b.id))));
   // An expectation, not a price supplied by the client: compare it with a fresh
   // authoritative calculation before inserting an order. No stored quote/cache
   // can set the amount or bypass availability, options, or delivery validation.
   const quoteHash = crypto.createHash("sha256").update(JSON.stringify({
     restaurantId: cart.restaurantId, point: cart.point ?? null, ...snapshot,
+    catalog: guard, zones: deliveryState?.sources ?? null,
   })).digest("hex");
   return {
-    checkout: { ...snapshot, quoteHash },
-    guard: captureCheckoutGuard(restaurant, menu),
+    checkout: { ...snapshot, quoteHash, ...issueQuote(quoteHash) },
+    guard,
   };
 }

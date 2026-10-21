@@ -2,6 +2,7 @@
 /** Recette locale uniquement : prix, plats, adresses et commandes entièrement fictifs. */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { withQuote } from './delifast-quote-helper.mjs';
 const url = `${process.env.DELIFAST_SMOKE_WEB_URL || 'http://127.0.0.1:3000'}/api/delifast/graphql`;
 let checks = 0;
 const ok = label => console.log(`OK ${++checks} — ${label}`);
@@ -27,7 +28,7 @@ const archiveCategory = `mutation($id:ID!,$v:Int!,$a:Boolean!){setMenuCategoryAr
 const createItem = `mutation($r:ID!,$input:MenuItemInput!){createMenuItem(restaurantId:$r,input:$input){${itemFields}}}`;
 const updateItem = `mutation($id:ID!,$v:Int!,$input:MenuItemInput!){updateMenuItem(id:$id,expectedVersion:$v,input:$input){${itemFields}}}`;
 const archiveItem = 'mutation($id:ID!,$v:Int!){setMenuItemArchived(id:$id,expectedVersion:$v,archived:true){id archived version}}';
-const checkoutFields = 'total subtotal items{menuItemId name quantity baseUnitPrice unitPrice total selectedOptions{groupId groupName optionId name priceXof}}';
+const checkoutFields = 'quoteHash quoteToken total subtotal items{menuItemId name quantity baseUnitPrice unitPrice total selectedOptions{groupId groupName optionId name priceXof}}';
 const checkout = `query($input:CartInput!){calculateCheckout(input:$input){${checkoutFields}}}`;
 const place = `mutation($input:PlaceOrderInput!){placeOrder(input:$input){id accessToken checkout{${checkoutFields}}}}`;
 const publicCatalog = `query($id:ID!){restaurant(id:$id){id categories{${categoryFields}} menu{${itemFields}}}}`;
@@ -80,19 +81,20 @@ try {
   ok('suppléments multipliés par quantité et deux configurations du même plat séparées');
   const orderInput = { restaurantId: cart(selections).restaurantId, items: cart(selections).items, idempotencyKey: `options-${randomUUID()}`, deliveryAddress: { recipientName: 'Test fictif options', phone: '+22670000000', city: 'Ouagadougou', neighborhood: 'Démo', landmark: 'Ne pas livrer — recette automatisée', instructions: '', point: { latitude: 12.3714, longitude: -1.5197 } } };
 
-  const order = (await gql(place, { input: orderInput })).placeOrder;
+  const quotedOrderInput = await withQuote(gql, { restaurantId: orderInput.restaurantId, items: orderInput.items, point: orderInput.deliveryAddress.point }, orderInput);
+  const order = (await gql(place, { input: quotedOrderInput })).placeOrder;
   const changedGroups = structuredClone(groups);
   changedGroups[0].name = 'Taille renommée fictive';
   changedGroups[0].options[1].name = 'Grand renommé fictif';
   changedGroups[0].options[1].priceXof = 500;
   item = (await gql(updateItem, { id: item.id, v: item.version, input: { ...input, optionGroups: changedGroups } }, restaurant.token)).updateMenuItem;
   assert.equal((await gql(checkout, { input: cart(selections) })).calculateCheckout.subtotal, 3100);
-  const replay = (await gql(place, { input: { ...orderInput, items: [{ ...orderInput.items[0], selections: [...selections].reverse() }] } })).placeOrder;
+  const replay = (await gql(place, { input: { ...quotedOrderInput, items: [{ ...orderInput.items[0], selections: [...selections].reverse() }] } })).placeOrder;
   assert.equal(replay.id, order.id);
   assert.deepEqual(replay.checkout, order.checkout);
   const fetched = (await gql(`query($id:ID!,$token:String!){order(id:$id,accessToken:$token){checkout{${checkoutFields}}}}`, { id: order.id, token: order.accessToken })).order;
   assert.deepEqual(fetched.checkout, order.checkout);
-  await denied(place, { input: { ...orderInput, items: [{ ...orderInput.items[0], selections: [{ groupId: 'size', optionIds: ['regular'] }] }] } }, undefined, 'IDEMPOTENCY_CONFLICT');
+  await denied(place, { input: { ...quotedOrderInput, items: [{ ...orderInput.items[0], selections: [{ groupId: 'size', optionIds: ['regular'] }] }] } }, undefined, 'IDEMPOTENCY_CONFLICT');
   ok('snapshot noms/prix préservé après modification et rejeu canonique sans doublon de commande');
   category = (await gql(archiveCategory, { id: category.id, v: category.version, a: true }, restaurant.token)).setMenuCategoryArchived;
   const visible = (await gql(publicCatalog, { id: r })).restaurant;

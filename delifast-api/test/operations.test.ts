@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import request from "supertest";
 import { passwordHash } from "../src/auth.js";
+import { quoteInput } from "./quote-helper.js";
 
 let mongo: MongoMemoryServer;
 let app: any;
@@ -193,7 +194,7 @@ describe("contrat opérations", () => {
     const placed = (
       await gql(
         "mutation($i:PlaceOrderInput!){placeOrder(input:$i){id status paymentStatus history{status}}}",
-        { i: input },
+        { i: await quoteInput(gql, input) },
       )
     ).data.placeOrder;
     expect(

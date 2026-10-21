@@ -88,7 +88,7 @@ try {
   await db.collection('menu_items').updateOne({ id: 'dish' }, { $set: { available: true } })
   await storage.setItem('delifast-order-attempt', JSON.stringify({ ...legacy, idempotencyKey: 'legacy-never-sent-synthetic' }))
   controller = createController({ api, storage }); await controller.restoreAttempt()
-  await assert.rejects(controller.retryPending(), error => error.code === 'CHECKOUT_CHANGED' && error.kind === 'validation')
+  await assert.rejects(controller.retryPending(), error => error.code === 'QUOTE_REQUIRED' && error.kind === 'validation')
   assert.equal(await db.collection('orders').countDocuments(), 1)
   assert.equal(controller.getState().pending, null)
   assert.equal(await db.collection('payment_events').countDocuments(), 0)

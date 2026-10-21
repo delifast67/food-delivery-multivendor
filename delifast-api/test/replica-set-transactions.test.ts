@@ -11,6 +11,7 @@ let client: MongoClient;
 let second: MongoClient;
 let db: Db;
 let orders: typeof import("../src/orders.js");
+let pricing: typeof import("../src/pricing.js");
 
 const point = { latitude: 12.3714, longitude: -1.5197 };
 const address = { recipientName: "Test transaction", phone: "+22670000000", city: "Ouagadougou", neighborhood: "Démo", landmark: "Aucun", instructions: "Test", point };
@@ -85,6 +86,7 @@ beforeAll(async () => {
   await db.admin().command({ setParameter: 1, transactionLifetimeLimitSeconds: 1 });
   await db.collection<any>("replica_probe").insertOne({ writable: true });
   orders = await import("../src/orders.js");
+  pricing = await import("../src/pricing.js");
 }, 60_000);
 
 beforeEach(reset);
@@ -164,9 +166,10 @@ describe("transactions MongoDB replica set réels", () => {
   });
 
   it("placeOrder réel concurrence même clé : index unique, un seul order", async () => {
+    const quote = await pricing.calculateCheckout(db, { ...(cart as any), point } as any);
     const [a, b] = await Promise.all([
-      orders.placeOrder(db, cart as any, address as any, "same-real-key"),
-      orders.placeOrder(second.db(db.databaseName), cart as any, address as any, "same-real-key"),
+      orders.placeOrder(db, cart as any, address as any, "same-real-key", undefined, quote.quoteHash, quote.quoteToken),
+      orders.placeOrder(second.db(db.databaseName), cart as any, address as any, "same-real-key", undefined, quote.quoteHash, quote.quoteToken),
     ]);
     expect((a as any).id).toBe((b as any).id);
     expect(await db.collection("orders").countDocuments({ idempotencyKey: "same-real-key" })).toBe(1);

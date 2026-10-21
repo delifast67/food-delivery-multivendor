@@ -328,22 +328,32 @@ describe("catégories et options serveur", () => {
   });
   it("conserve snapshots noms/prix et rejoue avec ordre de choix inversé", async () => {
     const item = await createMenuItem(db, admin, "r1", itemInput());
+    const initialCart = cart(item.id);
+    const initialQuote = await calculateCheckout(db, { ...initialCart, point: address.point });
     const original = await placeOrder(
       db,
-      cart(item.id),
+      initialCart,
       address,
       "snapshot-options-01",
+      undefined,
+      initialQuote.quoteHash,
+      initialQuote.quoteToken,
     );
     const changed = itemInput();
     changed.optionGroups[0].name = "Nouveau nom";
     changed.optionGroups[0].options[1].priceXof = 500;
     await updateMenuItem(db, admin, item.id, 0, changed);
     expect((await calculateCheckout(db, cart(item.id))).subtotal).toBe(3100);
+    const replayCart = cart(item.id, selections().reverse());
+    const replayQuote = await calculateCheckout(db, { ...replayCart, point: address.point });
     const replay = await placeOrder(
       db,
-      cart(item.id, selections().reverse()),
+      replayCart,
       address,
       "snapshot-options-01",
+      undefined,
+      replayQuote.quoteHash,
+      replayQuote.quoteToken,
     );
     expect(replay.id).toBe(original.id);
     expect(replay.checkout).toEqual(original.checkout);
@@ -353,6 +363,9 @@ describe("catégories et options serveur", () => {
         cart(item.id, [{ groupId: "format", optionIds: ["normal"] }]),
         address,
         "snapshot-options-01",
+        undefined,
+        replayQuote.quoteHash,
+        replayQuote.quoteToken,
       ),
     ).rejects.toMatchObject(failure("IDEMPOTENCY_CONFLICT"));
     expect(await db.collection("orders").countDocuments()).toBe(1);

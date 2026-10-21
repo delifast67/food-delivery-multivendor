@@ -43,6 +43,9 @@ const restaurants = [
 ];
 const checkout = {
   quoteHash: "a".repeat(64),
+  quoteToken: "opaque-quote-token",
+  quoteIssuedAt: "2020-01-01T00:00:00.000Z",
+  quoteExpiresAt: "2099-01-01T00:05:00.000Z",
   currency: "XOF",
   subtotal: 1000,
   deliveryFee: 0,
@@ -209,6 +212,7 @@ describe("Delifast recovery", () => {
     expect(
       JSON.parse(localStorage.getItem(attemptStorageKey)!).idempotencyKey,
     ).toBe(original.idempotencyKey);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse(checkout.quoteExpiresAt) + 1);
     first.unmount();
     render(<DelifastPage />);
     await screen.findByLabelText("Nom du destinataire");
@@ -220,6 +224,7 @@ describe("Delifast recovery", () => {
     await screen.findByText("COMMANDE ENREGISTRÉE");
     expect(place).toHaveBeenCalledTimes(2);
     expect(place.mock.calls[1][0]).toEqual(original);
+    clock.mockRestore();
     fireEvent.click(
       screen.getByRole("button", { name: "Retour aux restaurants" }),
     );
@@ -231,9 +236,10 @@ describe("Delifast recovery", () => {
     expect(screen.queryByText("1 article")).not.toBeInTheDocument();
   });
 
-  it("keeps a known order locked if its lookup fails and allows only idempotent replay", async () => {
+  it.each([undefined, "b".repeat(64)])("recovers historical drafts without a signed token (hash: %s)", async (oldHash) => {
     const { attemptStorageKey } = await import("@/lib/delifast/api");
     const payload = {
+      ...(oldHash ? { expectedQuoteHash: oldHash } : {}),
       restaurantId: "r1",
       items: [{ menuItemId: "m1", quantity: 1 }],
       deliveryAddress: {
@@ -989,5 +995,39 @@ describe("Delifast quote freshness", () => {
     expect(place.mock.calls[0][0].expectedQuoteHash).toBe(checkout.quoteHash);
     expect(place.mock.calls[1][0].expectedQuoteHash).toBe(fresh.quoteHash);
     expect(place.mock.calls[1][0].idempotencyKey).not.toBe(place.mock.calls[0][0].idempotencyKey);
+  });
+
+  it("refreshes an expired quote without POST and requires a second explicit confirmation", async () => {
+    const now = Date.now();
+    const expired = {
+      ...checkout,
+      quoteIssuedAt: new Date(now - 360_000).toISOString(),
+      quoteExpiresAt: new Date(now - 1).toISOString(),
+    };
+    const fresh = {
+      ...checkout,
+      quoteIssuedAt: new Date(now - 1_000).toISOString(),
+      quoteExpiresAt: new Date(now + 300_000).toISOString(),
+    };
+    vi.mocked(delifastApi.checkout).mockResolvedValue(expired);
+    const place = vi.spyOn(delifastApi, "placeOrder").mockResolvedValue({
+      ...order,
+      checkout: fresh,
+    });
+    render(<DelifastPage />);
+    await prepareOrder();
+    // Keep the expired quote on screen, but return a fresh quote only when the
+    // preflight invalidates it and increments the existing refresh revision.
+    vi.mocked(delifastApi.checkout).mockResolvedValue(fresh);
+    fireEvent.click(screen.getByRole("button", { name: "Enregistrer la commande" }));
+    await screen.findByText(/Le devis a expiré/);
+    expect(place).not.toHaveBeenCalled();
+    await waitFor(() => expect(delifastApi.checkout).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Enregistrer la commande" })).not.toBeDisabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Enregistrer la commande" }));
+    await screen.findByText("COMMANDE ENREGISTRÉE");
+    expect(place).toHaveBeenCalledTimes(1);
   });
 });

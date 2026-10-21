@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { MongoMemoryServer } from "mongodb-memory-server";
 import request from "supertest";
 import type { Db } from "mongodb";
+import { quoteInput } from "./quote-helper.js";
 
 let mongo: MongoMemoryServer, db: Db, app: any;
 const point = { latitude: 12.3714, longitude: -1.5197 };
@@ -10,7 +11,7 @@ const address = { recipientName: "Test fictif", phone: "+22670000000", city: "Ou
   neighborhood: "Démo", landmark: "Ne pas livrer", instructions: "Test local uniquement", point };
 const input = { ...cart, deliveryAddress: address, idempotencyKey: "synthetic-guard-order" };
 const mutation = "mutation($input:PlaceOrderInput!){placeOrder(input:$input){id accessToken paymentStatus checkout{total}}}";
-const call = () => request(app).post("/graphql").send({ query: mutation, variables: { input } });
+const call = (payload = input) => request(app).post("/graphql").send({ query: mutation, variables: { input: payload } });
 
 beforeAll(async () => {
   vi.stubEnv("NODE_ENV", "test");
@@ -43,8 +44,9 @@ afterAll(async () => {
 describe("développement/test préservés, checkout applicatif toujours non atomique", () => {
   it.each(["development", "test"])("préserve création fictive et rejeu idempotent en %s", async mode => {
     vi.stubEnv("NODE_ENV", mode);
-    const first = (await call()).body;
-    const replay = (await call()).body;
+    const quoted = await quoteInput(async (query, variables) => (await request(app).post("/graphql").send({ query, variables })).body, input);
+    const first = (await call(quoted)).body;
+    const replay = (await call(quoted)).body;
     expect(first.errors).toBeUndefined();
     expect(replay.errors).toBeUndefined();
     expect(first.data.placeOrder.paymentStatus).toBe("PENDING");

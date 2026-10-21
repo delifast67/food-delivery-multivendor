@@ -13,6 +13,9 @@ const order = (overrides: Partial<Order> = {}): Order => ({
   restaurantId: "restaurant-1",
   checkout: {
     quoteHash: "a".repeat(64),
+    quoteToken: "opaque-quote-token",
+    quoteIssuedAt: "2020-01-01T00:00:00.000Z",
+    quoteExpiresAt: "2099-01-01T00:05:00.000Z",
     currency: "XOF", subtotal: 1200, deliveryFee: 300, serviceFee: 0,
     tax: 0, discount: 0, total: 1500, items: [],
   },
