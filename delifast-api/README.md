@@ -16,6 +16,12 @@ npm start
 
 Pour le Mongo local de développement : `npm run dev:db`, puis migrations, seed et démarrage dans un autre terminal. Les migrations et la seed sont idempotentes et les commandes sont conservées par Mongo.
 
+### Commandes réelles toujours interdites
+
+Le checkout applicatif reste **non atomique**. Le verrou existant `NODE_ENV=production` refuse le chargement de configuration et donc le démarrage normal. Il n’existe pas de garde live à l’entrée de `placeOrder`, ni d’indicateur global fiable distinguant commandes réelles et fictives. Faute de distinction sûre, l’audit n’ajoute aucune nouvelle garde ou variable et ne modifie pas le runtime.
+
+`NODE_ENV` n’est pas un détecteur de commandes réelles : développement/test et valeur absente conservent leur comportement pour les usages locaux fictifs ; un serveur réel mal étiqueté ne serait pas identifié. Ne pas déduire ce mode des réglages réseau, paiement ou SMS, et ne pas contourner le refus en changeant `NODE_ENV`. Un futur contrat serveur dédié, explicite et fermé par défaut reste à approuver avant tout usage non local. Les nouveaux tests prouvent uniquement le verrou de démarrage existant et la compatibilité des commandes fictives. Voir le [résultat d’audit et les blocages d’activation](../docs/ATOMIC_CHECKOUT_PROTOCOL.md#audit-du-verrou-existant--aucune-distinction-live-fiable).
+
 ## Contrat
 
 SDL versionnée : [`schema/v1.graphql`](schema/v1.graphql). HTTP : `POST /graphql`, `GET /health`.
